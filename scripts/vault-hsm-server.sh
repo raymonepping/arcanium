@@ -14,7 +14,7 @@ if [ -f "$SLOT_ID_FILE" ]; then
   sed "s/\${SOFTHSM_SLOT_ID}/${SOFTHSM_SLOT_ID}/g;
        s/\${SOFTHSM_TOKEN_LABEL}/${SOFTHSM_TOKEN_LABEL:-arcanium-hsm}/g;
        s/\${SOFTHSM_USER_PIN}/${SOFTHSM_USER_PIN}/g" \
-    "$CONFIG_TEMPLATE" > "$CONFIG_RESOLVED"
+    "$CONFIG_TEMPLATE" >"$CONFIG_RESOLVED"
   CONFIG_TO_USE="$CONFIG_RESOLVED"
 else
   echo "[HSM] WARNING: slot-id file not found at $SLOT_ID_FILE" >&2

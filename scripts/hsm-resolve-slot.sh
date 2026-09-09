@@ -16,9 +16,9 @@ echo "[HSM] Resolving SoftHSM2 slot ID from arcanium-softhsm_server..."
 SLOT_HEX=$(podman exec arcanium-softhsm_server \
   sh -c "SOFTHSM2_CONF=/etc/softhsm2.conf \
     pkcs11-tool --module /usr/local/lib/softhsm/libsofthsm2.so \
-    --list-slots 2>/dev/null" 2>/dev/null \
-  | grep -m1 "^Slot" | awk '{print $3}' | tr -d '()' \
-  || true)
+    --list-slots 2>/dev/null" 2>/dev/null |
+  grep -m1 "^Slot" | awk '{print $3}' | tr -d '()' ||
+  true)
 
 SLOT_ID=""
 if [ -n "$SLOT_HEX" ]; then
@@ -33,7 +33,7 @@ if [ -z "$SLOT_ID" ]; then
 fi
 
 mkdir -p "$ROOT/.secrets/hsm"
-echo "$SLOT_ID" > "$SLOT_FILE"
+echo "$SLOT_ID" >"$SLOT_FILE"
 chmod 600 "$SLOT_FILE"
 
 echo "[HSM] Slot ID: $SLOT_ID → written to .secrets/hsm/slot-id"

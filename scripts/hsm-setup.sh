@@ -16,14 +16,14 @@ SO_PIN="${SO_PIN:-5678}"
 LIB=$(find /usr/lib64/softhsm /usr/lib/softhsm -name libsofthsm2.so 2>/dev/null | head -1)
 LIB="${LIB:-/usr/lib64/softhsm/libsofthsm2.so}"
 
-log()  { printf '\n[HSM] %s\n' "$*"; }
-ok()   { printf '      ✓ %s\n' "$*"; }
+log() { printf '\n[HSM] %s\n' "$*"; }
+ok() { printf '      ✓ %s\n' "$*"; }
 skip() { printf '      – %s (already done)\n' "$*"; }
 
 # Write config pointing at the persistent token volume
 # Use /tmp to avoid read-only filesystem issues
 printf '[tokens]\ndirectories.tokendir = /var/lib/softhsm/tokens/\nobjectstore.backend = file\nlog.level = ERROR\n' \
-  > /tmp/softhsm2.conf
+  >/tmp/softhsm2.conf
 export SOFTHSM2_CONF=/tmp/softhsm2.conf
 
 # ── Initialise token ──────────────────────────────────────────────────────────
@@ -32,8 +32,8 @@ if softhsm2-util --show-slots 2>/dev/null | grep -q "${TOKEN_LABEL}"; then
   skip "Token '${TOKEN_LABEL}' already exists"
 else
   softhsm2-util --init-token --free \
-    --label  "${TOKEN_LABEL}" \
-    --pin    "${TOKEN_PIN}" \
+    --label "${TOKEN_LABEL}" \
+    --pin "${TOKEN_PIN}" \
     --so-pin "${SO_PIN}"
   ok "Token '${TOKEN_LABEL}' initialised"
 fi
@@ -41,8 +41,8 @@ fi
 # ── Generate RSA-2048 signing key ────────────────────────────────────────────
 log "Checking RSA-2048 demo signing key"
 if pkcs11-tool --module "${LIB}" --login --pin "${TOKEN_PIN}" \
-     --list-objects --token-label "${TOKEN_LABEL}" 2>/dev/null \
-   | grep -q "arcanium-rsa-key"; then
+  --list-objects --token-label "${TOKEN_LABEL}" 2>/dev/null |
+  grep -q "arcanium-rsa-key"; then
   skip "RSA key 'arcanium-rsa-key' already exists"
 else
   pkcs11-tool --module "${LIB}" \
