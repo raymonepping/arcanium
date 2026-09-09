@@ -1,0 +1,46 @@
+services:
+  arcanium-api:
+    image: arcanium-api:local
+    build:
+      context: ../../arcanium/api
+      dockerfile: Containerfile
+    container_name: arcanium-api
+    hostname: arcanium-api
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      VAULT_ADDR: "https://vault-1:8200"
+      VAULT_CACERT: "/vault/tls/ca-chain.pem"
+      VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
+      VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB}"
+      NODE_ENV: "production"
+      PORT: "3001"
+    volumes:
+      - ../../vault-tls:/vault/tls:ro
+    networks:
+      - arcanium-control
+      - arcanium-vault-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+networks:
+  arcanium-control:
+    name: arcanium-control
+    external: true
+  arcanium-vault-internal:
+    name: arcanium-vault-internal
+    external: true
