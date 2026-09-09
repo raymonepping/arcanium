@@ -11,6 +11,7 @@ Thumbs.db
 *.pid
 input/
 prompts/
+images/
 git_commit.sh
 FOLDER_TREE.md
 
