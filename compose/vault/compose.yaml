@@ -1,0 +1,100 @@
+# Adapted from vault_reference/docker-compose.yml; only the primary cluster.
+x-vault: &vault
+  image: docker.io/hashicorp/vault-enterprise:2.0.3-ent
+  user: "100:1000"
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  environment:
+    VAULT_ADDR: https://127.0.0.1:8200
+    VAULT_CACERT: /vault/config/tls/ca-chain.pem
+    VAULT_LICENSE: "${VAULT_LICENSE}"
+  entrypoint: ["/bin/sh", "/arcanium/vault-server.sh"]
+  restart: unless-stopped
+  mem_limit: 2g
+  networks: [default]
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- --no-check-certificate https://127.0.0.1:8200/v1/sys/health?standbyok=true&sealedok=true&uninitok=false >/dev/null"]
+    interval: 10s
+    timeout: 5s
+    retries: 15
+    start_period: 20s
+
+services:
+  vault-s:
+    <<: *vault
+    container_name: arcanium-vault-s
+    hostname: vault-s
+    ports: ["127.0.0.1:18190:8200"]
+    volumes:
+      - vault-s-data:/vault/file
+      - vault-s-audit:/vault/audit
+      - ../../vault-s/config-s.hcl:/vault/config/config.hcl:ro
+      - ../../vault-s/config/vault_v2.hclic:/vault/config/vault_v2.hclic:ro
+      - ../../vault-tls:/vault/config/tls:ro
+      - ../../scripts/vault-server.sh:/arcanium/vault-server.sh:ro
+
+  vault-1:
+    <<: *vault
+    container_name: arcanium-vault-1
+    hostname: vault-1
+    ports: ["127.0.0.1:18200:8200"]
+    volumes:
+      - vault-1-data:/vault/file
+      - vault-1-audit:/vault/audit
+      - ../../vault-1/config.hcl:/vault/config/config.hcl:ro
+      - ../../vault-s/config/vault_v2.hclic:/vault/config/vault_v2.hclic:ro
+      - ../../vault-tls:/vault/config/tls:ro
+      - ../../scripts/vault-server.sh:/arcanium/vault-server.sh:ro
+      - ../../.secrets/vault/transit-token:/run/secrets/transit-token:ro
+    depends_on:
+      vault-s:
+        condition: service_healthy
+
+  vault-2:
+    <<: *vault
+    container_name: arcanium-vault-2
+    hostname: vault-2
+    ports: ["127.0.0.1:18201:8200"]
+    volumes:
+      - vault-2-data:/vault/file
+      - vault-2-audit:/vault/audit
+      - ../../vault-2/config-2.hcl:/vault/config/config.hcl:ro
+      - ../../vault-s/config/vault_v2.hclic:/vault/config/vault_v2.hclic:ro
+      - ../../vault-tls:/vault/config/tls:ro
+      - ../../scripts/vault-server.sh:/arcanium/vault-server.sh:ro
+      - ../../.secrets/vault/transit-token:/run/secrets/transit-token:ro
+    depends_on:
+      vault-s:
+        condition: service_healthy
+
+  vault-3:
+    <<: *vault
+    container_name: arcanium-vault-3
+    hostname: vault-3
+    ports: ["127.0.0.1:18202:8200"]
+    volumes:
+      - vault-3-data:/vault/file
+      - vault-3-audit:/vault/audit
+      - ../../vault-3/config-3.hcl:/vault/config/config.hcl:ro
+      - ../../vault-s/config/vault_v2.hclic:/vault/config/vault_v2.hclic:ro
+      - ../../vault-tls:/vault/config/tls:ro
+      - ../../scripts/vault-server.sh:/arcanium/vault-server.sh:ro
+      - ../../.secrets/vault/transit-token:/run/secrets/transit-token:ro
+    depends_on:
+      vault-s:
+        condition: service_healthy
+
+networks:
+  default:
+    name: arcanium-vault-internal
+    external: true
+
+volumes:
+  vault-s-data: {}
+  vault-s-audit: {}
+  vault-1-data: {}
+  vault-1-audit: {}
+  vault-2-data: {}
+  vault-2-audit: {}
+  vault-3-data: {}
+  vault-3-audit: {}

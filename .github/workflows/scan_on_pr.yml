@@ -11,39 +11,45 @@ jobs:
 
     steps:
       - name: 🧾 Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: 🛠 Set image name dynamically
         run: |
-          IMAGE_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+          IMAGE_NAME=$(printf '%s' "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=${IMAGE_NAME}" >> "$GITHUB_ENV"
 
-      - name: 🐳 Build Docker image
+      - name: 📦 Build image with Podman
+        if: ${{ hashFiles('Containerfile') != '' }}
         run: |
-          docker build -t "${IMAGE_NAME}:ci" .
+          podman build --file Containerfile --tag "${IMAGE_NAME}:ci" .
 
       - name: 🔧 Install Trivy, Grype, and Dive
+        if: ${{ hashFiles('Containerfile') != '' }}
         run: |
-          mkdir -p $HOME/bin
+          mkdir -p "$HOME/bin"
 
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $HOME/bin
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b $HOME/bin
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/bin"
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b "$HOME/bin"
 
           # Install Dive safely
           curl -sSL https://github.com/wagoodman/dive/releases/download/v0.12.0/dive_0.12.0_linux_amd64.tar.gz -o dive.tar.gz
           mkdir -p dive_tmp && tar -xzf dive.tar.gz -C dive_tmp
-          mv dive_tmp/dive $HOME/bin/dive
-          chmod +x $HOME/bin/dive
-          echo "$HOME/bin" >> $GITHUB_PATH
+          mv dive_tmp/dive "$HOME/bin/dive"
+          chmod +x "$HOME/bin/dive"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
 
       - name: 🔍 Run Trivy scan (non-blocking)
+        if: ${{ hashFiles('Containerfile') != '' }}
         run: |
-          trivy image --scanners vuln --severity HIGH,CRITICAL --exit-code 0 "${IMAGE_NAME}:ci"
+          podman save --format oci-archive "${IMAGE_NAME}:ci" --output image.tar
+          trivy image --input image.tar --scanners vuln --severity HIGH,CRITICAL --exit-code 0
 
       - name: 🚨 Run Grype scan (non-blocking)
+        if: ${{ hashFiles('Containerfile') != '' }}
         run: |
-          grype "${IMAGE_NAME}:ci" --only-fixed --fail-on high --add-cpes-if-none --output table || true
+          grype "oci-archive:image.tar" --only-fixed --fail-on high --add-cpes-if-none --output table || true
 
       - name: 🔬 Run Dive analysis
+        if: ${{ hashFiles('Containerfile') != '' }}
         run: |
-          dive "${IMAGE_NAME}:ci" --ci
+          dive "podman://${IMAGE_NAME}:ci" --ci
