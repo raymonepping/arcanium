@@ -2,7 +2,8 @@ SHELL := /bin/sh
 
 .DEFAULT_GOAL := help
 
-STACKS := vault infra hsm arcanium observability workloads
+STACKS     := vault infra hsm arcanium observability workloads
+PROJECT_ROOT := $(shell pwd)
 
 .PHONY: help check status storage ps images volumes compose-config \
 	network $(addsuffix -up,$(STACKS)) $(addsuffix -down,$(STACKS)) \
@@ -35,6 +36,7 @@ volumes: ## List named volumes
 network: ## Create the shared Arcanium networks if absent
 	@podman network exists arcanium || podman network create arcanium
 	@podman network exists arcanium-vault-internal || podman network create arcanium-vault-internal
+	@podman network exists arcanium-control || podman network create arcanium-control
 
 compose-config: ## Validate all compose.yaml files currently present
 	@found=0; \
@@ -47,15 +49,15 @@ compose-config: ## Validate all compose.yaml files currently present
 
 define STACK_TARGETS
 
-$(1)-up:
+$(1)-up: ## Start the $(1) stack
 	@./scripts/compose.sh "$(1)" config --quiet
 	@$(MAKE) --no-print-directory network
 	@./scripts/compose.sh "$(1)" up -d
 
-$(1)-down:
+$(1)-down: ## Stop the $(1) stack
 	@./scripts/compose.sh "$(1)" down
 
-$(1)-logs:
+$(1)-logs: ## Follow $(1) logs
 	@./scripts/compose.sh "$(1)" logs -f
 endef
 
@@ -81,3 +83,26 @@ vault-status: ## Check sealing and the three Raft peers
 
 vault-backup: ## Save and inspect both Raft snapshots outside the Podman VM
 	@./scripts/vault-backup.sh
+
+.PHONY: hsm-bootstrap
+hsm-bootstrap: ## Build vault-hsm image, start softhsm-server, resolve slot, start vault-hsm
+	@podman build --platform linux/amd64 -t arcanium-vault-hsm:local \
+	  -f vault-hsm/Containerfile vault-hsm/
+	@$(MAKE) --no-print-directory network
+	@./scripts/compose.sh hsm up -d softhsm-server
+	@echo 'Waiting for softhsm-server to be healthy...'
+	@for i in $$(seq 1 20); do \
+	  hs=$$(podman inspect arcanium-softhsm_server --format "{{.State.Health.Status}}" 2>/dev/null); \
+	  [ "$$hs" = "healthy" ] && break; sleep 3; done
+	@./scripts/hsm-resolve-slot.sh
+	@./scripts/compose.sh hsm up -d vault-hsm
+
+.PHONY: tf-database
+tf-database: ## Apply Vault Database secrets engine config (requires VAULT_TOKEN)
+	@mkdir -p .secrets/terraform
+	@cd terraform/vault-database && terraform init -input=false && \
+	  terraform apply -input=false -auto-approve \
+	    -var="vault_cacert=$(PROJECT_ROOT)/vault-tls/ca-chain.pem" \
+	    -var="postgres_user=$$(grep ^POSTGRES_USER $(PROJECT_ROOT)/.env | cut -d= -f2)" \
+	    -var="postgres_password=$$(grep ^POSTGRES_PASSWORD $(PROJECT_ROOT)/.env | cut -d= -f2)" \
+	    -var="postgres_db=$$(grep ^POSTGRES_DB $(PROJECT_ROOT)/.env | cut -d= -f2)"

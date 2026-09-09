@@ -1,0 +1,15 @@
+FROM docker.io/vegardit/softhsm2-pkcs11-proxy:latest-debian AS pkcs11-proxy
+
+# Stage 2 — Vault Enterprise HSM image with proxy client library injected.
+# The .hsm image is RHEL-based (glibc, amd64) — compatible with the Debian
+# libpkcs11-proxy.so.
+FROM docker.io/hashicorp/vault-enterprise:2.0.3-ent.hsm
+
+USER root
+# Copy the pkcs11-proxy client library from the Debian stage.
+# Both images are linux/amd64 glibc so the .so is binary-compatible.
+COPY --from=pkcs11-proxy /usr/local/lib/libpkcs11-proxy.so /usr/local/lib/libpkcs11-proxy.so
+RUN chmod 755 /usr/local/lib/libpkcs11-proxy.so && \
+    mkdir -p /vault/pkcs11
+
+USER vault

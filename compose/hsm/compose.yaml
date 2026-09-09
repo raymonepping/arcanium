@@ -1,0 +1,97 @@
+# HSM stack — SoftHSM2 via pkcs11-proxy + Vault Enterprise HSM seal
+#
+# Architecture:
+#   softhsm-server  — vegardit/softhsm2-pkcs11-proxy (Debian, linux/amd64)
+#                     Runs SoftHSM2 + pkcs11d daemon, exposes TLS:2345
+#                     Handles token init automatically on first start.
+#
+#   vault-hsm       — Vault Enterprise .hsm (RHEL, linux/amd64)
+#                     Contains libpkcs11-proxy.so (injected at build time).
+#                     Vault seal "pkcs11" connects via PKCS11_PROXY_SOCKET.
+#
+# This avoids the glibc/musl binary incompatibility: Vault never loads
+# libsofthsm2.so directly — it loads libpkcs11-proxy.so which tunnels
+# the PKCS#11 calls over TLS to the softhsm-server container.
+#
+# Run: make hsm-bootstrap   (builds vault-hsm image, starts both services)
+#      make hsm-up           (start after bootstrap)
+
+services:
+
+  softhsm-server:
+    image: docker.io/vegardit/softhsm2-pkcs11-proxy:latest-debian
+    container_name: arcanium-softhsm_server
+    platform: linux/amd64
+    environment:
+      TOKEN_LABEL: "${SOFTHSM_TOKEN_LABEL}"
+      TOKEN_USER_PIN: "${SOFTHSM_USER_PIN}"
+      TOKEN_SO_PIN: "${SOFTHSM_SO_PIN}"
+      TOKEN_AUTO_CREATE: "1"
+      TOKEN_IMPORT_TEST_DATA: "0"
+      PKCS11_DAEMON_SOCKET: "tls://0.0.0.0:2345"
+      PKCS11_PROXY_TLS_PSK_FILE: "/run/secrets/pkcs11-proxy.psk"
+    volumes:
+      - softhsm-data:/var/lib/softhsm
+      - ../../.secrets/hsm/pkcs11-proxy.psk:/run/secrets/pkcs11-proxy.psk:ro
+    networks: [default]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/lib/softhsm/softhsm2.conf || test -d /var/lib/softhsm/tokens"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  vault-hsm:
+    image: arcanium-vault-hsm:local
+    container_name: arcanium-vault_hsm
+    hostname: vault-hsm
+    platform: linux/amd64
+    user: "100:1000"
+    cap_drop: [ALL]
+    cap_add: [IPC_LOCK]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      VAULT_ADDR: https://127.0.0.1:8200
+      VAULT_CACERT: /vault/config/tls/ca-chain.pem
+      VAULT_LICENSE: "${VAULT_LICENSE_ENT}"
+      SOFTHSM2_CONF: /etc/softhsm2.conf
+      SOFTHSM_TOKEN_LABEL: "${SOFTHSM_TOKEN_LABEL}"
+      SOFTHSM_USER_PIN: "${SOFTHSM_USER_PIN}"
+      # pkcs11-proxy socket — Vault connects to softhsm-server via TLS
+      PKCS11_PROXY_SOCKET: "tls://softhsm-server:2345"
+      PKCS11_PROXY_TLS_PSK_FILE: "/run/secrets/pkcs11-proxy.psk"
+    ports: ["127.0.0.1:18300:8200"]
+    volumes:
+      - vault-hsm-data:/vault/file
+      - vault-hsm-audit:/vault/audit
+      - ../../vault-hsm/config-hsm.hcl:/vault/config/config.hcl:ro
+      - ../../vault-hsm/config/vault_v2_ent.hclic:/vault/config/vault_v2_ent.hclic:ro
+      - ../../vault-hsm/softhsm2.conf:/etc/softhsm2.conf:ro
+      - ../../vault-tls:/vault/config/tls:ro
+      - ../../scripts/vault-hsm-server.sh:/arcanium/vault-server.sh:ro
+      - ../../.secrets/hsm/pkcs11-proxy.psk:/run/secrets/pkcs11-proxy.psk:ro
+      - ../../.secrets/hsm/slot-id:/run/secrets/slot-id:ro
+    entrypoint: ["/bin/sh", "/arcanium/vault-server.sh"]
+    restart: unless-stopped
+    mem_limit: 2g
+    networks: [default]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --no-check-certificate https://127.0.0.1:8200/v1/sys/health?standbyok=true&sealedok=true&uninitok=false >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    depends_on:
+      softhsm-server:
+        condition: service_healthy
+
+networks:
+  default:
+    name: arcanium-vault-internal
+    external: true
+
+volumes:
+  softhsm-data: {}
+  vault-hsm-data: {}
+  vault-hsm-audit: {}

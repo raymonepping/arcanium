@@ -14,9 +14,11 @@ for node in vault-s vault-1 vault-2 vault-3; do
   fi
 done
 if [ "$failed" -eq 0 ]; then
+  # Always query the leader node (vault-1) by host port to avoid internal
+  # hostname redirects that the host cannot resolve.
   vault_node vault-1
   vault_root cluster
-  peers=$(vault operator raft list-peers -format=json)
+  peers=$(VAULT_ADDR=https://127.0.0.1:18200 vault operator raft list-peers -format=json)
   jq -r '.data.config.servers[] | "  \(.node_id): leader=\(.leader) voter=\(.voter)"' <<<"$peers"
   jq -e '(.data.config.servers | length) == 3' <<<"$peers" >/dev/null || failed=1
 fi
