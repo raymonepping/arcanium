@@ -10,7 +10,7 @@ for cluster in vault-s cluster; do
   if [ "$cluster" = vault-s ]; then vault_node vault-s; else vault_node vault-1; fi
   vault_root "$cluster"
   vault operator raft snapshot save "$backup/$cluster.snap"
-  vault operator raft snapshot inspect "$backup/$cluster.snap" > "$backup/$cluster.inspect.txt"
+  vault operator raft snapshot inspect "$backup/$cluster.snap" >"$backup/$cluster.inspect.txt"
 done
 echo "Snapshots saved and inspected in $backup"
 echo 'Store a protected copy of .secrets/vault, vault-tls and licenses separately; snapshots alone cannot recover the root of trust.'

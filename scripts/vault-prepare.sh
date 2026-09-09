@@ -3,9 +3,15 @@ set -euo pipefail
 umask 077
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
-for tool in openssl vault jq; do command -v "$tool" >/dev/null || { echo "Missing command: $tool" >&2; exit 1; }; done
+for tool in openssl vault jq; do command -v "$tool" >/dev/null || {
+  echo "Missing command: $tool" >&2
+  exit 1
+}; done
 for license in vault_v2.hclic vault_v2_ent.hclic; do
-  test -s "vault-s/config/$license" || { echo "Missing license: vault-s/config/$license" >&2; exit 1; }
+  test -s "vault-s/config/$license" || {
+    echo "Missing license: vault-s/config/$license" >&2
+    exit 1
+  }
 done
 mkdir -p .secrets/vault vault-tls
 chmod 700 .secrets .secrets/vault vault-tls

@@ -10,7 +10,8 @@ cd "$VAULT_PROJECT_ROOT"
 
 # Serialize bootstrap to avoid losing initialization output in concurrent runs.
 mkdir "$VAULT_STATE/bootstrap.lock" 2>/dev/null || {
-  echo 'Bootstrap lock exists. Check for an active bootstrap before removing it.' >&2; exit 1;
+  echo 'Bootstrap lock exists. Check for an active bootstrap before removing it.' >&2
+  exit 1
 }
 trap 'rmdir "$VAULT_STATE/bootstrap.lock"' EXIT
 compose() { "$VAULT_PROJECT_ROOT/scripts/compose.sh" vault "$@"; }
@@ -30,7 +31,7 @@ initialize() {
       return 1
     }
     tmp=$(mktemp "$VAULT_STATE/$name-init.pending.XXXXXX")
-    vault operator init -format=json "$@" > "$tmp"
+    vault operator init -format=json "$@" >"$tmp"
     jq -e '.root_token' "$tmp" >/dev/null
     mv "$tmp" "$VAULT_STATE/$name-init.json"
     echo "$name initialized; credentials saved locally with mode 0600."
@@ -66,7 +67,7 @@ fi
 if [ "$token_valid" = false ]; then
   tmp=$(mktemp "$VAULT_STATE/transit-token.pending.XXXXXX")
   vault token create -orphan -policy=autounseal -period=720h \
-    -display-name=arcanium-auto-unseal -field=token > "$tmp"
+    -display-name=arcanium-auto-unseal -field=token >"$tmp"
   test -s "$tmp"
   mv "$tmp" "$VAULT_STATE/transit-token"
 fi

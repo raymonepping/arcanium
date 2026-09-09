@@ -10,11 +10,11 @@ stack=$1
 shift
 
 case "$stack" in
-  vault|infra|hsm|arcanium|observability|workloads) ;;
-  *)
-    echo "Unknown stack: $stack" >&2
-    exit 64
-    ;;
+vault | infra | hsm | arcanium | observability | workloads) ;;
+*)
+  echo "Unknown stack: $stack" >&2
+  exit 64
+  ;;
 esac
 
 project_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)

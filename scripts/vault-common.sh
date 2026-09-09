@@ -9,11 +9,14 @@ unset VAULT_SKIP_VERIFY VAULT_NAMESPACE VAULT_TOKEN VAULT_TLS_SERVER_NAME
 
 vault_node() {
   case "$1" in
-    vault-s) export VAULT_ADDR=https://127.0.0.1:18190 ;;
-    vault-1) export VAULT_ADDR=https://127.0.0.1:18200 ;;
-    vault-2) export VAULT_ADDR=https://127.0.0.1:18201 ;;
-    vault-3) export VAULT_ADDR=https://127.0.0.1:18202 ;;
-    *) echo "Unknown Vault node: $1" >&2; return 1 ;;
+  vault-s) export VAULT_ADDR=https://127.0.0.1:18190 ;;
+  vault-1) export VAULT_ADDR=https://127.0.0.1:18200 ;;
+  vault-2) export VAULT_ADDR=https://127.0.0.1:18201 ;;
+  vault-3) export VAULT_ADDR=https://127.0.0.1:18202 ;;
+  *)
+    echo "Unknown Vault node: $1" >&2
+    return 1
+    ;;
   esac
 }
 
@@ -25,7 +28,7 @@ vault_json() {
 
 vault_wait() {
   local mode=$1 attempt state
-  for ((attempt=0; attempt<60; attempt++)); do
+  for ((attempt = 0; attempt < 60; attempt++)); do
     if state=$(vault_json 2>/dev/null); then
       if [ "$mode" = reachable ] || jq -e '.initialized and (.sealed | not)' <<<"$state" >/dev/null; then
         return 0
