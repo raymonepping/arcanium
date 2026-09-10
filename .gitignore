@@ -9,6 +9,7 @@ Thumbs.db
 *.bak
 *.swp
 *.pid
+article/
 input/
 prompts/
 images/
