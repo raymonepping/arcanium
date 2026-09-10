@@ -1,15 +1,56 @@
-FROM docker.io/library/node:22-alpine AS deps
+FROM docker.io/library/node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
-FROM docker.io/library/node:22-alpine AS runtime
+FROM docker.io/library/node:24-alpine AS runtime
 WORKDIR /app
 # Non-root user — node image ships uid 1000 as "node"
 USER node
 COPY --from=deps --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node src/ ./src/
 COPY --chown=node:node package.json ./
+
+# Fail the build loudly if the source tree arrived incomplete in the build
+# context. On the macOS Podman machine, newly-created files/directories are not
+# always visible to `podman build` COPY due to virtiofs sync lag — this asserts
+# the modules every route needs are actually present before we ship the image.
+# Recovery: `podman machine ssh -- sync` (or restart the machine) then rebuild.
+# Virtiofs fallback — inline-write migration 010 so it is always present regardless
+# of whether the macOS host flushed the file to the Podman VM before this build.
+RUN printf '%s\n' \
+  '-- 010_platform_apps.sql — Prompt 17' \
+  '-- platform = Arcanium-owned root-namespace workload' \
+  '-- tenant   = supplier-scoped application' \
+  '-- unscoped = not yet classified (penalised by maturity scorer)' \
+  'ALTER TABLE applications' \
+  '  ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT '"'"'unscoped'"'"'' \
+  '    CHECK (category IN ('"'"'platform'"'"', '"'"'tenant'"'"', '"'"'unscoped'"'"'));' \
+  'UPDATE applications SET category = '"'"'tenant'"'"' WHERE supplier_id IS NOT NULL;' \
+  'COMMENT ON COLUMN applications.category IS' \
+  '  '"'"'platform = Arcanium infrastructure workload; tenant = supplier-scoped; unscoped = not yet classified'"'"';' \
+  'DO $$ BEGIN' \
+  '  EXECUTE '"'"'ALTER TABLE applications OWNER TO arcanium'"'"';' \
+  'EXCEPTION WHEN undefined_table OR insufficient_privilege THEN NULL; END $$;' \
+  > src/migrations/010_platform_apps.sql
+
+RUN set -e; \
+    for f in src/index.js src/worker.js src/routes/cluster.js src/routes/jobs.js \
+             src/routes/platform.js src/routes/keymgmt.js src/auth/index.js \
+             src/routes/observability.js src/telemetry/metrics.js \
+             src/maturity/report.js src/maturity/scorer.js src/maturity/checks.js \
+             src/provisioner/steps.js src/provisioner/supplier.js src/provisioner/dispatch.js \
+             src/provisioner/application.js src/provisioner/key.js \
+             src/routes/integrations.js src/routes/evidence.js src/evidence/ingest.js \
+             src/suppliers/isolation.js \
+             src/migrations/005_provisioning.sql src/migrations/006_sessions.sql \
+             src/migrations/007_job_params.sql src/migrations/008_integrations.sql \
+             src/migrations/009_evidence.sql src/migrations/010_platform_apps.sql; do \
+      test -f "$f" || { echo "FATAL: $f missing from build context (virtiofs sync?)"; exit 1; }; \
+    done; \
+    grep -q maturityRouter src/index.js || { echo "FATAL: index.js does not mount maturityRouter"; exit 1; }; \
+    grep -q jobsRouter src/index.js || { echo "FATAL: index.js does not mount jobsRouter"; exit 1; }
+
 EXPOSE 3001
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD wget -qO- http://localhost:3001/health/live || exit 1

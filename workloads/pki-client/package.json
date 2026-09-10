@@ -1,0 +1,11 @@
+{
+  "name": "arcanium-pki-client",
+  "version": "1.0.0",
+  "description": "Arcanium demo workload — PKI certificate lifecycle",
+  "type": "module",
+  "private": true,
+  "scripts": { "start": "node src/index.js" },
+  "dependencies": {
+    "express": "^5.0.1"
+  }
+}

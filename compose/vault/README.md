@@ -31,10 +31,10 @@ copied retry_join configuration. No token or recovery key is printed.
 
 | Node | Local HTTPS endpoint | Container |
 | --- | --- | --- |
-| vault-s | https://127.0.0.1:18190 | arcanium-vault-s |
-| vault-1 | https://127.0.0.1:18200 | arcanium-vault-1 |
-| vault-2 | https://127.0.0.1:18201 | arcanium-vault-2 |
-| vault-3 | https://127.0.0.1:18202 | arcanium-vault-3 |
+| vault-s | https://127.0.0.1:18190 | arcanium-vault_s |
+| vault-1 | https://127.0.0.1:18200 | arcanium-vault_1 |
+| vault-2 | https://127.0.0.1:18201 | arcanium-vault_2 |
+| vault-3 | https://127.0.0.1:18202 | arcanium-vault_3 |
 
 Host listeners bind only to loopback. The 18xxx ports avoid the 8200/8201
 mappings used by existing Vault projects. Check they are free before starting.

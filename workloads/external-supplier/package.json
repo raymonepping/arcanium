@@ -1,0 +1,10 @@
+{
+  "name": "arcanium-external-supplier",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Arcanium external-supplier workload — Control Group demo",
+  "main": "src/index.js",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node src/index.js" },
+  "dependencies": {}
+}

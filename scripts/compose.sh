@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$#" -lt 2 ]; then
-  echo "Usage: $0 <vault|infra|hsm|arcanium|observability|workloads> <compose arguments...>" >&2
+  echo "Usage: $0 <vault|infra|hsm|arcanium|observability|workloads|kms-sim> <compose arguments...>" >&2
   exit 64
 fi
 
@@ -10,7 +10,7 @@ stack=$1
 shift
 
 case "$stack" in
-vault | infra | hsm | arcanium | observability | workloads) ;;
+vault | infra | hsm | arcanium | observability | workloads | kms-sim) ;;
 *)
   echo "Unknown stack: $stack" >&2
   exit 64

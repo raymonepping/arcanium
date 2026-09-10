@@ -1,99 +1,49 @@
-# Arcanium — HSM Stack
+# HSM demonstration stack
 
-Demonstrates **PKCS#11 auto-unseal** using SoftHSM2 inside a Vault Enterprise
-container. This is a standalone single-node Vault cluster — separate from the
-production cluster (vault-1/2/3) — used purely to show the HSM seal mechanism.
+The current stack uses two services: `softhsm-server` and `vault-hsm`. The former runs SoftHSM2 behind a PKCS#11 proxy. The latter loads the proxy library and sends PKCS#11 calls over TLS with a PSK.
 
-## Architecture
-
-```
-softhsm-init (one-shot, Alpine)
-  └── initialises token in softhsm-tokens volume
-  └── exports libsofthsm2.so to softhsm-lib volume
-
-vault-hsm (Vault Enterprise linux/amd64)
-  ├── SoftHSM2 installed in image (apk add softhsm)
-  ├── PKCS#11 seal configured in config-hsm.hcl
-  ├── Token storage: softhsm-tokens volume (persistent)
-  └── Port: 127.0.0.1:18300:8200
+```text
+vault-hsm (+ent.hsm, linux/amd64)
+  └─ libpkcs11-proxy.so
+       └─ TLS: softhsm-server:2345
+            └─ SoftHSM token storage (persistent volume)
 ```
 
-## Why linux/amd64?
+This avoids loading the SoftHSM library directly into an incompatible Vault userspace. The previous one-shot Alpine `softhsm-init` topology is not the current Compose implementation.
 
-Vault Enterprise HSM (PKCS#11 seal) is limited to `linux/amd64`. On Apple
-Silicon, Podman Machine uses Rosetta to translate — acceptable for a POC.
+## Start
 
-## License coverage
+Configure the license, token label, PINs, PSK file and slot input described in `.env.example` and the bootstrap scripts.
 
-| Feature | Covered by vault_v2.hclic |
-|---------|--------------------------|
-| PKCS#11 auto-unseal (seal stanza) | ✅ Yes (HSM feature) |
-| Managed Keys / sys/managed-keys/pkcs11 | ❌ No (requires ADP-KM) |
-
-This stack demonstrates the **seal** use case only.
-
-## Start / stop
-
-```bash
-# First time — builds image, inits token, starts vault-hsm:
+```sh
 make hsm-bootstrap
+make hsm-init
+```
 
-# Subsequent starts (token already exists):
+The bootstrap builds the HSM image, starts the proxy, resolves its token slot and starts Vault HSM. Initialization output belongs in the protected `.secrets/vault` path, not console transcripts or Markdown.
+
+For later starts/stops:
+
+```sh
 make hsm-up
-
-# Stop:
-make hsm-down
-
-# Logs:
 make hsm-logs
+make hsm-down
 ```
 
-## Token details
+Host API: `https://127.0.0.1:18300`. Container name: `arcanium-vault_hsm`. Both services use the Vault-internal network; the PKCS#11 daemon is not a public browser endpoint.
 
-Set in `.env`:
+## Seal versus application custody
 
-| Variable | Purpose |
-|----------|---------|
-| `SOFTHSM_TOKEN_LABEL` | Token label (default: `arcanium-hsm`) |
-| `SOFTHSM_SO_PIN` | Security Officer PIN |
-| `SOFTHSM_USER_PIN` | User PIN (used by Vault seal) |
+The PKCS#11 seal protects Vault's seal/unseal lifecycle. A PKCS#11 Managed Key protects a particular application's key custody. One does not prove the other is configured.
 
-## Ports
-
-| Service | Host port | Purpose |
-|---------|-----------|---------|
-| vault-hsm | `127.0.0.1:18300` | Vault API |
-
-## Validation
-
-```bash
-# Check token was initialised:
-podman run --rm \
-  -v arcanium-hsm_softhsm-tokens:/var/lib/softhsm/tokens \
-  -e SOFTHSM2_CONF=/softhsm2.conf \
-  docker.io/library/alpine:3.20 \
-  sh -c "apk add -q softhsm && \
-         printf '[tokens]\ndirectories.tokendir=/var/lib/softhsm/tokens/\n' > /softhsm2.conf && \
-         softhsm2-util --show-slots"
-# Expected: slot with label arcanium-hsm
-
-# Check vault-hsm status:
-VAULT_ADDR=https://127.0.0.1:18300 \
-VAULT_CACERT=vault-tls/ca-chain.pem \
-  vault status
-# Expected: initialized=false (ready to init), seal_type=pkcs11
+```sh
+make hsm-managed-keys
 ```
 
-## Initialising vault-hsm
+See [Managed Keys](../../docs/managed-keys.md) for the signing-key demonstration and optional API metadata reader. Verify actual binary capabilities and license entitlements; do not infer them solely from a filename or a previous environment's license.
 
-After `make hsm-bootstrap`, vault-hsm is sealed and uninitialised. Run:
+## Persistent material
 
-```bash
-export VAULT_ADDR=https://127.0.0.1:18300
-export VAULT_CACERT=vault-tls/ca-chain.pem
-vault operator init -key-shares=1 -key-threshold=1
-```
+The Compose volumes hold SoftHSM tokens, Vault HSM data and audit logs. The proxy PSK, PIN custody, slot file and Vault recovery material are also required for recovery. Changing environment PINs does not reinitialize existing tokens.
 
-With PKCS#11 seal, the unseal key is wrapped by the HSM — `vault operator unseal`
-is not needed on normal restarts (the HSM auto-unseals). The recovery key output
-by init is for emergency access only.
+SoftHSM is software emulation. This demonstrates PKCS#11 integration and custody architecture, not tamper-resistant hardware or certification.

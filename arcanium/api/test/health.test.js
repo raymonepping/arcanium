@@ -49,12 +49,10 @@ function buildHealthRouter(vault, db) {
       await db.ping();
       res.json({ status: "ready" });
     } catch (err) {
-      res
-        .status(503)
-        .json({
-          status: "unavailable",
-          reason: `database unreachable: ${err.message}`,
-        });
+      res.status(503).json({
+        status: "unavailable",
+        reason: `database unreachable: ${err.message}`,
+      });
     }
   });
 

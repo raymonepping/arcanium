@@ -1,109 +1,46 @@
-# Arcanium API Stack
+# Arcanium management stack
 
-## Overview
+Two independently built services:
 
-The Arcanium API is the **management plane** — it registers applications,
-manages crypto profile metadata in PostgreSQL, and exposes Vault inventory.
-Workloads call Vault directly for crypto operations; this API never proxies
-plaintext or ciphertext.
+| Service | Host | Networks |
+| --- | --- | --- |
+| `arcanium-ui` | `127.0.0.1:3000` | `arcanium-control` |
+| `arcanium-api` | `127.0.0.1:3001` | control and Vault-internal |
 
-## Network topology
-
-```
-Host (localhost:3001)
-  └── arcanium-api (arcanium-control + arcanium-vault-internal)
-        ├── postgres (arcanium-control → dynamic credentials via Vault)
-        └── vault-1/2/3 (arcanium-vault-internal → AppRole auth)
-```
+The UI uses Nuxt. The API uses Express and PostgreSQL metadata with Vault-backed cryptographic services. The optional worker source runs separately when queue/ingestion capabilities are enabled; inspect Compose for whether it is actually configured.
 
 ## Prerequisites
 
-1. `make vault-up` — Vault cluster running and bootstrapped
-2. `make infra-up` — PostgreSQL running
-3. `make tf-platform` — AppRole + policies provisioned in Vault
-4. `make tf-transit` — Transit engine + keys provisioned
-5. `make tf-pki` — PKI root + intermediate CA provisioned
-6. `make tf-database` — Dynamic DB credentials configured
+Complete [setup](../../docs/setup.md): running Vault and PostgreSQL, trusted TLS, baseline policies, database secrets engine, and valid Arcanium AppRole credentials.
 
-## Generate AppRole credentials (one-time)
+The API's role ID and SecretID are supplied through `.env`. Obtain them with an authorized operator workflow after platform provisioning. Never publish their values. The API obtains dynamic PostgreSQL credentials at startup and refreshes them through Vault.
 
-```bash
-export VAULT_TOKEN=$(jq -r '.root_token' .secrets/vault/cluster-init.json)
-export VAULT_ADDR=https://127.0.0.1:18200
-export VAULT_CACERT=$(pwd)/vault-tls/ca-chain.pem
+## Build and run
 
-# Get role_id (also available from: make tf-platform output)
-vault read auth/approle/role/arcanium-api/role-id
-
-# Generate a secret_id
-vault write -f auth/approle/role/arcanium-api/secret-id
-```
-
-Add both values to `.env`:
-
-```bash
-ARCANIUM_VAULT_ROLE_ID=<role_id>
-ARCANIUM_VAULT_SECRET_ID=<secret_id>
-```
-
-## Build and start
-
-```bash
-make arcanium-build
+```sh
 make arcanium-up
 ```
 
-## Verify
+For frontend-only iteration:
 
-```bash
-# Liveness
-curl http://localhost:3001/health/live
-
-# Readiness (requires vault + db)
-curl http://localhost:3001/health/ready
-
-# Full status
-curl http://localhost:3001/health | jq .
-
-# Register an application
-curl -s -X POST http://localhost:3001/api/v1/applications \
-  -H "Content-Type: application/json" \
-  -d '{"name":"payments-api","description":"Demo payment service"}' | jq .
-
-# List applications
-curl -s http://localhost:3001/api/v1/applications | jq .
-
-# List transit keys
-curl -s http://localhost:3001/api/v1/keys | jq .
-
-# PKI CA chain
-curl -s http://localhost:3001/api/v1/pki/ca-chain
+```sh
+./scripts/ui-rebuild.sh
 ```
 
-## Credential rotation
+The helper rebuilds/recreates only the UI. API changes require an API rebuild and recreation too. Read [UI development](../../arcanium/ui/README.md) and [operations](../../docs/operations.md).
 
-`vault.js` manages two rotation lifecycles automatically:
+## Checks
 
-| Credential | Refresh at | On failure |
-|---|---|---|
-| Vault token (AppRole) | 80% of TTL | Retry with backoff; `/health/ready` → 503 if exhausted |
-| DB credentials | 75% of lease duration | Retry with backoff; old pool drained after new pool opens |
-
-## Migrations
-
-SQL migrations are applied automatically on startup from `arcanium/api/src/migrations/`.
-Files are applied in filename order; already-applied files are skipped.
-To add a migration, create `arcanium/api/src/migrations/002_name.sql`.
-
-## Logs
-
-```bash
-make arcanium-logs
+```sh
+curl -fsS http://localhost:3001/health/live
+curl -fsS http://localhost:3001/health/ready
+curl -fsS http://localhost:3001/api/v1/cluster
 ```
 
-Log format:
-```
-[startup] arcanium-api listening on port 3001 (production)
-[req] POST   /api/v1/applications 201 12ms
-[vault] db credentials rotated (user=v-approle-...)
-```
+A UI liveness probe is not a Vault readiness check. Healthy standbys should remain healthy in the topology view.
+
+## Changes and migrations
+
+Numbered SQL migrations in `arcanium/api/src/migrations/` are applied at startup. Add migrations for schema changes rather than editing applied files. Provisioning mode, human authentication, HSM enrichment, evidence ingestion and telemetry are optional and require explicit configuration.
+
+See [API reference](../../docs/api.md), [configuration](../../docs/configuration.md) and [security model](../../docs/security.md) for current semantics and limits.

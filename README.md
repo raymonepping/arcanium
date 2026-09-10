@@ -1,74 +1,73 @@
 # Arcanium
 
-Arcanium is a collection of security demonstration stacks for Vault,
-infrastructure, HSM experiments, the Arcanium application, observability and
-test workloads.
+Arcanium is a local enterprise cryptographic lifecycle demonstration platform built around HashiCorp Vault Enterprise. It brings suppliers, applications, keys, approvals, evidence and operational posture into one management experience.
 
-Podman is the canonical container runtime. Project commands use `podman`,
-`podman build` and `podman compose`; they do not depend on the active Docker
-CLI context or Docker Desktop socket.
+Vault owns cryptographic state and enforces policies. Arcanium provides management APIs, orchestration, metadata and a Nuxt frontend. PostgreSQL stores application records and evidence; it is not a substitute for Vault key custody.
 
-## Prerequisites
+## Start here
 
-- Podman 5 or newer
-- a running Podman machine on macOS
-- `podman-compose` as the preferred Compose provider
-- GNU Make
+| Document | Purpose |
+| --- | --- |
+| [Architecture](docs/architecture.md) | Services, trust boundaries, data flows and persistence |
+| [Usage](docs/usage.md) | Daily commands and demonstration walkthrough |
+| [Setup](docs/setup.md) | Prerequisites and first-time provisioning |
+| [Operations](docs/operations.md) | Startup, rebuilds, verification and recovery |
+| [API reference](docs/api.md) | Implemented routes and important semantics |
+| [UI development](arcanium/ui/README.md) | Frontend structure, development and checks |
+| [Troubleshooting](docs/troubleshooting.md) | Health, build, credentials and data issues |
+| [Documentation index](docs/index.md) | All guides and component references |
 
-Verify the local runtime:
+## Platform
+
+- **Management:** Nuxt 4, Vue 3, TypeScript and Express 5, with Node 24 container runtimes.
+- **Custody:** three-node Vault Raft cluster, a separate Transit seal provider, and a Vault HSM demonstration instance backed by SoftHSM through a PKCS#11 proxy.
+- **Tenancy:** supplier namespaces, workload identities, policies and quotas.
+- **Lifecycle:** Transit, PKI, KMIP, optional Managed Keys, provisioning jobs and governed actions.
+- **Assurance:** source-attributed governance records, optional audit-log ingestion, maturity evaluation and optional observability services.
+
+This is a demonstration environment. Licensed capabilities, feature flags and running services determine which functions are available. SoftHSM is software emulation; LocalStack KMS is an optional cloud KMS emulator. See [capabilities and limitations](docs/capabilities.md).
+
+## Run an already provisioned environment
+
+From the repository root:
 
 ```sh
 make check
+make vault-up
+make infra-up
+make arcanium-up
 ```
 
-The project pins `podman-compose` when it is installed. This prevents
-`podman compose` from silently selecting another external provider. Override
-`PODMAN_COMPOSE_PROVIDER` only when deliberately testing compatibility.
+Open [Arcanium](http://localhost:3000). The API is available on [localhost:3001](http://localhost:3001/health). Vault remains independently accessible at [localhost:18200](https://localhost:18200/ui/).
 
-## Commands
+For a fresh environment, follow [setup](docs/setup.md) first. API startup requires configured Vault AppRole and database credentials; starting containers alone does not provision those prerequisites.
+
+## Common commands
 
 ```sh
 make help
 make status
+make vault-status
 make storage
-make network
-make compose-config
+./scripts/ui-rebuild.sh
+make arcanium-logs
 ```
 
-Stacks are independent Compose projects:
+Podman is the canonical runtime. `scripts/compose.sh` selects `podman-compose` by default and uses the repository `.env`. Containers and volumes live inside the Podman VM on macOS. Build targets for the application and HSM demonstration use `linux/amd64`; inspect each stack before assuming native architecture.
 
-```sh
-make infra-up
-make vault-up
-make hsm-up
-make arcanium-up
-make observability-up
-make workloads-up
-```
+## Repository map
 
-Vault is implemented: [Vault setup and recovery](compose/vault/README.md).
-`make vault-up` bootstraps vault-s plus the three-node Raft cluster.
+| Path | Contents |
+| --- | --- |
+| `arcanium/ui/` | Nuxt frontend and same-origin API transport |
+| `arcanium/api/` | Express API, migrations, Vault client, provisioner, worker and scoring |
+| `arcanium/cli/` | Command-line API client |
+| `compose/` | Independently managed container stacks |
+| `terraform/` | Vault bootstrap and demonstration infrastructure |
+| `workloads/` | Encryption, PKI, signing, external supplier and KMIP clients |
+| `scenarios/` | Onboarding, isolation, approvals, failures and evidence exercises |
+| `scripts/` | Runtime, build, bootstrap and verification helpers |
+| `docs/` | Operating and technical guides |
+| `input/`, `prompts/` | Design inputs and implementation prompts; not runtime configuration |
 
-For other stacks, the corresponding `compose/<stack>/compose.yaml` must exist. Until a stack is
-implemented, its command exits with a clear message instead of pretending to
-start an empty environment. See [compose/README.md](compose/README.md).
-
-## Runtime and persistent state
-
-Containers, images, build cache and named volumes live inside the Podman
-machine on macOS. Treat container state as disposable. Important state needs
-an explicit named volume plus a tested export or backup outside the VM.
-
-`make storage` reports current usage and performs no cleanup. `make vault-backup`
-saves and inspects both Vault Raft snapshots on the Mac. Future persistent
-services need their own backup workflows; a generic volume copy is not
-considered a verified backup.
-
-On Apple Silicon, use native `linux/arm64` images by default. A future Vault
-Enterprise HSM proof of concept may declare `platform: linux/amd64` where that
-product constraint requires it; that emulated setup is for testing, not a
-production support claim.
-
-## License
-
-[GPLv3](LICENSE)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [CHANGELOG.md](CHANGELOG.md) for release history. Licensed under [GPLv3](LICENSE).

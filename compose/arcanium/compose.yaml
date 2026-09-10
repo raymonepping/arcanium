@@ -1,4 +1,31 @@
 services:
+  arcanium-ui:
+    image: arcanium-ui:local
+    build:
+      context: ../../arcanium/ui
+      dockerfile: Containerfile
+    container_name: arcanium-ui
+    hostname: arcanium-ui
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NUXT_ARCANIUM_API_INTERNAL: "http://arcanium-api:3001"
+      NODE_ENV: "production"
+    networks:
+      - arcanium-control
+    depends_on:
+      arcanium-api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
   arcanium-api:
     image: arcanium-api:local
     build:
@@ -19,6 +46,17 @@ services:
       VAULT_CACERT: "/vault/tls/ca-chain.pem"
       VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
       VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
+      # Prompt 14.2 — provisioner token for cross-namespace writes
+      VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
+      # Prompt 14.5 — human auth (default off)
+      ARCANIUM_AUTH_ENABLED: "${ARCANIUM_AUTH_ENABLED:-false}"
+      ARCANIUM_DEMO_PERSONA_SWITCH: "${ARCANIUM_DEMO_PERSONA_SWITCH:-false}"
+      # Prompt 15.6 — sync (run in request) | queue (arcanium-worker drains)
+      PROVISION_MODE: "${PROVISION_MODE:-sync}"
+      # Prompt 14.1 — read-only peek at vault-hsm to surface Managed Key custody
+      VAULT_HSM_ADDR: "${VAULT_HSM_ADDR:-https://vault-hsm:8200}"
+      ARCANIUM_HSM_ROLE_ID: "${ARCANIUM_HSM_ROLE_ID:-}"
+      ARCANIUM_HSM_SECRET_ID: "${ARCANIUM_HSM_SECRET_ID:-}"
       POSTGRES_HOST: "postgres"
       POSTGRES_PORT: "5432"
       POSTGRES_DB: "${POSTGRES_DB}"
@@ -37,10 +75,66 @@ services:
       start_period: 30s
       retries: 3
 
+  # Prompt 15.6 — drains provisioning_jobs when PROVISION_MODE=queue.
+  # Harmless (idle) in the default sync mode.
+  arcanium-worker:
+    image: arcanium-api:local
+    build:
+      context: ../../arcanium/api
+      dockerfile: Containerfile
+    container_name: arcanium-worker
+    hostname: arcanium-worker
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    command: ["node", "src/worker.js"]
+    environment:
+      VAULT_ADDR: "https://vault-1:8200"
+      VAULT_CACERT: "/vault/tls/ca-chain.pem"
+      VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
+      VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
+      VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
+      VAULT_HSM_ADDR: "${VAULT_HSM_ADDR:-https://vault-hsm:8200}"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB}"
+      NODE_ENV: "production"
+      # Prompt 15.3 — ingest Vault audit evidence into the trail (default off).
+      # Reads the world-readable audit device (file2, mode 0644) — see docs/evidence-model.md.
+      EVIDENCE_INGEST_ENABLED: "${EVIDENCE_INGEST_ENABLED:-false}"
+      AUDIT_LOG_PATH: "${AUDIT_LOG_PATH:-/vault/audit/vault-audit-r.log}"
+      # Prompt 15.5 — the emulated KMS (compose/kms-sim, LocalStack). Used only to
+      # probe reachability so the keys page can show "unreachable" honestly.
+      KMS_SIM_URL: "${KMS_SIM_URL:-http://arcanium-localstack:4566}"
+    volumes:
+      - ../../vault-tls:/vault/tls:ro
+      - vault-1-audit:/vault/audit:ro
+    networks:
+      - arcanium-control
+      - arcanium-vault-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'node src/worker.js' >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      arcanium-api:
+        condition: service_healthy
+
 networks:
   arcanium-control:
     name: arcanium-control
     external: true
   arcanium-vault-internal:
     name: arcanium-vault-internal
+    external: true
+
+volumes:
+  # Owned by the vault compose project — mounted read-only for evidence ingestion.
+  vault-1-audit:
+    name: arcanium-vault_vault-1-audit
     external: true

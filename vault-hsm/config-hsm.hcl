@@ -32,6 +32,16 @@ seal "pkcs11" {
   generate_key   = "true"
 }
 
+# ── Managed Keys library (Prompt 14.1) ──────────────────────────────────────
+# Registers the same pkcs11-proxy library for application key custody.
+# A `sys/managed-keys/pkcs11/<name>` entry references this by `library = "softhsm-proxy"`.
+# Vault delegates transit sign/verify for a `type = managed_key` key to SoftHSM
+# over PKCS#11 — the private key is generated in and never leaves the token.
+kms_library "pkcs11" {
+  name    = "softhsm-proxy"
+  library = "/usr/local/lib/libpkcs11-proxy.so"
+}
+
 storage "raft" {
   path    = "/vault/file"
   node_id = "vault-hsm"

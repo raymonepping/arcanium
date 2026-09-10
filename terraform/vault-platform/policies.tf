@@ -83,6 +83,18 @@ resource "vault_policy" "arcanium_admin" {
     path "sys/revoke" {
       capabilities = ["update"]
     }
+
+    # ── Control Groups (Enterprise) ──────────────────────────────────────────
+    # Arcanium API acts as the approval proxy — calls authorize on behalf of approver
+    path "sys/control-group/authorize" {
+      capabilities = ["create", "update"]
+    }
+    path "sys/control-group/request" {
+      capabilities = ["read"]
+    }
+    path "sys/wrapping/lookup" {
+      capabilities = ["update"]
+    }
   EOT
 }
 

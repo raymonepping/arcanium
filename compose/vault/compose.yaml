@@ -1,6 +1,6 @@
 # Adapted from vault_reference/docker-compose.yml; only the primary cluster.
 x-vault: &vault
-  image: docker.io/hashicorp/vault-enterprise:2.0.3-ent
+  image: docker.io/hashicorp/vault-enterprise:2.1.0-ent
   user: "100:1000"
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -37,7 +37,9 @@ services:
     <<: *vault
     container_name: arcanium-vault_1
     hostname: vault-1
-    ports: ["127.0.0.1:18200:8200"]
+    ports:
+      - "127.0.0.1:18200:8200"
+      - "127.0.0.1:15696:5696"
     volumes:
       - vault-1-data:/vault/file
       - vault-1-audit:/vault/audit

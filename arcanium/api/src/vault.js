@@ -60,6 +60,9 @@ function vaultRequest(method, path, body, token) {
   });
 }
 
+// Export the raw request helper so routes can make arbitrary Vault calls.
+export { vaultRequest };
+
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
   authenticated: false,
@@ -173,6 +176,17 @@ export function getStatus() {
   };
 }
 
+// Return the current Vault token (used by routes that call Vault directly).
+export function getToken() {
+  return state.token;
+}
+
+// Token for provisioning writes. Prefers VAULT_PROVISIONER_TOKEN (needed for
+// cross-namespace operations); falls back to the AppRole token (root ns only).
+export function getProvisionerToken() {
+  return config.vault.provisionerToken || state.token;
+}
+
 export async function listTransitKeys() {
   const res = await vaultRequest("LIST", "transit/keys", null, state.token);
   return res.data?.keys ?? [];
@@ -210,6 +224,184 @@ export async function listPkiRoles() {
     if (err.vaultStatus === 404) return [];
     throw err;
   }
+}
+
+// ── Namespace-scoped Vault requests ───────────────────────────────────────
+// Used by supplier routes to query keys in a supplier's Vault namespace.
+function vaultRequestNs(method, path, body, token, namespace) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(`/v1/${path}`, config.vault.addr);
+    const data = body ? JSON.stringify(body) : null;
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["X-Vault-Token"] = token;
+    if (namespace) headers["X-Vault-Namespace"] = namespace;
+    if (data) headers["Content-Length"] = Buffer.byteLength(data);
+
+    const req = httpsRequest(
+      {
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method,
+        headers,
+        ca: getCa(),
+        rejectUnauthorized: true,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString();
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            const err = new Error(
+              `Vault ${method} ${path} (ns=${namespace}) → ${res.statusCode}: ${text}`,
+            );
+            err.vaultStatus = res.statusCode;
+            return reject(err);
+          }
+          const ct = res.headers["content-type"] || "";
+          try {
+            resolve(ct.includes("application/json") ? JSON.parse(text) : text);
+          } catch (e) {
+            resolve(text);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+// Exported for the provisioner (Prompt 14.2): arbitrary namespace-scoped calls.
+export { vaultRequestNs };
+
+export async function listNamespaceTransitKeys(namespace) {
+  try {
+    const res = await vaultRequestNs(
+      "LIST",
+      "transit/keys",
+      null,
+      state.token,
+      namespace,
+    );
+    return res.data?.keys ?? [];
+  } catch (err) {
+    if (err.vaultStatus === 404) return [];
+    throw err;
+  }
+}
+
+// ── vault-hsm read client (Prompt 14.1 — Managed Key custody) ──────────────
+// A separate, read-only AppRole session against vault-hsm so the API can show
+// the SoftHSM-backed document-signing-key in the inventory with correct custody.
+// Never used for crypto operations — list + read metadata only.
+const hsmState = { token: null, expiry: 0 };
+
+function hsmHttp(method, path, body, token) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(`/v1/${path}`, config.hsm.addr);
+    const data = body ? JSON.stringify(body) : null;
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["X-Vault-Token"] = token;
+    if (data) headers["Content-Length"] = Buffer.byteLength(data);
+    const req = httpsRequest(
+      {
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method,
+        headers,
+        ca: getCa(),
+        rejectUnauthorized: true,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString();
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            const err = new Error(
+              `vault-hsm ${method} ${path} → ${res.statusCode}`,
+            );
+            err.vaultStatus = res.statusCode;
+            return reject(err);
+          }
+          try {
+            resolve(text ? JSON.parse(text) : {});
+          } catch {
+            resolve(text);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+async function hsmLogin() {
+  const res = await hsmHttp("POST", "auth/approle/login", {
+    role_id: config.hsm.roleId,
+    secret_id: config.hsm.secretId,
+  });
+  hsmState.token = res.auth.client_token;
+  hsmState.expiry =
+    Date.now() + (res.auth.lease_duration ?? 3600) * 1000 - 60000;
+}
+
+async function hsmRequest(method, path) {
+  if (!config.hsm.enabled) throw new Error("vault-hsm client not configured");
+  if (!hsmState.token || Date.now() > hsmState.expiry) await hsmLogin();
+  try {
+    return await hsmHttp(method, path, null, hsmState.token);
+  } catch (err) {
+    if (err.vaultStatus === 403) {
+      await hsmLogin();
+      return hsmHttp(method, path, null, hsmState.token);
+    }
+    throw err;
+  }
+}
+
+/** List transit keys held on vault-hsm. Returns [] if the client is disabled/unreachable. */
+export async function listHsmTransitKeys() {
+  if (!config.hsm.enabled) return [];
+  try {
+    const res = await hsmRequest("LIST", "transit/keys");
+    return res.data?.keys ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Read one vault-hsm transit key's metadata, enriched with its managed-key backing. */
+export async function getHsmTransitKey(name) {
+  const res = await hsmRequest(
+    "GET",
+    `transit/keys/${encodeURIComponent(name)}`,
+  );
+  const meta = res.data ?? {};
+  let managedKey = null;
+  if (meta.type === "managed_key") {
+    try {
+      const mk = await hsmRequest("LIST", "sys/managed-keys/pkcs11");
+      const names = mk.data?.keys ?? [];
+      // Best-effort: attach the first pkcs11 managed key's details for display.
+      if (names.length) {
+        const detail = await hsmRequest(
+          "GET",
+          `sys/managed-keys/pkcs11/${encodeURIComponent(names[0])}`,
+        );
+        managedKey = { name: names[0], ...(detail.data ?? {}) };
+      }
+    } catch {
+      /* metadata only — ignore */
+    }
+  }
+  return { ...meta, name, _hsm: true, _managedKey: managedKey };
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────

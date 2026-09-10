@@ -35,12 +35,10 @@ healthRouter.get("/ready", async (_req, res) => {
     await ping();
     res.json({ status: "ready" });
   } catch (err) {
-    res
-      .status(503)
-      .json({
-        status: "unavailable",
-        reason: `database unreachable: ${err.message}`,
-      });
+    res.status(503).json({
+      status: "unavailable",
+      reason: `database unreachable: ${err.message}`,
+    });
   }
 });
 

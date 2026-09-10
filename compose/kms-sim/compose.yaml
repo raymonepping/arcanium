@@ -1,0 +1,38 @@
+# kms-sim — Prompt 15.5
+# An emulated cloud KMS (LocalStack, KMS service only) so the Key Management
+# secrets engine's distribute → rotate → remove lifecycle can be demonstrated
+# end to end WITHOUT connecting a real AWS/Azure/GCP account. Nothing leaves the
+# machine. The UI labels anything distributed here as "emulated (LocalStack)".
+
+services:
+  localstack:
+    # Pinned to a Community 3.x release — KMS is a Community service and this tag
+    # starts with no auth token. The rolling `latest` now refuses to boot without
+    # a LocalStack licence, which defeats the "nothing leaves the machine" point.
+    image: docker.io/localstack/localstack:3.8
+    container_name: arcanium-localstack
+    environment:
+      SERVICES: "kms"
+      DEBUG: "0"
+      AWS_DEFAULT_REGION: "us-east-1"
+    ports:
+      - "127.0.0.1:4566:4566"
+    # arcanium-control  — reachable from arcanium-api for status checks
+    # arcanium-vault-internal — reachable from the Vault nodes, which are the
+    #   ones that actually call the emulated KMS endpoint during distribution
+    networks: [arcanium-control, arcanium-vault-internal]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health | grep -Eq '\"kms\": \"(available|running)\"' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+networks:
+  arcanium-control:
+    name: arcanium-control
+    external: true
+  arcanium-vault-internal:
+    name: arcanium-vault-internal
+    external: true

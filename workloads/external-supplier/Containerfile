@@ -1,0 +1,7 @@
+FROM docker.io/library/node:22-alpine AS runtime
+WORKDIR /app
+USER node
+COPY --chown=node:node src/ ./src/
+COPY --chown=node:node package.json ./
+EXPOSE 3005
+CMD ["node", "src/index.js"]

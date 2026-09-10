@@ -1,6 +1,6 @@
 # Arcanium — Infrastructure Stack
 
-PostgreSQL 16 persistent store for the Arcanium API.
+PostgreSQL 16 persistent store for the Arcanium API, with Adminer on `http://localhost:5050` for local database administration. PostgreSQL is published on `127.0.0.1:5432`; both services join `arcanium-control`.
 
 ## Credential model
 
@@ -53,4 +53,4 @@ podman exec arcanium-postgres pg_isready -U arcanium
 
 Joins the external `arcanium-control` network. Reachable from:
 - `postgres:5432` (within the network)
-- Terraform host via `127.0.0.1:5432` (if port is published — not needed for Vault DB engine)
+- the host via `127.0.0.1:5432`

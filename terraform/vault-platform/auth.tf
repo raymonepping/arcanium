@@ -8,11 +8,14 @@ resource "vault_auth_backend" "approle" {
 # Role used by the Arcanium API service to authenticate and retrieve dynamic
 # database credentials and perform transit/PKI operations.
 resource "vault_approle_auth_backend_role" "arcanium_api" {
-  backend        = vault_auth_backend.approle.path
-  role_name      = "arcanium-api"
-  token_policies = ["arcanium-admin", "arcanium-transit", "arcanium-pki"]
-  token_ttl      = 3600   # 1 hour — matches DB dynamic cred TTL
-  token_max_ttl  = 14400  # 4 hours
+  backend   = vault_auth_backend.approle.path
+  role_name = "arcanium-api"
+  # "automation" is the Sentinel marker policy (terraform/vault-sentinel/) — its
+  # presence lets the platform's own worker rotate keys via the
+  # rotation-from-automation RGP; a human token carries no such policy.
+  token_policies = ["arcanium-admin", "arcanium-transit", "arcanium-pki", "automation"]
+  token_ttl      = 3600  # 1 hour — matches DB dynamic cred TTL
+  token_max_ttl  = 14400 # 4 hours
 }
 
 # Role used by workload containers to authenticate and read their own secrets.

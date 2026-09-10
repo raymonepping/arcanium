@@ -23,6 +23,18 @@ services:
       retries: 10
       start_period: 15s
 
+  adminer:
+    image: docker.io/library/adminer:latest
+    container_name: arcanium-adminer
+    hostname: adminer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5050:8080"
+    networks: [default]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 networks:
   default:
     name: arcanium-control

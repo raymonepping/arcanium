@@ -19,12 +19,19 @@ seal "transit" {
 }
 
 listener "tcp" {
-  address       = "0.0.0.0:8200"
-  tls_cert_file = "/vault/config/tls/vault.crt"
-  tls_key_file  = "/vault/config/tls/vault.key"
+  address         = "0.0.0.0:8200"
+  tls_cert_file   = "/vault/config/tls/vault.crt"
+  tls_key_file    = "/vault/config/tls/vault.key"
   tls_min_version = "tls13"
-
 }
+
+# No separate HCL tcp listener for KMIP port 5696.
+# The Vault KMIP secrets engine manages its own TLS listener internally:
+#   - TLS cert issued by the KMIP engine's own PKI CA (vault-kmip-default-intermediate)
+#   - Client cert verification uses the same KMIP PKI CA
+# pykmip wraps the socket in SSL itself; a HCL tcp listener on 5696 would create
+# double-TLS (pykmip SSL over Vault TLS) causing KMIPProtocol read errors.
+# Port 5696 is exposed in compose/vault/compose.yaml for the KMIP engine to bind.
 
 storage "raft" {
   path    = "/vault/file"

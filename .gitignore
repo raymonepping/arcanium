@@ -12,6 +12,7 @@ Thumbs.db
 input/
 prompts/
 images/
+lics/
 git_commit.sh
 FOLDER_TREE.md
 
@@ -95,7 +96,6 @@ db.sqlite3
 instance/
 .webassets-cache
 .scrapy
-docs/_build/
 site/
 celerybeat-schedule
 profile_default/
@@ -232,3 +232,4 @@ input/*
 !input/.gitkeep
 output/*
 !output/.gitkeep
+compose/observability/prometheus/vault-token
