@@ -1,0 +1,11 @@
+# kmip-client is the only Python component in the repo. black and isort disagree
+# on multi-line import wrapping unless isort is told to match black — without this
+# the pre-commit sanity_check hook can never converge (each formatter reverts the
+# other). `profile = "black"` makes isort emit exactly black's style.
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]

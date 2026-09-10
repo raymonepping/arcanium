@@ -24,9 +24,14 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from kmip.core.enums import (AttributeType, CryptographicAlgorithm,
-                             CryptographicUsageMask, ObjectType, ResultStatus,
-                             RevocationReasonCode)
+from kmip.core.enums import (
+    AttributeType,
+    CryptographicAlgorithm,
+    CryptographicUsageMask,
+    ObjectType,
+    ResultStatus,
+    RevocationReasonCode,
+)
 from kmip.core.factories.attributes import AttributeFactory
 from kmip.services.kmip_client import KMIPProxy
 
