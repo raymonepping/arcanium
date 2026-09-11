@@ -90,6 +90,25 @@ run "network" make network
 run "Vault: prepare TLS/license material" make vault-prepare
 run "Vault: bootstrap main cluster + vault-s (idempotent — no-op if already initialized)" make vault-up
 run "Vault: status check" make vault-status
+
+# Every `make tf-*` target below assumes an already-authenticated
+# VAULT_TOKEN in the caller's shell (docs/local-dependency-audit.md
+# finding 5) — true for an interactive operator who ran `vault login`,
+# false for this script running non-interactively. Self-authenticate the
+# same way scripts/workload-credentials.sh does: the cluster's own root
+# token from .secrets/vault, never requiring a prior manual login. Only
+# done once the cluster is confirmed up (the two steps above) — this file
+# does not exist before `make vault-up` has run at least once.
+# Not gated on $STEP/$FROM (unlike the numbered steps around it) — a
+# --from resume must still get a fresh token, and re-exporting an already-
+# valid one is harmless and idempotent.
+if [ -f .secrets/vault/cluster-init.json ]; then
+  export VAULT_ADDR=https://127.0.0.1:18200
+  export VAULT_CACERT="$ROOT/vault-tls/ca-chain.pem"
+  export VAULT_TOKEN
+  VAULT_TOKEN=$(jq -er '.root_token' .secrets/vault/cluster-init.json)
+fi
+
 run "Terraform: platform baseline (auth, policies, namespaces, audit)" make tf-platform
 run "Terraform: transit + pki + database" bash -c "make tf-transit && make tf-pki && make tf-database"
 run "infra: PostgreSQL (+ adminer)" make infra-up

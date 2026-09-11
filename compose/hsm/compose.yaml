@@ -65,7 +65,15 @@ services:
     image: arcanium-vault-hsm:local
     container_name: arcanium-vault_hsm
     hostname: vault-hsm
-    platform: linux/amd64
+    # No hardcoded platform: the Makefile's hsm-bootstrap target builds this
+    # image for the host's own native architecture (uname -m, fixed for
+    # Apple Silicon this prompt) — a hardcoded linux/amd64 here would demand
+    # a platform the locally-built image doesn't match, and podman-compose
+    # responds to that mismatch by trying to PULL a same-name image from a
+    # registry instead of using the mismatched local one (found live: this
+    # broke a from-scratch vault-hsm build during the pre-24 rehydrate
+    # scenario run). softhsm-server below is a pulled, vendor-multi-arch
+    # image and is intentionally left on linux/amd64 — it already works.
     user: "100:1000"
     cap_drop: [ALL]
     cap_add: [IPC_LOCK]
