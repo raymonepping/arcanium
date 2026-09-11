@@ -37,6 +37,17 @@ if [ -f .env ]; then
     case "$key" in
     '' | '#'*) continue ;;
     esac
+    # Explicitly non-secret despite matching a sensitive substring below —
+    # found live: SOFTHSM_TOKEN_LABEL is a human-readable identifier
+    # ("arcanium-hsm"), not a credential, and its value legitimately
+    # coincides with this project's volume-naming convention
+    # (arcanium-hsm_softhsm-data etc.), which made the naive *TOKEN* match
+    # below flag it as a false-positive "leak" of a benign label. Narrowly
+    # scoped to *_LABEL only — a broader exclusion (e.g. *_ID) would wrongly
+    # wave through real secrets like ARCANIUM_VAULT_SECRET_ID.
+    case "$key" in
+    *_LABEL) continue ;;
+    esac
     # Only check values that look credential-shaped by key name, and are
     # non-trivial in length (skip short/boolean/mode values — those are
     # meant to appear, e.g. ARCANIUM_AUTH_ENABLED=false).

@@ -1,0 +1,52 @@
+baseline:
+  id: 2026-09-11_post-phase-18-complete
+  purpose: "Prompt 18 Security Foundation complete — 13/13 negative-auth assertions pass, HSM fixed, UI CSP/auth-state fixed, code committed at cb2c73e"
+  captured_at: 2026-09-11T09:25:11Z
+  git:
+    commit: "cb2c73ee90949f96c6d99a7e21c475a45231ed88"
+    branch: "main"
+    tag: "none"
+    dirty: true
+
+runtime:
+  engine: podman
+  architecture: "arm64"
+
+components:
+  arcanium:
+    capture_status: UNKNOWN
+  vault:
+    capture_status: UNKNOWN
+  hsm:
+    capture_status: CAPTURED
+  infra:
+    capture_status: CAPTURED
+  kms:
+    capture_status: UNKNOWN
+  observability:
+    capture_status: CAPTURED
+  workloads:
+    capture_status: CAPTURED
+
+verification:
+  supplier_isolation: UNKNOWN
+  onboarding: UNKNOWN
+  transit: UNKNOWN
+  pki: UNKNOWN
+  kmip: UNKNOWN
+  managed_key: UNKNOWN
+  sentinel_negative: UNKNOWN
+
+capture:
+  overall: PARTIAL
+  checks:
+    source: CAPTURED
+    runtime: CAPTURED
+    arcanium: UNKNOWN
+    vault: UNKNOWN
+    hsm: CAPTURED
+    infra: CAPTURED
+    kms: UNKNOWN
+    observability: CAPTURED
+    workloads: CAPTURED
+    scenarios: CAPTURED

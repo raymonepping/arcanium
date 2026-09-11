@@ -1,0 +1,7 @@
+diff --git a/state/CURRENT b/state/CURRENT
+index 2efd941..ed35bab 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-11_all-healthy
++state/baselines/2026-09-11_post-phase-18-complete
