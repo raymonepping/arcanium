@@ -89,6 +89,26 @@ for node in vault-1 vault-2 vault-3; do
 done
 vault_node vault-1
 vault_root cluster
+# `vault_wait unsealed` above only confirms each node answers "initialized
+# and not sealed" — not that Raft leader election has finished. Any write
+# against the cluster (audit-enable included) needs an active node, and
+# right after a fresh `compose up`, unsealed-but-no-leader-yet is a real,
+# transient window (found live, repeatedly, during pre-24's hostile
+# restart scenario: "local node not active but active cluster node not
+# found", self-resolving within a few seconds). Retry rather than
+# fail-fast on this one specific, known-transient condition.
+leader_wait_attempts=0
+until vault audit list -format=json >/tmp/vault-bootstrap-audit-check.$$ 2>&1; do
+  leader_wait_attempts=$((leader_wait_attempts + 1))
+  if grep -q "active cluster node not found" /tmp/vault-bootstrap-audit-check.$$ && [ "$leader_wait_attempts" -lt 15 ]; then
+    sleep 2
+    continue
+  fi
+  cat /tmp/vault-bootstrap-audit-check.$$ >&2
+  rm -f /tmp/vault-bootstrap-audit-check.$$
+  exit 1
+done
+rm -f /tmp/vault-bootstrap-audit-check.$$
 if ! vault audit list -format=json | jq -e 'has("primary/")' >/dev/null; then
   vault audit enable -path=primary file file_path=/vault/audit/vault-audit.log >/dev/null
 fi
