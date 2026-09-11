@@ -1,0 +1,5 @@
+{
+  "openldap": "running",
+  "ldap_admin": "down",
+  "keycloak": "running"
+}
