@@ -1,0 +1,944 @@
+[
+  {
+    "name": "zero_trust_openldap",
+    "image": "docker.io/osixia/openldap:1.5.0",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 389,
+        "host_port": 1389,
+        "range": 1,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "",
+        "container_port": 636,
+        "host_port": 1636,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-data"
+    ]
+  },
+  {
+    "name": "zero_trust_ldap-admin",
+    "image": "docker.io/osixia/phpldapadmin:0.9.0",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 80,
+        "host_port": 8081,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-data"
+    ]
+  },
+  {
+    "name": "zero_trust_ollama",
+    "image": "docker.io/library/zero_trust-ollama:latest",
+    "state": "exited",
+    "status": "Exited (137) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 11434,
+        "host_port": 11434,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-data",
+      "zero_trust_net-egress"
+    ]
+  },
+  {
+    "name": "zero_trust_frontend",
+    "image": "docker.io/repping/zero-trust-frontend:1.8.18",
+    "state": "exited",
+    "status": "Exited (143) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 5173,
+        "host_port": 8088,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-backend",
+      "zero_trust_net-frontend"
+    ]
+  },
+  {
+    "name": "gitlab",
+    "image": "docker.io/gitlab/gitlab-ee:latest",
+    "state": "exited",
+    "status": "Exited (137) 5 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 22,
+        "host_port": 2222,
+        "range": 1,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "",
+        "container_port": 443,
+        "host_port": 8443,
+        "range": 1,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "",
+        "container_port": 8929,
+        "host_port": 8929,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "gitlab_default"
+    ]
+  },
+  {
+    "name": "gitlab-vault",
+    "image": "docker.io/hashicorp/vault-enterprise:1.21.3-ent",
+    "state": "exited",
+    "status": "Exited (0) 5 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 8200,
+        "host_port": 8200,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "gitlab_default"
+    ]
+  },
+  {
+    "name": "openldap",
+    "image": "docker.io/osixia/openldap:1.5.0",
+    "state": "exited",
+    "status": "Exited (0) 5 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 389,
+        "host_port": 1389,
+        "range": 1,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "",
+        "container_port": 636,
+        "host_port": 1636,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "gitlab_default"
+    ]
+  },
+  {
+    "name": "ldap-admin",
+    "image": "docker.io/osixia/phpldapadmin:0.9.0",
+    "state": "exited",
+    "status": "Exited (0) 5 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 80,
+        "host_port": 8084,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "gitlab_default"
+    ]
+  },
+  {
+    "name": "zero_trust_boundary_ingress",
+    "image": "docker.io/hashicorp/boundary-enterprise:0.21.2-ent",
+    "state": "exited",
+    "status": "Exited (137) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 9202,
+        "host_port": 9202,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-boundary-control",
+      "zero_trust_net-boundary-dmz"
+    ]
+  },
+  {
+    "name": "zero_trust_boundary_egress",
+    "image": "docker.io/hashicorp/boundary-enterprise:0.21.2-ent",
+    "state": "exited",
+    "status": "Exited (137) 4 months ago",
+    "ports": [],
+    "networks": [
+      "zero_trust_net-boundary-private",
+      "zero_trust_net-data",
+      "zero_trust_net-boundary-dmz"
+    ]
+  },
+  {
+    "name": "zero_trust_boundary_controller",
+    "image": "docker.io/hashicorp/boundary-enterprise:0.21.2-ent",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 9200,
+        "host_port": 9200,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-boundary-control"
+    ]
+  },
+  {
+    "name": "zero_trust_db",
+    "image": "docker.io/library/zero_trust-db:latest",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 5432,
+        "host_port": 5432,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-boundary-private",
+      "zero_trust_net-data"
+    ]
+  },
+  {
+    "name": "zero_trust_boundary_target",
+    "image": "docker.io/library/nginx:1.30.0-alpine",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [],
+    "networks": [
+      "zero_trust_net-boundary-private"
+    ]
+  },
+  {
+    "name": "zero_trust_keycloak",
+    "image": "quay.io/keycloak/keycloak:26.6.1",
+    "state": "exited",
+    "status": "Exited (143) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 8080,
+        "host_port": 8082,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-data"
+    ]
+  },
+  {
+    "name": "zero_trust_minio",
+    "image": "docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z-cpuv1",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 9000,
+        "host_port": 9000,
+        "range": 2,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-boundary-private"
+    ]
+  },
+  {
+    "name": "zero_trust_vault_agent",
+    "image": "docker.io/hashicorp/vault-enterprise:2.0.0-ent",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [],
+    "networks": [
+      "zero_trust_net-data"
+    ]
+  },
+  {
+    "name": "zero_trust_backend",
+    "image": "docker.io/repping/zero-trust-backend:1.8.18",
+    "state": "exited",
+    "status": "Exited (143) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 3000,
+        "host_port": 3000,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-backend",
+      "zero_trust_net-data"
+    ]
+  },
+  {
+    "name": "zero_trust_boundary_db",
+    "image": "docker.io/library/postgres:16.13",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [],
+    "networks": [
+      "zero_trust_net-boundary-control"
+    ]
+  },
+  {
+    "name": "test_vault",
+    "image": "docker.io/hashicorp/vault-enterprise:2.0.0-ent",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 8200,
+        "host_port": 8200,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "test_20_default"
+    ]
+  },
+  {
+    "name": "zero_trust_boundary_ssh",
+    "image": "docker.io/library/zero_trust-boundary-ssh:latest",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 22,
+        "host_port": 2222,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-boundary-private",
+      "zero_trust_net-data"
+    ]
+  },
+  {
+    "name": "zero_trust_vault",
+    "image": "docker.io/hashicorp/vault-enterprise:2.0.0-ent",
+    "state": "exited",
+    "status": "Exited (0) 4 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 8200,
+        "host_port": 8200,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "zero_trust_net-data"
+    ]
+  },
+  {
+    "name": "couchbase",
+    "image": "docker.io/couchbase/server:latest",
+    "state": "exited",
+    "status": "Exited (0) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 8091,
+        "host_port": 8091,
+        "range": 6,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "",
+        "container_port": 11210,
+        "host_port": 11210,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "ollama",
+    "image": "docker.io/ollama/ollama:latest",
+    "state": "exited",
+    "status": "Exited (0) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 11434,
+        "host_port": 11434,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "loki_social_agent",
+    "image": "docker.io/grafana/loki:latest",
+    "state": "exited",
+    "status": "Exited (0) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 3100,
+        "host_port": 3100,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "grafana_social_agent",
+    "image": "docker.io/grafana/grafana:latest",
+    "state": "exited",
+    "status": "Exited (0) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 3000,
+        "host_port": 3002,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "vault_social_agent",
+    "image": "docker.io/hashicorp/vault:latest",
+    "state": "exited",
+    "status": "Exited (0) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 8200,
+        "host_port": 8201,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "couchbase_social_agent",
+    "image": "docker.io/couchbase/server:latest",
+    "state": "exited",
+    "status": "Exited (0) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 8091,
+        "host_port": 9091,
+        "range": 6,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "",
+        "container_port": 11210,
+        "host_port": 12210,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "ollama_social_agent",
+    "image": "docker.io/ollama/ollama:latest",
+    "state": "exited",
+    "status": "Exited (0) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 11434,
+        "host_port": 11435,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "agent_api_social_agent",
+    "image": "localhost/infra_agent_api_social_agent:latest",
+    "state": "exited",
+    "status": "Exited (0) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 8000,
+        "host_port": 8001,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "whatsapp_bridge_social_agent",
+    "image": "localhost/infra_whatsapp_bridge_social_agent:latest",
+    "state": "exited",
+    "status": "Exited (137) 3 months ago",
+    "ports": [
+      {
+        "host_ip": "",
+        "container_port": 3000,
+        "host_port": 3001,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "infra_agent-network"
+    ]
+  },
+  {
+    "name": "arcanium-vault_s",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "running",
+    "status": "Up 6 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18190,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-vault_1",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "running",
+    "status": "Up 6 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 5696,
+        "host_port": 15696,
+        "range": 1,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18200,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-vault_2",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "running",
+    "status": "Up 6 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18201,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-vault_3",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "running",
+    "status": "Up 6 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18202,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-prometheus",
+    "image": "docker.io/prom/prometheus:latest",
+    "state": "running",
+    "status": "Up 5 hours",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 9090,
+        "host_port": 9090,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-otel-collector",
+    "image": "docker.io/otel/opentelemetry-collector-contrib:latest",
+    "state": "running",
+    "status": "Up 5 hours",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 4317,
+        "host_port": 4317,
+        "range": 2,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-grafana",
+    "image": "docker.io/grafana/grafana:latest",
+    "state": "running",
+    "status": "Up 5 hours",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3000,
+        "host_port": 3010,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-localstack",
+    "image": "docker.io/localstack/localstack:3.8",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 4566,
+        "host_port": 4566,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-postgres",
+    "image": "docker.io/library/postgres:16-alpine",
+    "state": "running",
+    "status": "Up 6 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 5432,
+        "host_port": 5432,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-adminer",
+    "image": "docker.io/library/adminer:latest",
+    "state": "running",
+    "status": "Up 6 hours",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8080,
+        "host_port": 5050,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-payments-api",
+    "image": "localhost/arcanium-payments-api:local",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3002,
+        "host_port": 3002,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-pki-client",
+    "image": "localhost/arcanium-pki-client:local",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3003,
+        "host_port": 3003,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-kmip-client",
+    "image": "localhost/arcanium-kmip-client:local",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3007,
+        "host_port": 3007,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-document-signing",
+    "image": "localhost/arcanium-document-signing:local",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3004,
+        "host_port": 3004,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-external-supplier",
+    "image": "localhost/arcanium-external-supplier:local",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3005,
+        "host_port": 3005,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-openldap",
+    "image": "docker.io/osixia/openldap:1.5.0",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-keycloak",
+    "image": "docker.io/keycloak/keycloak:26.6.4",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8080,
+        "host_port": 8083,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-softhsm_server",
+    "image": "docker.io/vegardit/softhsm2-pkcs11-proxy:latest-debian",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-vault_hsm",
+    "image": "localhost/arcanium-vault-hsm:local",
+    "state": "running",
+    "status": "Up 5 hours (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18300,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-api",
+    "image": "localhost/arcanium-api:local",
+    "state": "running",
+    "status": "Up 33 seconds (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3001,
+        "host_port": 3001,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-worker",
+    "image": "localhost/arcanium-api:local",
+    "state": "running",
+    "status": "Up 6 minutes (healthy)",
+    "ports": [],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-ui",
+    "image": "localhost/arcanium-ui:local",
+    "state": "running",
+    "status": "Up 2 minutes (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3000,
+        "host_port": 3000,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  }
+]
