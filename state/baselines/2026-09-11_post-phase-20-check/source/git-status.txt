@@ -1,0 +1,21 @@
+ M Makefile
+ M arcanium/api/src/auth/authorize.js
+ M arcanium/api/src/index.js
+ M arcanium/api/src/provisioner/application.js
+ M arcanium/api/src/routes/applications.js
+ M arcanium/api/src/worker.js
+ M arcanium/cli/src/client.js
+ M arcanium/cli/src/index.js
+ M arcanium/ui/app/composables/useArcaniumApi.ts
+ M arcanium/ui/app/layouts/default.vue
+ M arcanium/ui/app/pages/index.vue
+ M arcanium/ui/app/types/arcanium.ts
+ M arcanium/ui/server/routes/gateway/[...path].ts
+ M scenarios/11_security_foundation/test_negative_auth.sh
+ M state/scripts/capture-state.sh
+?? arcanium/api/src/migrations/012_desired_state.sql
+?? arcanium/api/src/reconciliation/
+?? arcanium/api/src/routes/reconciliation.js
+?? arcanium/cli/src/commands/reconciliation.js
+?? arcanium/ui/app/pages/reconciliation/
+?? scenarios/12_reconciliation/

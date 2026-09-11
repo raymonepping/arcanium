@@ -349,3 +349,10 @@ identity-bootstrap: identity-up ## Load the LDAP fixture and configure the Keycl
 scenario-security-foundation: ## Prompt 18 — hostile negative-auth suite (401/403/forged-session/OIDC-callback checks)
 	@chmod +x scenarios/11_security_foundation/test_negative_auth.sh
 	@./scenarios/11_security_foundation/test_negative_auth.sh
+
+# ── Prompt 20 — Desired State + Reconciliation ──────────────────────────────
+.PHONY: scenario-reconciliation
+
+scenario-reconciliation: ## Prompt 20 — hostile drift-detection proof (observe/drift/evidence/reconcile, survives a mid-sequence restart)
+	@chmod +x scenarios/12_reconciliation/test_drift_detection.sh
+	@./scenarios/12_reconciliation/test_drift_detection.sh

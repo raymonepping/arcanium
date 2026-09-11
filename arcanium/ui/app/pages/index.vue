@@ -195,6 +195,42 @@
       </template>
     </div>
 
+    <!-- ── Reconciliation (collapsible, collapsed by default) — Prompt 20 ── -->
+    <div class="dash-card">
+      <div class="card-head">
+        <button class="card-fold" :aria-expanded="showReconciliation" @click="toggleFold('reconciliation')">
+          <span class="fold-caret" :class="{ open: showReconciliation }">▸</span>
+          <h3 class="card-title">Reconciliation <span class="card-title-sub">· {{ reconciliationHeadline }}</span></h3>
+        </button>
+        <NuxtLink to="/reconciliation" class="card-link">Full detail →</NuxtLink>
+      </div>
+      <template v-if="showReconciliation">
+        <div v-if="reconciliationLoading && !reconciliation.length" class="row-loading">Loading reconciliation state…</div>
+        <div v-else-if="!reconciliation.length" class="row-empty">
+          No desired state recorded yet. Provisioning an application with a rotation policy seeds it automatically.
+        </div>
+        <div v-else-if="!driftedRows.length" class="row-empty">
+          All {{ reconciliation.length }} desired-state row{{ reconciliation.length === 1 ? '' : 's' }} compliant — Vault matches intent.
+        </div>
+        <div v-else class="table-wrap">
+          <table class="arc-table">
+            <thead>
+              <tr><th>Application</th><th>Key</th><th>Desired</th><th>Observed</th><th>Disposition</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in driftedRows" :key="r.desired_state_id">
+                <td>{{ r.application_name }}</td>
+                <td class="mono">{{ r.key_name }}</td>
+                <td>{{ r.desired_value?.days }}d</td>
+                <td>{{ r.latest_run?.observed_value?.days ?? '—' }}{{ r.latest_run?.observed_value ? 'd' : '' }}</td>
+                <td><span class="status-pill" :class="r.disposition">{{ r.disposition.replace('_', ' ') }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </div>
+
     <!-- ── Recent evidence (collapsible, collapsed by default) ── -->
     <div class="dash-card">
       <div class="card-head">
@@ -236,12 +272,12 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useArcaniumApi } from '~/composables/useArcaniumApi'
 import { useClusterHealth } from '~/composables/useClusterHealth'
-import type { ApprovalRecord, Supplier, Application, TransitKey } from '~/types/arcanium'
+import type { ApprovalRecord, Supplier, Application, TransitKey, ReconciliationRow } from '~/types/arcanium'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: 'Dashboard' })
 
-const { applications: fetchApps, keys: fetchKeys, approvals: fetchApprovals, suppliers: fetchSuppliers, evidenceTrail, supplierIsolation } = useArcaniumApi()
+const { applications: fetchApps, keys: fetchKeys, approvals: fetchApprovals, suppliers: fetchSuppliers, evidenceTrail, supplierIsolation, reconciliationList } = useArcaniumApi()
 const { nodes: clusterNodes, loading: clusterLoading, error: clusterError, status: clusterStatus, healthyCount } = useClusterHealth()
 
 const loading = ref(true)
@@ -255,9 +291,11 @@ const allApprovals = ref<ApprovalRecord[]>([])
 const cryptoOpsIngested = ref(0)
 const stageCounts = ref<Record<string, number>>({})
 const isolation = ref<{ verified: boolean } | null>(null)
+const reconciliation = ref<ReconciliationRow[]>([])
+const reconciliationLoading = ref(true)
 
 // Collapsible dashboard panels — collapsed by default, the choice is remembered per browser.
-const folds = ref<Record<string, boolean>>({ evidence: false, cluster: false })
+const folds = ref<Record<string, boolean>>({ evidence: false, cluster: false, reconciliation: false })
 onMounted(() => {
   for (const k of Object.keys(folds.value)) {
     try { folds.value[k] = localStorage.getItem(`arc.dash.${k}`) === 'open' } catch { /* private mode */ }
@@ -269,6 +307,14 @@ function toggleFold(k: string) {
 }
 const showEvidence = computed(() => folds.value.evidence)
 const showCluster = computed(() => folds.value.cluster)
+const showReconciliation = computed(() => folds.value.reconciliation)
+
+const driftedRows = computed(() => reconciliation.value.filter(r => r.observation_status === 'DRIFTED'))
+const reconciliationHeadline = computed(() => {
+  if (reconciliationLoading.value && !reconciliation.value.length) return 'checking…'
+  if (!reconciliation.value.length) return 'no desired state yet'
+  return `${driftedRows.value.length} drifted of ${reconciliation.value.length}`
+})
 
 const stats = computed(() => ({
   suppliers: suppliers.value.length,
@@ -412,6 +458,7 @@ onMounted(async () => {
   loading.value = false
   await loadApprovals()
   supplierIsolation().then(r => { isolation.value = r }).catch(() => { isolation.value = null })
+  reconciliationList().then(r => { reconciliation.value = Array.isArray(r) ? r : [] }).catch(() => {}).finally(() => { reconciliationLoading.value = false })
 })
 usePolling(loadApprovals, 10000)
 watch(healthyCount, firePulse)
@@ -562,6 +609,9 @@ watch(healthyCount, firePulse)
 .status-pill.pending { background: var(--arc-pending-bg); color: var(--arc-governance); }
 .status-pill.approved { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .status-pill.rejected { background: var(--arc-critical-bg); color: var(--arc-critical); }
+.status-pill.OPEN { background: rgba(148,163,184,0.14); color: var(--arc-text-muted); }
+.status-pill.EXCEPTION_ACCEPTED { background: var(--arc-pending-bg); color: var(--arc-governance); }
+.status-pill.RECONCILED { background: rgba(72,202,228,0.12); color: var(--arc-info); }
 .source-pill { font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
 .source-pill.manual { background: rgba(124,158,245,0.14); color: #9db6f7; }
 .source-pill.local { background: rgba(72,202,228,0.12); color: var(--arc-info); }

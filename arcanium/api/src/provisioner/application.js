@@ -7,6 +7,7 @@
 import { vaultRequest, vaultRequestNs, getProvisionerToken } from "../vault.js";
 import { query } from "../db.js";
 import { runSteps } from "./steps.js";
+import { upsertDesiredState } from "../reconciliation/desiredState.js";
 
 const KEY_TYPES = new Set(["aes256-gcm96", "rsa-4096", "ecdsa-p256"]);
 
@@ -161,6 +162,33 @@ export async function provisionApplication(job, app, opts = {}) {
         return "crypto_profiles updated";
       },
     },
+    // Prompt 20 — seeds desired_state (rotation_period) from the same
+    // rotation_days the operator already declared for the Transit key
+    // itself, so reconciliation has a real desired value to compare Vault
+    // against from provisioning day one, not just for applications
+    // deliberately configured after the fact. No-ops on a re-provision with
+    // the same rotation_days (upsertDesiredState never manufactures fake
+    // intent-change history for an unchanged value).
+    ...(rotationDays
+      ? [
+          {
+            name: `record desired state (rotation_period)`,
+            run: async () => {
+              await upsertDesiredState({
+                applicationId: app.id,
+                keyName,
+                requirement: "rotation_period",
+                desiredValue: { days: rotationDays },
+                source: "onboarding",
+                changedBy: opts.identity?.user ?? "arcanium",
+                changedGroups: opts.identity?.groups ?? [],
+                changedReason: "set at provisioning time",
+              });
+              return `desired rotation_period = ${rotationDays}d`;
+            },
+          },
+        ]
+      : []),
     {
       name: `issue role_id`,
       run: async () => {

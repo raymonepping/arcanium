@@ -1,7 +1,7 @@
 // Transport only: a fixed upstream, allowlisted API paths and no Vault credentials.
 export default defineEventHandler(async (event) => {
   const path = getRouterParam(event, 'path') || ''
-  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
+  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
   const write =
     (event.method === 'POST' && (
       /^api\/v1\/(approvals(\/[a-zA-Z0-9_-]+\/(approve|deny|authorize))?|suppliers|applications|keys)$/.test(path)
@@ -9,8 +9,14 @@ export default defineEventHandler(async (event) => {
       || /^api\/v1\/keys\/[a-zA-Z0-9_-]+\/(rotate|rewrap|destroy)$/.test(path)
       || /^api\/v1\/keymgmt\/[a-zA-Z0-9_.-]+\/(rotate|sync)$/.test(path)
       || /^api\/v1\/auth\/(logout|demo-persona)$/.test(path)
+      // Prompt 20 — reconciliation sweep + governed actions.
+      || /^api\/v1\/reconciliation\/run$/.test(path)
+      || /^api\/v1\/reconciliation\/[a-zA-Z0-9_-]+\/(reconcile|accept-exception)$/.test(path)
     ))
     || (['PATCH', 'DELETE'].includes(event.method) && /^api\/v1\/(suppliers|applications)\/[a-f0-9-]+$/.test(path))
+    // Prompt 20 — editing the desired value itself (input/36's "who changed
+    // the intent, when, why").
+    || (event.method === 'PATCH' && /^api\/v1\/reconciliation\/desired-state\/[a-zA-Z0-9_-]+$/.test(path))
   if (!(event.method === 'GET' && read) && !write) {
     throw createError({ statusCode: 404, statusMessage: 'Route unavailable' })
   }

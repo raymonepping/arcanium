@@ -276,6 +276,13 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
       capabilities: body.capabilities,
       rotation_days: Number(body.rotation_days) || null,
       tls: !!body.tls,
+      // Prompt 20 — carried through to provisionApplication() so the
+      // desired_state (rotation_period) seed it writes records who actually
+      // requested this provisioning, under which OIDC groups.
+      identity: {
+        user: req.identity?.user ?? "arcanium",
+        groups: req.identity?.groups ?? [],
+      },
     };
     const job = await createJob({
       target_type: "application",

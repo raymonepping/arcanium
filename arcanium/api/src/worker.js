@@ -7,9 +7,19 @@ import { init as dbInit, query } from "./db.js";
 import { runMigrations } from "./migrations.js";
 import { dispatchJob } from "./provisioner/dispatch.js";
 import { ingestAuditLog } from "./evidence/ingest.js";
+import { runSweep } from "./reconciliation/engine.js";
 
 const POLL_MS = Number(process.env.WORKER_POLL_MS || 3000);
+// Prompt 20 — Deliverable 3: runs on a schedule, reusing this existing job
+// loop rather than a second poller. Every ~60s by default (POLL_MS ticks),
+// same "every Nth loop iteration" pattern the evidence ingest tick already
+// uses just below.
+const RECONCILE_EVERY_TICKS = Math.max(
+  1,
+  Math.round(Number(process.env.WORKER_RECONCILE_MS || 60000) / POLL_MS),
+);
 let ingestTick = 0;
+let reconcileTick = 0;
 
 async function main() {
   console.log("[worker] starting");
@@ -38,6 +48,21 @@ async function main() {
             console.log(`[worker] ingested ${r.ingested} evidence rows`);
         } catch (e) {
           console.error(`[worker] evidence ingest error: ${e.message}`);
+        }
+      }
+      // Prompt 20 — periodic reconciliation sweep, estate-wide (the worker
+      // has no tenant scope of its own; per-tenant scoping only applies to
+      // a human session's on-demand POST /reconciliation/run).
+      if (++reconcileTick % RECONCILE_EVERY_TICKS === 0) {
+        try {
+          const results = await runSweep();
+          const drifted = results.filter((r) => r.status === "DRIFTED").length;
+          if (results.length)
+            console.log(
+              `[worker] reconciliation sweep: ${results.length} checked, ${drifted} drifted`,
+            );
+        } catch (e) {
+          console.error(`[worker] reconciliation sweep error: ${e.message}`);
         }
       }
 

@@ -1,0 +1,639 @@
+diff --git a/Makefile b/Makefile
+index 9c6fd75..9b64bb7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -349,3 +349,10 @@ identity-bootstrap: identity-up ## Load the LDAP fixture and configure the Keycl
+ scenario-security-foundation: ## Prompt 18 — hostile negative-auth suite (401/403/forged-session/OIDC-callback checks)
+ 	@chmod +x scenarios/11_security_foundation/test_negative_auth.sh
+ 	@./scenarios/11_security_foundation/test_negative_auth.sh
++
++# ── Prompt 20 — Desired State + Reconciliation ──────────────────────────────
++.PHONY: scenario-reconciliation
++
++scenario-reconciliation: ## Prompt 20 — hostile drift-detection proof (observe/drift/evidence/reconcile, survives a mid-sequence restart)
++	@chmod +x scenarios/12_reconciliation/test_drift_detection.sh
++	@./scenarios/12_reconciliation/test_drift_detection.sh
+diff --git a/arcanium/api/src/auth/authorize.js b/arcanium/api/src/auth/authorize.js
+index 6775a00..2df2a26 100644
+--- a/arcanium/api/src/auth/authorize.js
++++ b/arcanium/api/src/auth/authorize.js
+@@ -54,6 +54,11 @@ const MATRIX = {
+     rewrap: false,
+     destroy_request: true,
+     approve: true,
++    // Prompt 20 — 'reconcile' is the same row as 'rotate' for every persona:
++    // correcting drift back to the desired rotation policy is operationally
++    // equivalent to a rotate-class action (see authorize.js's own header
++    // comment and prompts/20_desired_state_reconciliation.md Deliverable 4).
++    reconcile: false,
+   },
+   architect: {
+     read: true,
+@@ -62,6 +67,7 @@ const MATRIX = {
+     rewrap: false,
+     destroy_request: true,
+     approve: false,
++    reconcile: true,
+   },
+   operator: {
+     read: true,
+@@ -70,6 +76,7 @@ const MATRIX = {
+     rewrap: true,
+     destroy_request: true,
+     approve: false,
++    reconcile: true,
+   },
+   auditor: {
+     read: true,
+@@ -78,6 +85,7 @@ const MATRIX = {
+     rewrap: false,
+     destroy_request: false,
+     approve: false,
++    reconcile: false,
+   },
+   "supplier-admin": {
+     read: "limited",
+@@ -86,6 +94,7 @@ const MATRIX = {
+     rewrap: false,
+     destroy_request: "limited",
+     approve: false,
++    reconcile: "limited",
+   },
+ };
+ 
+@@ -96,6 +105,7 @@ export const ACTIONS = Object.freeze([
+   "rewrap",
+   "destroy_request",
+   "approve",
++  "reconcile", // Prompt 20 — same row as 'rotate' in the matrix (see above)
+ ]);
+ 
+ /**
+diff --git a/arcanium/api/src/index.js b/arcanium/api/src/index.js
+index a946b43..92dbafd 100644
+--- a/arcanium/api/src/index.js
++++ b/arcanium/api/src/index.js
+@@ -24,6 +24,7 @@ import { platformRouter } from "./routes/platform.js";
+ import { keymgmtRouter } from "./routes/keymgmt.js";
+ import { integrationsRouter } from "./routes/integrations.js";
+ import { evidenceRouter } from "./routes/evidence.js";
++import { reconciliationRouter } from "./routes/reconciliation.js";
+ import { authRouter, requireSession } from "./auth/index.js";
+ import { observabilityRouter } from "./routes/observability.js";
+ import { metricsMiddleware, metricsHandler } from "./telemetry/metrics.js";
+@@ -69,6 +70,7 @@ async function main() {
+   app.use("/api/v1/keymgmt", keymgmtRouter);
+   app.use("/api/v1/integrations", integrationsRouter);
+   app.use("/api/v1/evidence", evidenceRouter);
++  app.use("/api/v1/reconciliation", reconciliationRouter);
+   app.use("/api/v1/observability", observabilityRouter);
+   app.use("/api/v1/maturity", maturityRouter);
+ 
+diff --git a/arcanium/api/src/provisioner/application.js b/arcanium/api/src/provisioner/application.js
+index 7dd5e20..d94bf02 100644
+--- a/arcanium/api/src/provisioner/application.js
++++ b/arcanium/api/src/provisioner/application.js
+@@ -7,6 +7,7 @@
+ import { vaultRequest, vaultRequestNs, getProvisionerToken } from "../vault.js";
+ import { query } from "../db.js";
+ import { runSteps } from "./steps.js";
++import { upsertDesiredState } from "../reconciliation/desiredState.js";
+ 
+ const KEY_TYPES = new Set(["aes256-gcm96", "rsa-4096", "ecdsa-p256"]);
+ 
+@@ -161,6 +162,33 @@ export async function provisionApplication(job, app, opts = {}) {
+         return "crypto_profiles updated";
+       },
+     },
++    // Prompt 20 — seeds desired_state (rotation_period) from the same
++    // rotation_days the operator already declared for the Transit key
++    // itself, so reconciliation has a real desired value to compare Vault
++    // against from provisioning day one, not just for applications
++    // deliberately configured after the fact. No-ops on a re-provision with
++    // the same rotation_days (upsertDesiredState never manufactures fake
++    // intent-change history for an unchanged value).
++    ...(rotationDays
++      ? [
++          {
++            name: `record desired state (rotation_period)`,
++            run: async () => {
++              await upsertDesiredState({
++                applicationId: app.id,
++                keyName,
++                requirement: "rotation_period",
++                desiredValue: { days: rotationDays },
++                source: "onboarding",
++                changedBy: opts.identity?.user ?? "arcanium",
++                changedGroups: opts.identity?.groups ?? [],
++                changedReason: "set at provisioning time",
++              });
++              return `desired rotation_period = ${rotationDays}d`;
++            },
++          },
++        ]
++      : []),
+     {
+       name: `issue role_id`,
+       run: async () => {
+diff --git a/arcanium/api/src/routes/applications.js b/arcanium/api/src/routes/applications.js
+index 82587df..42c23b5 100644
+--- a/arcanium/api/src/routes/applications.js
++++ b/arcanium/api/src/routes/applications.js
+@@ -276,6 +276,13 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
+       capabilities: body.capabilities,
+       rotation_days: Number(body.rotation_days) || null,
+       tls: !!body.tls,
++      // Prompt 20 — carried through to provisionApplication() so the
++      // desired_state (rotation_period) seed it writes records who actually
++      // requested this provisioning, under which OIDC groups.
++      identity: {
++        user: req.identity?.user ?? "arcanium",
++        groups: req.identity?.groups ?? [],
++      },
+     };
+     const job = await createJob({
+       target_type: "application",
+diff --git a/arcanium/api/src/worker.js b/arcanium/api/src/worker.js
+index bfb3b60..49f1ef1 100644
+--- a/arcanium/api/src/worker.js
++++ b/arcanium/api/src/worker.js
+@@ -7,9 +7,19 @@ import { init as dbInit, query } from "./db.js";
+ import { runMigrations } from "./migrations.js";
+ import { dispatchJob } from "./provisioner/dispatch.js";
+ import { ingestAuditLog } from "./evidence/ingest.js";
++import { runSweep } from "./reconciliation/engine.js";
+ 
+ const POLL_MS = Number(process.env.WORKER_POLL_MS || 3000);
++// Prompt 20 — Deliverable 3: runs on a schedule, reusing this existing job
++// loop rather than a second poller. Every ~60s by default (POLL_MS ticks),
++// same "every Nth loop iteration" pattern the evidence ingest tick already
++// uses just below.
++const RECONCILE_EVERY_TICKS = Math.max(
++  1,
++  Math.round(Number(process.env.WORKER_RECONCILE_MS || 60000) / POLL_MS),
++);
+ let ingestTick = 0;
++let reconcileTick = 0;
+ 
+ async function main() {
+   console.log("[worker] starting");
+@@ -40,6 +50,21 @@ async function main() {
+           console.error(`[worker] evidence ingest error: ${e.message}`);
+         }
+       }
++      // Prompt 20 — periodic reconciliation sweep, estate-wide (the worker
++      // has no tenant scope of its own; per-tenant scoping only applies to
++      // a human session's on-demand POST /reconciliation/run).
++      if (++reconcileTick % RECONCILE_EVERY_TICKS === 0) {
++        try {
++          const results = await runSweep();
++          const drifted = results.filter((r) => r.status === "DRIFTED").length;
++          if (results.length)
++            console.log(
++              `[worker] reconciliation sweep: ${results.length} checked, ${drifted} drifted`,
++            );
++        } catch (e) {
++          console.error(`[worker] reconciliation sweep error: ${e.message}`);
++        }
++      }
+ 
+       if (!rows.length) {
+         await sleep(POLL_MS);
+diff --git a/arcanium/cli/src/client.js b/arcanium/cli/src/client.js
+index b081a63..3543fd1 100644
+--- a/arcanium/cli/src/client.js
++++ b/arcanium/cli/src/client.js
+@@ -20,6 +20,17 @@ export async function apiPost(path, body) {
+   return res.json().catch(() => null);
+ }
+ 
++export async function apiPatch(path, body) {
++  const res = await fetch(`${config.apiBase}${path}`, {
++    method: "PATCH",
++    headers: { "Content-Type": "application/json" },
++    body: JSON.stringify(body),
++  });
++  if (!res.ok)
++    throw new Error(`PATCH ${path} → ${res.status}: ${await res.text()}`);
++  return res.json().catch(() => null);
++}
++
+ export async function apiDelete(path) {
+   const res = await fetch(`${config.apiBase}${path}`, { method: "DELETE" });
+   if (!res.ok)
+diff --git a/arcanium/cli/src/index.js b/arcanium/cli/src/index.js
+index d512c02..cf3b2dc 100755
+--- a/arcanium/cli/src/index.js
++++ b/arcanium/cli/src/index.js
+@@ -9,6 +9,7 @@ import { registerApprovals } from "./commands/approvals.js";
+ import { registerJobs } from "./commands/jobs.js";
+ import { registerOnboard } from "./commands/onboard.js";
+ import { registerIntegrations } from "./commands/integrations.js";
++import { registerReconciliation } from "./commands/reconciliation.js";
+ 
+ program
+   .name("arcanium")
+@@ -25,6 +26,7 @@ registerApprovals(program);
+ registerJobs(program);
+ registerOnboard(program);
+ registerIntegrations(program);
++registerReconciliation(program);
+ 
+ program.parseAsync(process.argv).catch((err) => {
+   console.error("Error:", err.message);
+diff --git a/arcanium/ui/app/composables/useArcaniumApi.ts b/arcanium/ui/app/composables/useArcaniumApi.ts
+index d51dc81..06e033f 100644
+--- a/arcanium/ui/app/composables/useArcaniumApi.ts
++++ b/arcanium/ui/app/composables/useArcaniumApi.ts
+@@ -2,7 +2,8 @@
+ // Central typed API client. All fetches go through /gateway (same-origin proxy).
+ 
+ import type {
+-  Supplier, Application, TransitKey, ApprovalRecord, ApiHealth, ClusterNode, MaturityReport, ProvisioningJob
++  Supplier, Application, TransitKey, ApprovalRecord, ApiHealth, ClusterNode, MaturityReport, ProvisioningJob,
++  ReconciliationRow, ReconciliationDetail
+ } from '~/types/arcanium'
+ 
+ export function useArcaniumApi() {
+@@ -69,6 +70,20 @@ export function useArcaniumApi() {
+     createSupplier: (body: Pick<Supplier, 'name' | 'vault_namespace' | 'sla_tier'>) => $post<Supplier>('/api/v1/suppliers', body),
+     updateSupplier: (id: string, body: Partial<Supplier>) => $patch<Supplier>(`/api/v1/suppliers/${encodeURIComponent(id)}`, body),
+     deleteSupplier: (id: string) => $delete<void>(`/api/v1/suppliers/${encodeURIComponent(id)}`),
++    // ── Reconciliation (Prompt 20) ────────────────────────
++    reconciliationList: (opts?: { status?: string; disposition?: string }) => {
++      const q = new URLSearchParams(Object.entries(opts ?? {}).filter(([, v]) => v) as [string, string][]).toString()
++      return $get<ReconciliationRow[]>(`/api/v1/reconciliation${q ? `?${q}` : ''}`)
++    },
++    reconciliationDetail: (runId: string) => $get<ReconciliationDetail>(`/api/v1/reconciliation/${encodeURIComponent(runId)}`),
++    runReconciliation: (desiredStateId?: string) =>
++      $post<any[]>('/api/v1/reconciliation/run', desiredStateId ? { desired_state_id: desiredStateId } : {}),
++    reconcileRun: (runId: string) => $post<{ action: any; confirmation_run: any }>(`/api/v1/reconciliation/${encodeURIComponent(runId)}/reconcile`),
++    acceptException: (runId: string, reason: string, expiresAt: string) =>
++      $post<any>(`/api/v1/reconciliation/${encodeURIComponent(runId)}/accept-exception`, { reason, expires_at: expiresAt }),
++    setDesiredState: (desiredStateId: string, days: number, reason?: string) =>
++      $patch<any>(`/api/v1/reconciliation/desired-state/${encodeURIComponent(desiredStateId)}`, { desired_value: { days }, reason }),
++
+     // ── Health ─────────────────────────────────────────────
+     health: () => $get<ApiHealth>('/health'),
+     /** @deprecated use health() */
+diff --git a/arcanium/ui/app/layouts/default.vue b/arcanium/ui/app/layouts/default.vue
+index c6f1fe8..1238719 100644
+--- a/arcanium/ui/app/layouts/default.vue
++++ b/arcanium/ui/app/layouts/default.vue
+@@ -200,7 +200,7 @@ import { useClusterHealth } from '~/composables/useClusterHealth'
+ 
+ const route = useRoute()
+ const router = useRouter()
+-const { approvals } = useArcaniumApi()
++const { approvals, reconciliationList } = useArcaniumApi()
+ const { status: clusterStatus, refresh: refreshCluster, error: clusterError, nodes: clusterNodes, healthyCount, loading: clusterLoading } = useClusterHealth()
+ onMounted(refreshCluster)
+ usePolling(refreshCluster, 5000)
+@@ -268,6 +268,16 @@ async function loadPendingCount() {
+ }
+ onMounted(() => loadPendingCount())
+ 
++// ── Drift count (Prompt 20) ─────────────────────────────────
++const driftCount = ref(0)
++async function loadDriftCount() {
++  try {
++    const data = await reconciliationList({ status: 'drifted' })
++    driftCount.value = Array.isArray(data) ? data.length : 0
++  } catch {}
++}
++onMounted(() => loadDriftCount())
++
+ // ── Cluster status ─────────────────────────────────────────
+ const clusterStatusClass = computed(() => {
+   if (!clusterStatus.value || clusterStatus.value.unknown) return 'unknown'
+@@ -302,6 +312,7 @@ const NAV_ICONS = {
+   integrations: `<svg viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"/><circle cx="12" cy="4" r="2" stroke="currentColor" stroke-width="1.2"/><circle cx="12" cy="12" r="2" stroke="currentColor" stroke-width="1.2"/><path d="M6.2 6.8 10.2 4.8M6.2 9.2l4 2" stroke="currentColor" stroke-width="1.1"/></svg>`,
+   maturity: `<svg viewBox="0 0 16 16" fill="none"><polyline points="2,12 6,7 9,10 14,4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+   observability: `<svg viewBox="0 0 16 16" fill="none"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/></svg>`,
++  reconciliation: `<svg viewBox="0 0 16 16" fill="none"><path d="M13 4a5 5 0 0 0-8.9-1.6M3 12a5 5 0 0 0 8.9 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M13 1.5V4h-2.5M3 14.5V12h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+ }
+ 
+ const isSupplierAdmin = computed(() => persona.value === 'supplier-admin')
+@@ -312,6 +323,7 @@ const navItems = computed(() => {
+     { to: '/suppliers', label: 'Suppliers', icon: NAV_ICONS.suppliers, platform: true },
+     { to: '/applications', label: 'Applications', icon: NAV_ICONS.applications },
+     { to: '/keys', label: 'Keys', icon: NAV_ICONS.keys },
++    { to: '/reconciliation', label: 'Reconciliation', icon: NAV_ICONS.reconciliation, badge: driftCount.value > 0 ? driftCount.value : undefined, badgeType: 'critical' },
+     { to: '/onboard', label: 'Onboard', icon: NAV_ICONS.onboard },
+     {
+       to: '/approvals',
+@@ -341,6 +353,7 @@ const PAGE_TITLES: Record<string, string> = {
+   '/suppliers': 'Suppliers',
+   '/applications': 'Applications',
+   '/keys': 'Key Inventory',
++  '/reconciliation': 'Reconciliation',
+   '/approvals': 'Approvals',
+   '/evidence': 'Evidence Trail',
+   '/jobs': 'Provisioning Jobs',
+@@ -371,6 +384,7 @@ const ALL_CMDS = [
+   { to: '/suppliers', label: 'Suppliers', category: 'Page', icon: NAV_ICONS.suppliers },
+   { to: '/applications', label: 'Applications', category: 'Page', icon: NAV_ICONS.applications },
+   { to: '/keys', label: 'Key Inventory', category: 'Page', icon: NAV_ICONS.keys },
++  { to: '/reconciliation', label: 'Reconciliation', category: 'Page', icon: NAV_ICONS.reconciliation },
+   { to: '/approvals', label: 'Approvals', category: 'Page', icon: NAV_ICONS.approvals },
+   { to: '/evidence', label: 'Evidence Trail', category: 'Page', icon: NAV_ICONS.evidence },
+   { to: '/jobs', label: 'Provisioning Jobs', category: 'Page', icon: NAV_ICONS.jobs },
+@@ -505,6 +519,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+   color: var(--arc-governance);
+   border: 1px solid rgba(255,170,0,0.3);
+ }
++.nav-badge.critical {
++  background: var(--arc-critical-bg);
++  color: var(--arc-critical);
++  border: 1px solid rgba(220,47,2,0.3);
++}
+ 
+ .sidebar-footer {
+   padding: 12px;
+diff --git a/arcanium/ui/app/pages/index.vue b/arcanium/ui/app/pages/index.vue
+index 02e5015..ea6d02e 100644
+--- a/arcanium/ui/app/pages/index.vue
++++ b/arcanium/ui/app/pages/index.vue
+@@ -195,6 +195,42 @@
+       </template>
+     </div>
+ 
++    <!-- ── Reconciliation (collapsible, collapsed by default) — Prompt 20 ── -->
++    <div class="dash-card">
++      <div class="card-head">
++        <button class="card-fold" :aria-expanded="showReconciliation" @click="toggleFold('reconciliation')">
++          <span class="fold-caret" :class="{ open: showReconciliation }">▸</span>
++          <h3 class="card-title">Reconciliation <span class="card-title-sub">· {{ reconciliationHeadline }}</span></h3>
++        </button>
++        <NuxtLink to="/reconciliation" class="card-link">Full detail →</NuxtLink>
++      </div>
++      <template v-if="showReconciliation">
++        <div v-if="reconciliationLoading && !reconciliation.length" class="row-loading">Loading reconciliation state…</div>
++        <div v-else-if="!reconciliation.length" class="row-empty">
++          No desired state recorded yet. Provisioning an application with a rotation policy seeds it automatically.
++        </div>
++        <div v-else-if="!driftedRows.length" class="row-empty">
++          All {{ reconciliation.length }} desired-state row{{ reconciliation.length === 1 ? '' : 's' }} compliant — Vault matches intent.
++        </div>
++        <div v-else class="table-wrap">
++          <table class="arc-table">
++            <thead>
++              <tr><th>Application</th><th>Key</th><th>Desired</th><th>Observed</th><th>Disposition</th></tr>
++            </thead>
++            <tbody>
++              <tr v-for="r in driftedRows" :key="r.desired_state_id">
++                <td>{{ r.application_name }}</td>
++                <td class="mono">{{ r.key_name }}</td>
++                <td>{{ r.desired_value?.days }}d</td>
++                <td>{{ r.latest_run?.observed_value?.days ?? '—' }}{{ r.latest_run?.observed_value ? 'd' : '' }}</td>
++                <td><span class="status-pill" :class="r.disposition">{{ r.disposition.replace('_', ' ') }}</span></td>
++              </tr>
++            </tbody>
++          </table>
++        </div>
++      </template>
++    </div>
++
+     <!-- ── Recent evidence (collapsible, collapsed by default) ── -->
+     <div class="dash-card">
+       <div class="card-head">
+@@ -236,12 +272,12 @@
+ import { ref, computed, onMounted, watch } from 'vue'
+ import { useArcaniumApi } from '~/composables/useArcaniumApi'
+ import { useClusterHealth } from '~/composables/useClusterHealth'
+-import type { ApprovalRecord, Supplier, Application, TransitKey } from '~/types/arcanium'
++import type { ApprovalRecord, Supplier, Application, TransitKey, ReconciliationRow } from '~/types/arcanium'
+ 
+ definePageMeta({ layout: 'default' })
+ useHead({ title: 'Dashboard' })
+ 
+-const { applications: fetchApps, keys: fetchKeys, approvals: fetchApprovals, suppliers: fetchSuppliers, evidenceTrail, supplierIsolation } = useArcaniumApi()
++const { applications: fetchApps, keys: fetchKeys, approvals: fetchApprovals, suppliers: fetchSuppliers, evidenceTrail, supplierIsolation, reconciliationList } = useArcaniumApi()
+ const { nodes: clusterNodes, loading: clusterLoading, error: clusterError, status: clusterStatus, healthyCount } = useClusterHealth()
+ 
+ const loading = ref(true)
+@@ -255,9 +291,11 @@ const allApprovals = ref<ApprovalRecord[]>([])
+ const cryptoOpsIngested = ref(0)
+ const stageCounts = ref<Record<string, number>>({})
+ const isolation = ref<{ verified: boolean } | null>(null)
++const reconciliation = ref<ReconciliationRow[]>([])
++const reconciliationLoading = ref(true)
+ 
+ // Collapsible dashboard panels — collapsed by default, the choice is remembered per browser.
+-const folds = ref<Record<string, boolean>>({ evidence: false, cluster: false })
++const folds = ref<Record<string, boolean>>({ evidence: false, cluster: false, reconciliation: false })
+ onMounted(() => {
+   for (const k of Object.keys(folds.value)) {
+     try { folds.value[k] = localStorage.getItem(`arc.dash.${k}`) === 'open' } catch { /* private mode */ }
+@@ -269,6 +307,14 @@ function toggleFold(k: string) {
+ }
+ const showEvidence = computed(() => folds.value.evidence)
+ const showCluster = computed(() => folds.value.cluster)
++const showReconciliation = computed(() => folds.value.reconciliation)
++
++const driftedRows = computed(() => reconciliation.value.filter(r => r.observation_status === 'DRIFTED'))
++const reconciliationHeadline = computed(() => {
++  if (reconciliationLoading.value && !reconciliation.value.length) return 'checking…'
++  if (!reconciliation.value.length) return 'no desired state yet'
++  return `${driftedRows.value.length} drifted of ${reconciliation.value.length}`
++})
+ 
+ const stats = computed(() => ({
+   suppliers: suppliers.value.length,
+@@ -412,6 +458,7 @@ onMounted(async () => {
+   loading.value = false
+   await loadApprovals()
+   supplierIsolation().then(r => { isolation.value = r }).catch(() => { isolation.value = null })
++  reconciliationList().then(r => { reconciliation.value = Array.isArray(r) ? r : [] }).catch(() => {}).finally(() => { reconciliationLoading.value = false })
+ })
+ usePolling(loadApprovals, 10000)
+ watch(healthyCount, firePulse)
+@@ -562,6 +609,9 @@ watch(healthyCount, firePulse)
+ .status-pill.pending { background: var(--arc-pending-bg); color: var(--arc-governance); }
+ .status-pill.approved { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
+ .status-pill.rejected { background: var(--arc-critical-bg); color: var(--arc-critical); }
++.status-pill.OPEN { background: rgba(148,163,184,0.14); color: var(--arc-text-muted); }
++.status-pill.EXCEPTION_ACCEPTED { background: var(--arc-pending-bg); color: var(--arc-governance); }
++.status-pill.RECONCILED { background: rgba(72,202,228,0.12); color: var(--arc-info); }
+ .source-pill { font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+ .source-pill.manual { background: rgba(124,158,245,0.14); color: #9db6f7; }
+ .source-pill.local { background: rgba(72,202,228,0.12); color: var(--arc-info); }
+diff --git a/arcanium/ui/app/types/arcanium.ts b/arcanium/ui/app/types/arcanium.ts
+index a984fb8..1146f94 100644
+--- a/arcanium/ui/app/types/arcanium.ts
++++ b/arcanium/ui/app/types/arcanium.ts
+@@ -66,6 +66,81 @@ export interface ApprovalRecord {
+   updated_at: string
+ }
+ 
++// ── Reconciliation (Prompt 20) ────────────────────────────────
++// Two independent axes (input/36) — never merged into one combined value.
++export type ObservationStatus = 'COMPLIANT' | 'DRIFTED' | 'UNKNOWN'
++export type Disposition = 'OPEN' | 'EXCEPTION_ACCEPTED' | 'RECONCILED'
++
++export interface ReconciliationRunSummary {
++  id: string
++  observed_value: { days: number } | null
++  status: ObservationStatus
++  observed_at: string
++  detail?: string | null
++}
++
++export interface ReconciliationRow {
++  desired_state_id: string
++  application_id: string
++  application_name: string
++  tenant: string | null
++  key_name: string
++  requirement: string
++  desired_value: { days: number }
++  version: number
++  source: string
++  changed_by: string
++  changed_reason?: string | null
++  updated_at: string
++  latest_run: ReconciliationRunSummary | null
++  observation_status: ObservationStatus
++  disposition: Disposition
++}
++
++export interface DesiredStateHistoryEntry {
++  version: number
++  desired_value: { days: number }
++  changed_by: string
++  changed_groups: string[]
++  changed_reason?: string | null
++  changed_at: string
++  current?: boolean
++}
++
++export interface ReconciliationAction {
++  id: string
++  run_id: string
++  action: 'reconcile' | 'accept_exception'
++  actor: string
++  actor_groups: string[]
++  result: 'applied' | 'failed' | 'denied'
++  reason?: string | null
++  expires_at?: string | null
++  created_at: string
++}
++
++export interface ReconciliationDetail {
++  run: {
++    id: string
++    desired_state_version: number
++    observed_value: { days: number } | null
++    status: ObservationStatus
++    observed_at: string
++    detail?: string | null
++  }
++  desired_state_id: string
++  application_id: string
++  application_name: string
++  tenant: string | null
++  key_name: string
++  requirement: string
++  desired_value: { days: number }
++  observation_status: ObservationStatus
++  disposition: Disposition
++  desired_state_history: DesiredStateHistoryEntry[]
++  actions: ReconciliationAction[]
++}
++
+ export interface VaultNodeHealth {
+   initialized: boolean
+   sealed: boolean
+diff --git a/arcanium/ui/server/routes/gateway/[...path].ts b/arcanium/ui/server/routes/gateway/[...path].ts
+index b1b9da1..d101e86 100644
+--- a/arcanium/ui/server/routes/gateway/[...path].ts
++++ b/arcanium/ui/server/routes/gateway/[...path].ts
+@@ -1,7 +1,7 @@
+ // Transport only: a fixed upstream, allowlisted API paths and no Vault credentials.
+ export default defineEventHandler(async (event) => {
+   const path = getRouterParam(event, 'path') || ''
+-  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
++  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
+   const write =
+     (event.method === 'POST' && (
+       /^api\/v1\/(approvals(\/[a-zA-Z0-9_-]+\/(approve|deny|authorize))?|suppliers|applications|keys)$/.test(path)
+@@ -9,8 +9,14 @@ export default defineEventHandler(async (event) => {
+       || /^api\/v1\/keys\/[a-zA-Z0-9_-]+\/(rotate|rewrap|destroy)$/.test(path)
+       || /^api\/v1\/keymgmt\/[a-zA-Z0-9_.-]+\/(rotate|sync)$/.test(path)
+       || /^api\/v1\/auth\/(logout|demo-persona)$/.test(path)
++      // Prompt 20 — reconciliation sweep + governed actions.
++      || /^api\/v1\/reconciliation\/run$/.test(path)
++      || /^api\/v1\/reconciliation\/[a-zA-Z0-9_-]+\/(reconcile|accept-exception)$/.test(path)
+     ))
+     || (['PATCH', 'DELETE'].includes(event.method) && /^api\/v1\/(suppliers|applications)\/[a-f0-9-]+$/.test(path))
++    // Prompt 20 — editing the desired value itself (input/36's "who changed
++    // the intent, when, why").
++    || (event.method === 'PATCH' && /^api\/v1\/reconciliation\/desired-state\/[a-zA-Z0-9_-]+$/.test(path))
+   if (!(event.method === 'GET' && read) && !write) {
+     throw createError({ statusCode: 404, statusMessage: 'Route unavailable' })
+   }
+diff --git a/scenarios/11_security_foundation/test_negative_auth.sh b/scenarios/11_security_foundation/test_negative_auth.sh
+index 9b55ef5..2946324 100755
+--- a/scenarios/11_security_foundation/test_negative_auth.sh
++++ b/scenarios/11_security_foundation/test_negative_auth.sh
+@@ -194,6 +194,21 @@ else
+   unk "auditor rotate key — no session"
+ fi
+ 
++# ── Prompt 20 — auditor reconcile -> 403 ─────────────────────────────────
++# Matches the auditor-rotate-key pattern above: 'reconcile' is the same
++# matrix row as 'rotate' (auth/authorize.js), so auditor must be denied the
++# same way. Needs a real run id — reconciliation_runs is only populated
++# once scenarios/12_reconciliation has run at least once; reported UNKNOWN
++# (not a false PASS/FAIL) rather than fabricated otherwise.
++ANY_RUN=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
++  -c "SELECT id FROM reconciliation_runs ORDER BY observed_at DESC LIMIT 1" 2>/dev/null | tr -d '[:space:]')
++if session_ok "${JAR[auditor]}" && [ -n "$ANY_RUN" ]; then
++  S=$(status_of -X POST -b "${JAR[auditor]}" "$API/api/v1/reconciliation/$ANY_RUN/reconcile")
++  [ "$S" = "403" ] && ok "auditor reconcile -> 403" || bad "auditor reconcile (got $S)"
++else
++  unk "auditor reconcile — no session, or no reconciliation_runs fixture (run scenarios/12_reconciliation first)"
++fi
++
+ # ── 4 — architect rewrap -> 403 ──────────────────────────────────────────
+ if session_ok "${JAR[architect]}"; then
+   S=$(status_of -X POST -b "${JAR[architect]}" -H 'content-type: application/json' \
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index 0ec7ae2..ad0e636 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -465,6 +465,34 @@ capture_verification() {
+     results=$(jq '. + [{check:"oidc_discovery", result:"UNKNOWN", detail:"realm discovery document not captured or missing issuer field"}]' <<<"$results")
+   fi
+ 
++  # Prompt 20 — reconciliation. Non-mutating: GET /api/v1/reconciliation
++  # reports each desired_state row's LATEST already-recorded status; it
++  # never triggers a new observation (that's POST /reconciliation/run,
++  # deliberately not called here — a state capture must never itself change
++  # what it's capturing). Same auth caveat as supplier_isolation above: this
++  # route is session-gated, so an anonymous probe correctly gets 401,
++  # honestly reported as UNKNOWN rather than treated as a failure.
++  if running arcanium-api; then
++    local rc_code
++    rc_code=$(curl -s -o /tmp/arc-recon-check.$$ -w '%{http_code}' --max-time 10 \
++      http://localhost:3001/api/v1/reconciliation 2>/dev/null || echo 000)
++    if [ "$rc_code" = "200" ]; then
++      local drifted compliant unknown
++      drifted=$(jq '[.[] | select(.observation_status=="DRIFTED")] | length' /tmp/arc-recon-check.$$ 2>/dev/null || echo null)
++      compliant=$(jq '[.[] | select(.observation_status=="COMPLIANT")] | length' /tmp/arc-recon-check.$$ 2>/dev/null || echo null)
++      unknown=$(jq '[.[] | select(.observation_status=="UNKNOWN")] | length' /tmp/arc-recon-check.$$ 2>/dev/null || echo null)
++      results=$(jq --argjson d "${drifted:-null}" --argjson c "${compliant:-null}" --argjson u "${unknown:-null}" \
++        '. + [{check:"reconciliation", result:"PASS", method:"GET /api/v1/reconciliation, non-mutating", drifted_count:$d, compliant_count:$c, unknown_count:$u}]' <<<"$results")
++    elif [ "$rc_code" = "401" ]; then
++      results=$(jq '. + [{check:"reconciliation", result:"UNKNOWN", detail:"endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"}]' <<<"$results")
++    else
++      results=$(jq --arg c "$rc_code" '. + [{check:"reconciliation", result:"UNKNOWN", detail:("endpoint did not respond (http " + $c + ")")}]' <<<"$results")
++    fi
++    rm -f /tmp/arc-recon-check.$$
++  else
++    results=$(jq '. + [{check:"reconciliation", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
++  fi
++
+   local mutating_checks="onboarding transit pki kmip managed_key sentinel_negative"
+   if $WITH_SCENARIOS; then
+     results=$(jq '. + [{check:"onboarding", result:"UNKNOWN", detail:"scenario runner wiring not implemented yet — run scenarios/01_onboarding manually and record the result"}]' <<<"$results")

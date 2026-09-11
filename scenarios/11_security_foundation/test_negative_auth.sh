@@ -194,6 +194,37 @@ else
   unk "auditor rotate key — no session"
 fi
 
+# ── Prompt 20 — auditor reconcile -> 403 ─────────────────────────────────
+# Matches the auditor-rotate-key pattern above: 'reconcile' is the same
+# matrix row as 'rotate' (auth/authorize.js), so auditor must be denied the
+# same way. Needs a real run id — reconciliation_runs is only populated
+# once scenarios/12_reconciliation has run at least once; reported UNKNOWN
+# (not a false PASS/FAIL) rather than fabricated otherwise.
+ANY_RUN=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
+  -c "SELECT id FROM reconciliation_runs ORDER BY observed_at DESC LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+if session_ok "${JAR[auditor]}" && [ -n "$ANY_RUN" ]; then
+  S=$(status_of -X POST -b "${JAR[auditor]}" "$API/api/v1/reconciliation/$ANY_RUN/reconcile")
+  [ "$S" = "403" ] && ok "auditor reconcile -> 403" || bad "auditor reconcile (got $S)"
+else
+  unk "auditor reconcile — no session, or no reconciliation_runs fixture (run scenarios/12_reconciliation first)"
+fi
+
+# ── Prompt 20 — pepsi-admin cross-tenant reconciliation read/action -> 404 ──
+# Same discipline as Phase 18's own GET /applications/:id fix: the fixture
+# run belongs to payments-api, a root-namespace (unscoped) application —
+# never visible to any supplier-admin, so this must always be 404.
+if session_ok "${JAR[pepsi]}" && [ -n "$ANY_RUN" ]; then
+  S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/reconciliation/$ANY_RUN")
+  [ "$S" = "404" ] && ok "pepsi-admin GET cross-tenant reconciliation run -> 404" ||
+    bad "pepsi-admin GET cross-tenant reconciliation run (got $S)"
+
+  S=$(status_of -X POST -b "${JAR[pepsi]}" "$API/api/v1/reconciliation/$ANY_RUN/reconcile")
+  [ "$S" = "404" ] && ok "pepsi-admin reconcile cross-tenant run -> 404" ||
+    bad "pepsi-admin reconcile cross-tenant run (got $S)"
+else
+  unk "pepsi-admin cross-tenant reconciliation checks — no session, or no reconciliation_runs fixture"
+fi
+
 # ── 4 — architect rewrap -> 403 ──────────────────────────────────────────
 if session_ok "${JAR[architect]}"; then
   S=$(status_of -X POST -b "${JAR[architect]}" -H 'content-type: application/json' \

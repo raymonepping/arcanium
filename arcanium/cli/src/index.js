@@ -9,6 +9,7 @@ import { registerApprovals } from "./commands/approvals.js";
 import { registerJobs } from "./commands/jobs.js";
 import { registerOnboard } from "./commands/onboard.js";
 import { registerIntegrations } from "./commands/integrations.js";
+import { registerReconciliation } from "./commands/reconciliation.js";
 
 program
   .name("arcanium")
@@ -25,6 +26,7 @@ registerApprovals(program);
 registerJobs(program);
 registerOnboard(program);
 registerIntegrations(program);
+registerReconciliation(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error("Error:", err.message);

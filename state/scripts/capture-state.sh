@@ -465,6 +465,34 @@ capture_verification() {
     results=$(jq '. + [{check:"oidc_discovery", result:"UNKNOWN", detail:"realm discovery document not captured or missing issuer field"}]' <<<"$results")
   fi
 
+  # Prompt 20 — reconciliation. Non-mutating: GET /api/v1/reconciliation
+  # reports each desired_state row's LATEST already-recorded status; it
+  # never triggers a new observation (that's POST /reconciliation/run,
+  # deliberately not called here — a state capture must never itself change
+  # what it's capturing). Same auth caveat as supplier_isolation above: this
+  # route is session-gated, so an anonymous probe correctly gets 401,
+  # honestly reported as UNKNOWN rather than treated as a failure.
+  if running arcanium-api; then
+    local rc_code
+    rc_code=$(curl -s -o /tmp/arc-recon-check.$$ -w '%{http_code}' --max-time 10 \
+      http://localhost:3001/api/v1/reconciliation 2>/dev/null || echo 000)
+    if [ "$rc_code" = "200" ]; then
+      local drifted compliant unknown
+      drifted=$(jq '[.[] | select(.observation_status=="DRIFTED")] | length' /tmp/arc-recon-check.$$ 2>/dev/null || echo null)
+      compliant=$(jq '[.[] | select(.observation_status=="COMPLIANT")] | length' /tmp/arc-recon-check.$$ 2>/dev/null || echo null)
+      unknown=$(jq '[.[] | select(.observation_status=="UNKNOWN")] | length' /tmp/arc-recon-check.$$ 2>/dev/null || echo null)
+      results=$(jq --argjson d "${drifted:-null}" --argjson c "${compliant:-null}" --argjson u "${unknown:-null}" \
+        '. + [{check:"reconciliation", result:"PASS", method:"GET /api/v1/reconciliation, non-mutating", drifted_count:$d, compliant_count:$c, unknown_count:$u}]' <<<"$results")
+    elif [ "$rc_code" = "401" ]; then
+      results=$(jq '. + [{check:"reconciliation", result:"UNKNOWN", detail:"endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"}]' <<<"$results")
+    else
+      results=$(jq --arg c "$rc_code" '. + [{check:"reconciliation", result:"UNKNOWN", detail:("endpoint did not respond (http " + $c + ")")}]' <<<"$results")
+    fi
+    rm -f /tmp/arc-recon-check.$$
+  else
+    results=$(jq '. + [{check:"reconciliation", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
+  fi
+
   local mutating_checks="onboarding transit pki kmip managed_key sentinel_negative"
   if $WITH_SCENARIOS; then
     results=$(jq '. + [{check:"onboarding", result:"UNKNOWN", detail:"scenario runner wiring not implemented yet — run scenarios/01_onboarding manually and record the result"}]' <<<"$results")

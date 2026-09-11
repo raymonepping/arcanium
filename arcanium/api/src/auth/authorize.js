@@ -54,6 +54,11 @@ const MATRIX = {
     rewrap: false,
     destroy_request: true,
     approve: true,
+    // Prompt 20 — 'reconcile' is the same row as 'rotate' for every persona:
+    // correcting drift back to the desired rotation policy is operationally
+    // equivalent to a rotate-class action (see authorize.js's own header
+    // comment and prompts/20_desired_state_reconciliation.md Deliverable 4).
+    reconcile: false,
   },
   architect: {
     read: true,
@@ -62,6 +67,7 @@ const MATRIX = {
     rewrap: false,
     destroy_request: true,
     approve: false,
+    reconcile: true,
   },
   operator: {
     read: true,
@@ -70,6 +76,7 @@ const MATRIX = {
     rewrap: true,
     destroy_request: true,
     approve: false,
+    reconcile: true,
   },
   auditor: {
     read: true,
@@ -78,6 +85,7 @@ const MATRIX = {
     rewrap: false,
     destroy_request: false,
     approve: false,
+    reconcile: false,
   },
   "supplier-admin": {
     read: "limited",
@@ -86,6 +94,7 @@ const MATRIX = {
     rewrap: false,
     destroy_request: "limited",
     approve: false,
+    reconcile: "limited",
   },
 };
 
@@ -96,6 +105,7 @@ export const ACTIONS = Object.freeze([
   "rewrap",
   "destroy_request",
   "approve",
+  "reconcile", // Prompt 20 — same row as 'rotate' in the matrix (see above)
 ]);
 
 /**

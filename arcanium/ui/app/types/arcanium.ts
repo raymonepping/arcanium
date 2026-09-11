@@ -66,6 +66,81 @@ export interface ApprovalRecord {
   updated_at: string
 }
 
+// ── Reconciliation (Prompt 20) ────────────────────────────────
+// Two independent axes (input/36) — never merged into one combined value.
+export type ObservationStatus = 'COMPLIANT' | 'DRIFTED' | 'UNKNOWN'
+export type Disposition = 'OPEN' | 'EXCEPTION_ACCEPTED' | 'RECONCILED'
+
+export interface ReconciliationRunSummary {
+  id: string
+  observed_value: { days: number } | null
+  status: ObservationStatus
+  observed_at: string
+  detail?: string | null
+}
+
+export interface ReconciliationRow {
+  desired_state_id: string
+  application_id: string
+  application_name: string
+  tenant: string | null
+  key_name: string
+  requirement: string
+  desired_value: { days: number }
+  version: number
+  source: string
+  changed_by: string
+  changed_reason?: string | null
+  updated_at: string
+  latest_run: ReconciliationRunSummary | null
+  observation_status: ObservationStatus
+  disposition: Disposition
+}
+
+export interface DesiredStateHistoryEntry {
+  version: number
+  desired_value: { days: number }
+  changed_by: string
+  changed_groups: string[]
+  changed_reason?: string | null
+  changed_at: string
+  current?: boolean
+}
+
+export interface ReconciliationAction {
+  id: string
+  run_id: string
+  action: 'reconcile' | 'accept_exception'
+  actor: string
+  actor_groups: string[]
+  result: 'applied' | 'failed' | 'denied'
+  reason?: string | null
+  expires_at?: string | null
+  created_at: string
+}
+
+export interface ReconciliationDetail {
+  run: {
+    id: string
+    desired_state_version: number
+    observed_value: { days: number } | null
+    status: ObservationStatus
+    observed_at: string
+    detail?: string | null
+  }
+  desired_state_id: string
+  application_id: string
+  application_name: string
+  tenant: string | null
+  key_name: string
+  requirement: string
+  desired_value: { days: number }
+  observation_status: ObservationStatus
+  disposition: Disposition
+  desired_state_history: DesiredStateHistoryEntry[]
+  actions: ReconciliationAction[]
+}
+
 export interface VaultNodeHealth {
   initialized: boolean
   sealed: boolean

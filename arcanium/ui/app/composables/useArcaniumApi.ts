@@ -2,7 +2,8 @@
 // Central typed API client. All fetches go through /gateway (same-origin proxy).
 
 import type {
-  Supplier, Application, TransitKey, ApprovalRecord, ApiHealth, ClusterNode, MaturityReport, ProvisioningJob
+  Supplier, Application, TransitKey, ApprovalRecord, ApiHealth, ClusterNode, MaturityReport, ProvisioningJob,
+  ReconciliationRow, ReconciliationDetail
 } from '~/types/arcanium'
 
 export function useArcaniumApi() {
@@ -69,6 +70,20 @@ export function useArcaniumApi() {
     createSupplier: (body: Pick<Supplier, 'name' | 'vault_namespace' | 'sla_tier'>) => $post<Supplier>('/api/v1/suppliers', body),
     updateSupplier: (id: string, body: Partial<Supplier>) => $patch<Supplier>(`/api/v1/suppliers/${encodeURIComponent(id)}`, body),
     deleteSupplier: (id: string) => $delete<void>(`/api/v1/suppliers/${encodeURIComponent(id)}`),
+    // ── Reconciliation (Prompt 20) ────────────────────────
+    reconciliationList: (opts?: { status?: string; disposition?: string }) => {
+      const q = new URLSearchParams(Object.entries(opts ?? {}).filter(([, v]) => v) as [string, string][]).toString()
+      return $get<ReconciliationRow[]>(`/api/v1/reconciliation${q ? `?${q}` : ''}`)
+    },
+    reconciliationDetail: (runId: string) => $get<ReconciliationDetail>(`/api/v1/reconciliation/${encodeURIComponent(runId)}`),
+    runReconciliation: (desiredStateId?: string) =>
+      $post<any[]>('/api/v1/reconciliation/run', desiredStateId ? { desired_state_id: desiredStateId } : {}),
+    reconcileRun: (runId: string) => $post<{ action: any; confirmation_run: any }>(`/api/v1/reconciliation/${encodeURIComponent(runId)}/reconcile`),
+    acceptException: (runId: string, reason: string, expiresAt: string) =>
+      $post<any>(`/api/v1/reconciliation/${encodeURIComponent(runId)}/accept-exception`, { reason, expires_at: expiresAt }),
+    setDesiredState: (desiredStateId: string, days: number, reason?: string) =>
+      $patch<any>(`/api/v1/reconciliation/desired-state/${encodeURIComponent(desiredStateId)}`, { desired_value: { days }, reason }),
+
     // ── Health ─────────────────────────────────────────────
     health: () => $get<ApiHealth>('/health'),
     /** @deprecated use health() */

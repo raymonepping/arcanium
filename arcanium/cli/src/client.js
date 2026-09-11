@@ -20,6 +20,17 @@ export async function apiPost(path, body) {
   return res.json().catch(() => null);
 }
 
+export async function apiPatch(path, body) {
+  const res = await fetch(`${config.apiBase}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok)
+    throw new Error(`PATCH ${path} → ${res.status}: ${await res.text()}`);
+  return res.json().catch(() => null);
+}
+
 export async function apiDelete(path) {
   const res = await fetch(`${config.apiBase}${path}`, { method: "DELETE" });
   if (!res.ok)

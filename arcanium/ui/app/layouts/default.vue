@@ -200,7 +200,7 @@ import { useClusterHealth } from '~/composables/useClusterHealth'
 
 const route = useRoute()
 const router = useRouter()
-const { approvals } = useArcaniumApi()
+const { approvals, reconciliationList } = useArcaniumApi()
 const { status: clusterStatus, refresh: refreshCluster, error: clusterError, nodes: clusterNodes, healthyCount, loading: clusterLoading } = useClusterHealth()
 onMounted(refreshCluster)
 usePolling(refreshCluster, 5000)
@@ -268,6 +268,16 @@ async function loadPendingCount() {
 }
 onMounted(() => loadPendingCount())
 
+// ── Drift count (Prompt 20) ─────────────────────────────────
+const driftCount = ref(0)
+async function loadDriftCount() {
+  try {
+    const data = await reconciliationList({ status: 'drifted' })
+    driftCount.value = Array.isArray(data) ? data.length : 0
+  } catch {}
+}
+onMounted(() => loadDriftCount())
+
 // ── Cluster status ─────────────────────────────────────────
 const clusterStatusClass = computed(() => {
   if (!clusterStatus.value || clusterStatus.value.unknown) return 'unknown'
@@ -302,6 +312,7 @@ const NAV_ICONS = {
   integrations: `<svg viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"/><circle cx="12" cy="4" r="2" stroke="currentColor" stroke-width="1.2"/><circle cx="12" cy="12" r="2" stroke="currentColor" stroke-width="1.2"/><path d="M6.2 6.8 10.2 4.8M6.2 9.2l4 2" stroke="currentColor" stroke-width="1.1"/></svg>`,
   maturity: `<svg viewBox="0 0 16 16" fill="none"><polyline points="2,12 6,7 9,10 14,4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   observability: `<svg viewBox="0 0 16 16" fill="none"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/></svg>`,
+  reconciliation: `<svg viewBox="0 0 16 16" fill="none"><path d="M13 4a5 5 0 0 0-8.9-1.6M3 12a5 5 0 0 0 8.9 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M13 1.5V4h-2.5M3 14.5V12h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
 }
 
 const isSupplierAdmin = computed(() => persona.value === 'supplier-admin')
@@ -312,6 +323,7 @@ const navItems = computed(() => {
     { to: '/suppliers', label: 'Suppliers', icon: NAV_ICONS.suppliers, platform: true },
     { to: '/applications', label: 'Applications', icon: NAV_ICONS.applications },
     { to: '/keys', label: 'Keys', icon: NAV_ICONS.keys },
+    { to: '/reconciliation', label: 'Reconciliation', icon: NAV_ICONS.reconciliation, badge: driftCount.value > 0 ? driftCount.value : undefined, badgeType: 'critical' },
     { to: '/onboard', label: 'Onboard', icon: NAV_ICONS.onboard },
     {
       to: '/approvals',
@@ -341,6 +353,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/suppliers': 'Suppliers',
   '/applications': 'Applications',
   '/keys': 'Key Inventory',
+  '/reconciliation': 'Reconciliation',
   '/approvals': 'Approvals',
   '/evidence': 'Evidence Trail',
   '/jobs': 'Provisioning Jobs',
@@ -371,6 +384,7 @@ const ALL_CMDS = [
   { to: '/suppliers', label: 'Suppliers', category: 'Page', icon: NAV_ICONS.suppliers },
   { to: '/applications', label: 'Applications', category: 'Page', icon: NAV_ICONS.applications },
   { to: '/keys', label: 'Key Inventory', category: 'Page', icon: NAV_ICONS.keys },
+  { to: '/reconciliation', label: 'Reconciliation', category: 'Page', icon: NAV_ICONS.reconciliation },
   { to: '/approvals', label: 'Approvals', category: 'Page', icon: NAV_ICONS.approvals },
   { to: '/evidence', label: 'Evidence Trail', category: 'Page', icon: NAV_ICONS.evidence },
   { to: '/jobs', label: 'Provisioning Jobs', category: 'Page', icon: NAV_ICONS.jobs },
@@ -504,6 +518,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   background: var(--arc-pending-bg);
   color: var(--arc-governance);
   border: 1px solid rgba(255,170,0,0.3);
+}
+.nav-badge.critical {
+  background: var(--arc-critical-bg);
+  color: var(--arc-critical);
+  border: 1px solid rgba(220,47,2,0.3);
 }
 
 .sidebar-footer {

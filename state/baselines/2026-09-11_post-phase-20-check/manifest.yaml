@@ -1,0 +1,59 @@
+baseline:
+  id: 2026-09-11_post-phase-20-check
+  purpose: "Prompt 20 verification check"
+  captured_at: 2026-09-11T12:07:03Z
+  project: "arcanium"
+  previous_baseline: "2026-09-11_post-phase-19-complete"
+  git:
+    commit: "e799348200c43018c16dde68bcfcb4f0850ad25e"
+    branch: "main"
+    tag: "none"
+    dirty: true
+
+runtime:
+  type: podman
+  architecture: "arm64"
+
+components:
+  arcanium:
+    capture_status: CAPTURED
+  vault:
+    capture_status: UNKNOWN
+  hsm:
+    capture_status: CAPTURED
+  identity:
+    capture_status: CAPTURED
+  infra:
+    capture_status: CAPTURED
+  kms:
+    capture_status: UNKNOWN
+  observability:
+    capture_status: CAPTURED
+  workloads:
+    capture_status: CAPTURED
+
+verification:
+  supplier_isolation: UNKNOWN
+  oidc_discovery: PASS
+  reconciliation: UNKNOWN
+  onboarding: UNKNOWN
+  transit: UNKNOWN
+  pki: UNKNOWN
+  kmip: UNKNOWN
+  managed_key: UNKNOWN
+  sentinel_negative: UNKNOWN
+
+capture:
+  overall: PARTIAL
+  checks:
+    source: CAPTURED
+    runtime: CAPTURED
+    arcanium: CAPTURED
+    vault: UNKNOWN
+    hsm: CAPTURED
+    identity: CAPTURED
+    infra: CAPTURED
+    kms: UNKNOWN
+    observability: CAPTURED
+    workloads: CAPTURED
+    verification: CAPTURED
