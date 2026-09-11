@@ -58,6 +58,27 @@ async function main() {
   app.get("/metrics", metricsHandler); // Prometheus scrape — no auth (bind localhost in compose)
   app.use("/health", healthRouter);
   app.use("/api/v1/auth", authRouter);
+
+  // Prompt 23 — /api-docs is a browser-navigated page (not a fetch target).
+  // When auth is enabled and the request arrives without a valid session cookie,
+  // redirect to the login flow instead of returning a bare JSON 401. On return
+  // from Keycloak the browser will land back at /api-docs via the `next` param.
+  if (config.apiExplorerEnabled && config.nodeEnv !== "production") {
+    app.use("/api-docs", (req, res, next) => {
+      if (!config.auth.enabled) return next();
+      const raw = req.headers.cookie || "";
+      const hasCookie = raw
+        .split(";")
+        .some((p) => p.trim().startsWith("arc_session="));
+      if (!hasCookie)
+        return res.redirect(
+          302,
+          `/api/v1/auth/login?next=${encodeURIComponent("/api-docs")}`,
+        );
+      next();
+    });
+  }
+
   // Prompt 14.5 — no-op when ARCANIUM_AUTH_ENABLED is unset; enforces a session otherwise.
   app.use(requireSession);
   app.use("/api/v1/applications", applicationsRouter);

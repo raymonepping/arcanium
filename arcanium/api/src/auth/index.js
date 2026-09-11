@@ -112,7 +112,22 @@ authRouter.get("/callback", async (req, res, next) => {
       [id, username, primaryRole, tenantScopes, groups],
     );
     setCookie(res, id);
-    res.redirect(302, returnTo);
+    // returnTo is normally relative and safe to redirect to as-is (validated
+    // at /login to start with "/" — never attacker-controlled/absolute).
+    // /api-docs is the one deliberate exception: it's registered with
+    // Keycloak under the gateway's callback URL (ARCANIUM_API_CALLBACK_URL,
+    // port 3000) so the exchange above always completes on whichever
+    // container the gateway relays to, but /api-docs itself is only ever
+    // served by arcanium-api-dev on its own published port — a bare
+    // relative redirect would land the browser on the Nuxt UI's origin
+    // instead, which has no such route (404). This is a narrow, allowlisted
+    // absolute-redirect exception, not a general pattern — every other
+    // returnTo value stays relative.
+    const dest =
+      returnTo === "/api-docs"
+        ? `${config.apiExplorerPublicUrl}/api-docs`
+        : returnTo;
+    res.redirect(302, dest);
   } catch (err) {
     // Every rejection path (invalid state, wrong issuer, wrong audience,
     // expired/missing pending flow, signature failure) lands here as a

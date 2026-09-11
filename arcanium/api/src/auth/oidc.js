@@ -104,6 +104,13 @@ export function buildAuthorizationRedirect(returnTo = "/") {
 }
 
 export function setPendingCookie(res, pending) {
+  // Secure is safe here even over plain HTTP — same reasoning as the session
+  // cookie in auth/index.js: this stack is exclusively accessed via
+  // http://localhost / http://127.0.0.1, both "potentially trustworthy"
+  // secure-context origins per the W3C spec, so browsers set and return
+  // Secure cookies on them regardless of scheme. (A dropped-cookie failure
+  // during /api-docs login was traced to the callback's relative redirect
+  // landing on the wrong origin, not to this flag — see auth/index.js.)
   res.setHeader(
     "Set-Cookie",
     `${PENDING_COOKIE}=${pending}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${PENDING_TTL_S}`,

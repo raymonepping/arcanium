@@ -144,6 +144,13 @@ ensure_client() {
       -s webOrigins='[]'
     uuid=$(get_client_uuid)
     echo "  + client created: $CLIENT_ID ($uuid)"
+    # If the caller already has a known secret (e.g. from .env), overwrite
+    # Keycloak's auto-generated one so .env never needs updating after re-runs.
+    if [ -n "${ARCANIUM_OIDC_CLIENT_SECRET:-}" ]; then
+      "$KC" update "clients/$uuid/client-secret" -r "$REALM" \
+        -s value="$ARCANIUM_OIDC_CLIENT_SECRET" >/dev/null 2>&1 &&
+        echo "  + client secret set from ARCANIUM_OIDC_CLIENT_SECRET"
+    fi
   fi
   echo "$uuid"
 }

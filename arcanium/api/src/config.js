@@ -70,6 +70,17 @@ const config = {
   // deployments. Same pattern as ARCANIUM_AUTH_ENABLED/ARCANIUM_DEMO_PERSONA_SWITCH.
   apiExplorerEnabled:
     optional("ARCANIUM_API_EXPLORER_ENABLED", "false") === "true",
+  // /api-docs is deliberately served by a separate container (arcanium-api-dev,
+  // compose/arcanium/compose.yaml) outside the Nuxt gateway's origin — it is a
+  // direct backend-developer tool, not a proxied UI route. auth/index.js's
+  // callback needs this to send the browser back to the right origin after
+  // login when it was sent there for /api-docs specifically (see the comment
+  // there — this is a narrow, allowlisted exception, not a general redirect
+  // target).
+  apiExplorerPublicUrl: optional(
+    "ARCANIUM_API_EXPLORER_PUBLIC_URL",
+    "http://localhost:3050",
+  ).replace(/\/$/, ""),
 
   // Prompt 18 — OIDC (Keycloak, LDAP-federated). Express is the confidential
   // client end-to-end; the browser never sees an OIDC or Vault token.

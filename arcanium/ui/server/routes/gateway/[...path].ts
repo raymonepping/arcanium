@@ -30,6 +30,12 @@ export default defineEventHandler(async (event) => {
   target.search = getRequestURL(event).search
   setHeader(event, 'cache-control', 'no-store')
   const cookie = getHeader(event, 'cookie')
+  // api/v1/auth/login and api/v1/auth/callback never actually reach this
+  // catch-all in practice — the dedicated static routes under
+  // gateway/api/v1/auth/{login,callback}.get.ts (relayOidcHop, Prompt 18)
+  // take precedence in Nitro's router and handle the redirect/Set-Cookie
+  // relay those two hops need. Don't duplicate that logic here.
+
   try {
     const r = await $fetch.raw(target.toString(), {
       method: event.method as 'GET' | 'POST' | 'PATCH' | 'DELETE',

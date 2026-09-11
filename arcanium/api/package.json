@@ -10,13 +10,11 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
+    "@scalar/express-api-reference": "^0.10.18",
     "ajv": "^8.20.0",
     "express": "^5.0.1",
     "js-yaml": "^5.4.1",
     "openid-client": "^6.8.8",
     "pg": "^8.13.3"
-  },
-  "devDependencies": {
-    "@scalar/express-api-reference": "^0.10.18"
   }
 }

@@ -75,23 +75,23 @@ endef
 $(foreach stack,$(filter-out vault arcanium workloads,$(STACKS)),$(eval $(call STACK_TARGETS,$(stack))))
 
 workloads-build: docsign-build external-supplier-build ## Build all workload container images
-	@podman build --platform linux/amd64 --format docker \
+	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" --format docker \
 	  -t arcanium-payments-api:local \
 	  -f workloads/payments-api/Containerfile workloads/payments-api/
-	@podman build --platform linux/amd64 --format docker \
+	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" --format docker \
 	  -t arcanium-pki-client:local \
 	  -f workloads/pki-client/Containerfile workloads/pki-client/
-	@podman build --platform linux/amd64 --format docker \
+	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" --format docker \
 	  -t arcanium-kmip-client:local \
 	  -f workloads/kmip-client/Containerfile workloads/kmip-client/
 
 docsign-build: ## Build the document-signing workload container image
-	@podman build --platform linux/amd64 --format docker \
+	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" --format docker \
 	  -t arcanium-document-signing:local \
 	  -f workloads/document-signing/Containerfile workloads/document-signing/
 
 external-supplier-build: ## Build the external-supplier (Control Group demo) container image
-	@podman build --platform linux/amd64 --format docker \
+	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" --format docker \
 	  -t arcanium-external-supplier:local \
 	  -f workloads/external-supplier/Containerfile workloads/external-supplier/
 
@@ -107,21 +107,28 @@ workloads-logs: ## Follow workloads logs
 	@./scripts/compose.sh workloads logs -f
 
 arcanium-build: arcanium-ui-build ## Build arcanium-api and arcanium-ui container images
-	@podman build --platform linux/amd64 --format docker \
+	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" --format docker \
 	  -t arcanium-api:local \
 	  -f arcanium/api/Containerfile arcanium/api/
 
 arcanium-ui-build: ## Build the arcanium-ui container image
-	@podman build --platform linux/amd64 --format docker \
+	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" --format docker \
 	  -t arcanium-ui:local \
 	  -f arcanium/ui/Containerfile arcanium/ui/
 
 arcanium-up: arcanium-build ## Build arcanium images then start the arcanium stack
 	@$(MAKE) --no-print-directory network
-	@./scripts/compose.sh arcanium up -d
+	@./scripts/compose.sh arcanium up -d arcanium-ui arcanium-api arcanium-worker
 
 arcanium-down: ## Stop the arcanium stack
-	@./scripts/compose.sh arcanium down
+	@./scripts/compose.sh arcanium stop arcanium-ui arcanium-api arcanium-worker
+
+arcanium-api-dev-up: arcanium-build ## Start the API explorer service (http://localhost:3050/api-docs)
+	@$(MAKE) --no-print-directory network
+	@./scripts/compose.sh arcanium up -d arcanium-api-dev
+
+arcanium-api-dev-down: ## Stop the API explorer service
+	@./scripts/compose.sh arcanium stop arcanium-api-dev
 
 arcanium-ui-restart: ## Rebuild arcanium-ui image and restart the container (fast iteration)
 	@./scripts/ui-rebuild.sh
@@ -161,7 +168,7 @@ vault-backup: ## Save and inspect both Raft snapshots outside the Podman VM
 
 .PHONY: hsm-bootstrap
 hsm-bootstrap: ## Build vault-hsm image, start softhsm-server, resolve slot, start vault-hsm
-	@podman build --platform linux/amd64 -t arcanium-vault-hsm:local \
+	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" -t arcanium-vault-hsm:local \
 	  -f vault-hsm/Containerfile vault-hsm/
 	@$(MAKE) --no-print-directory network
 	@./scripts/compose.sh hsm up -d softhsm-server

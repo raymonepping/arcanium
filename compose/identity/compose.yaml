@@ -94,6 +94,9 @@ services:
     hostname: keycloak
     # No --import-realm: the realm is created idempotently by
     # keycloak-bootstrap's kcadm script, not from a mounted realm file.
+    # start-dev stores its H2 database under /opt/keycloak/data — mounting
+    # a named volume there makes the realm, client, and LDAP federation
+    # survive container restarts and podman machine stop/start cycles.
     command: start-dev
     environment:
       KEYCLOAK_ADMIN: "${KEYCLOAK_ADMIN}"
@@ -113,6 +116,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     ports:
       - "127.0.0.1:8083:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
     networks: [arcanium-control]
     depends_on:
       openldap:
@@ -157,3 +162,4 @@ networks:
 volumes:
   ldap-data: {}
   ldap-config: {}
+  keycloak-data: {}
