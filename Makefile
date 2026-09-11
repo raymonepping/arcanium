@@ -142,7 +142,7 @@ arcanium-logs: ## Follow arcanium logs
 arcanium-ui-logs: ## Follow arcanium-ui logs only
 	@podman logs -f arcanium-ui
 
-.PHONY: vault-prepare vault-bootstrap vault-status vault-backup
+.PHONY: vault-prepare vault-bootstrap vault-status vault-backup vault-unseal
 vault-prepare: ## Prepare the copied licenses and generate local TLS
 	@./scripts/vault-prepare.sh
 
@@ -150,6 +150,9 @@ vault-bootstrap: ## Start and bootstrap vault-s and the three-node cluster
 	@./scripts/vault-bootstrap.sh
 
 vault-up: vault-bootstrap ## Start Vault, unseal vault-s and verify the cluster
+
+vault-unseal: ## Prompt 03 — idempotently unseal vault-s only (safe to run whether or not it's sealed)
+	@./scripts/vault-unseal.sh
 
 vault-down: ## Stop Vault containers while retaining all named volumes
 	@./scripts/compose.sh vault down
