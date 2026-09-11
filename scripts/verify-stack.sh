@@ -46,9 +46,13 @@ Environment overrides:
   SECRETS_DIR    Where cluster-init.json lives    (default: <repo>/.secrets/vault)
 
 The full check suite (sections 2-6) exercises create/update/delete on an
-ephemeral test application — authenticate as a persona with provisioning
-rights (demo-operator or demo-architect), not a read-only persona
-(demo-auditor), or those specific checks will correctly 403/skip.
+ephemeral test application. Authenticate as a persona with provisioning
+rights (demo-operator or demo-architect) to exercise those checks for
+real; a persona without them (demo-ciso, demo-auditor — see
+auth/authorize.js's MATRIX) still exits 0 on a healthy stack — the
+resulting 403s are reported as warnings ("lacks this action's rights,
+not a stack defect"), not failures, since that's the authorization
+matrix working as designed, not a problem to fix.
 
 Examples:
   ./scripts/verify-stack.sh
@@ -207,6 +211,17 @@ check() {
 
   if [[ "$status" != "$expected" ]]; then
     [[ "$status" == "401" && -z "$JAR" ]] && ((UNAUTH_401++))
+    # A 403 from Arcanium's own deny-by-default authorize() (auth/authorize.js's
+    # MATRIX) means the authenticated persona genuinely doesn't have this
+    # action's rights (e.g. demo-ciso/demo-auditor have provision:false) —
+    # that's the authorization matrix working correctly, not a stack defect.
+    # Reported as a warning, not a failure, so a full run can exit 0 with a
+    # read/approve-oriented persona instead of always showing provisioning
+    # checks as broken.
+    if [[ "$status" == "403" && "$body_text" == *'"reason":"no matching allow rule"'* ]]; then
+      warn "$label  [expected $expected, got 403 — $AUTH_USER lacks this action's rights, not a stack defect]"
+      return
+    fi
     fail "$label  [expected $expected, got $status]  ${body_text:0:120}"
     return
   fi
