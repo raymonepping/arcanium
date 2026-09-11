@@ -4,13 +4,59 @@
 # Arcanium stack verification — exercises every exposed API route and workload
 # health endpoint. Intended as a post-start smoke test and traceability check.
 #
-# Usage:
-#   ./scripts/verify-stack.sh             # full check
-#   ./scripts/verify-stack.sh --no-vault  # skip Vault cluster checks (no token needed)
+# Prompt 18, Deliverable 8: most Arcanium API routes require a valid session
+# once ARCANIUM_AUTH_ENABLED=true (deny-by-default, Deliverable 5) — those
+# checks correctly 401 without --user/--password. This script predates OIDC
+# login; --user/--password perform the real Authorization Code + PKCE flow
+# (the same pattern scenarios/11_security_foundation/test_negative_auth.sh
+# and scenarios/13_fitness/test_architecture_invariants.sh already use) and
+# thread the resulting session cookie through every API call this script
+# makes. With no --user, behavior is unchanged (a lab running with
+# ARCANIUM_AUTH_ENABLED=false needs no credentials; the Vault-cluster/
+# container/workload-health sections never needed Arcanium API auth anyway).
 #
 # Exit code: 0 if all checks pass, 1 if any fail.
 # ---------------------------------------------------------------------------
 set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/verify-stack.sh [OPTIONS]
+
+Smoke-tests every exposed Arcanium API route, workload health endpoint,
+the Vault cluster, and container health. Exit 0 if all checks pass, 1 if
+any fail (warnings never fail the run).
+
+Options:
+  --user <username>      OIDC username to authenticate as before running
+                          checks (e.g. demo-operator — see docs/personas.md
+                          for the full demo account list). Required once
+                          the API has ARCANIUM_AUTH_ENABLED=true; without
+                          it, session-requiring routes correctly 401 and
+                          are reported as failures, not skipped.
+  --password <password>  Password for --user. If --user is given without
+                          --password, you will be prompted (input hidden).
+  --no-vault              Skip Vault cluster checks (no Vault token needed).
+  -h, --help              Show this help and exit.
+
+Environment overrides:
+  ARCANIUM_API   Arcanium API base URL           (default: http://localhost:3001)
+  VAULT_ADDR     Main Vault cluster address       (default: https://127.0.0.1:18200)
+  VAULT_CACERT   CA bundle for Vault TLS          (default: <repo>/vault-tls/ca-chain.pem)
+  SECRETS_DIR    Where cluster-init.json lives    (default: <repo>/.secrets/vault)
+
+The full check suite (sections 2-6) exercises create/update/delete on an
+ephemeral test application — authenticate as a persona with provisioning
+rights (demo-operator or demo-architect), not a read-only persona
+(demo-auditor), or those specific checks will correctly 403/skip.
+
+Examples:
+  ./scripts/verify-stack.sh
+  ./scripts/verify-stack.sh --user demo-operator --password 'Arcanium-ops-2026'
+  ./scripts/verify-stack.sh --user demo-operator          # prompts for password
+  ./scripts/verify-stack.sh --no-vault --user demo-auditor
+EOF
+}
 
 # ── Colours ─────────────────────────────────────────────────────────────────
 GRN='\033[0;32m'
@@ -25,7 +71,101 @@ VAULT_ADDR="${VAULT_ADDR:-https://127.0.0.1:18200}"
 VAULT_CACERT="${VAULT_CACERT:-$(cd "$(dirname "$0")/.." && pwd)/vault-tls/ca-chain.pem}"
 SECRETS_DIR="${SECRETS_DIR:-$(cd "$(dirname "$0")/.." && pwd)/.secrets/vault}"
 SKIP_VAULT=false
-[[ "${1:-}" == "--no-vault" ]] && SKIP_VAULT=true
+AUTH_USER=""
+AUTH_PASSWORD=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+  --no-vault)
+    SKIP_VAULT=true
+    shift
+    ;;
+  --user)
+    AUTH_USER="${2:?--user requires a value}"
+    shift 2
+    ;;
+  --password)
+    AUTH_PASSWORD="${2:?--password requires a value}"
+    shift 2
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Unknown option: $1" >&2
+    usage >&2
+    exit 64
+    ;;
+  esac
+done
+
+if [[ -n "$AUTH_USER" && -z "$AUTH_PASSWORD" ]]; then
+  read -rsp "Password for $AUTH_USER: " AUTH_PASSWORD
+  echo >&2
+fi
+
+# ── Session auth (Prompt 18, Deliverable 8) ───────────────────────────────────
+# Empty when --user wasn't given — every curl call below splices in
+# "${AUTH_OPTS[@]}", which is a no-op (unchanged behavior) in that case.
+JAR=""
+AUTH_OPTS=()
+UNAUTH_401=0
+
+cleanup_jar() { [[ -n "$JAR" ]] && rm -f "$JAR"; }
+trap cleanup_jar EXIT
+
+# Authorization Code + PKCE login against Express (auth/index.js) — same
+# pattern as scenarios/11_security_foundation/test_negative_auth.sh and
+# scenarios/13_fitness/test_architecture_invariants.sh's oidc_login().
+oidc_login() {
+  local user="$1" pass="$2" jar="$3"
+  : >"$jar"
+  local login_headers auth_url form_html form_action cb_headers cb_url qs
+  login_headers=$(curl -sD - -o /dev/null -c "$jar" "$API/api/v1/auth/login?next=/" 2>/dev/null)
+  auth_url=$(echo "$login_headers" | grep -i '^location:' | awk '{print $2}' | tr -d '\r\n')
+  if [[ -z "$auth_url" ]]; then
+    echo "  Could not reach $API/api/v1/auth/login — is the API up?" >&2
+    return 1
+  fi
+  form_html=$(curl -s -c "$jar" -b "$jar" "$auth_url")
+  form_action=$(echo "$form_html" | grep -oE 'action="[^"]*"' | head -1 |
+    sed -e 's/^action="//' -e 's/"$//' -e 's/&amp;/\&/g')
+  if [[ -z "$form_action" ]]; then
+    echo "  Could not find the Keycloak login form — is the identity stack up (make identity-up)?" >&2
+    return 1
+  fi
+  cb_headers=$(curl -sD - -o /dev/null -c "$jar" -b "$jar" \
+    --data-urlencode "username=$user" --data-urlencode "password=$pass" \
+    "$form_action")
+  cb_url=$(echo "$cb_headers" | grep -i '^location:' | awk '{print $2}' | tr -d '\r\n')
+  if [[ -z "$cb_url" ]]; then
+    echo "  Login form submission did not redirect — wrong username/password?" >&2
+    return 1
+  fi
+  case "$cb_url" in
+  *auth/callback*) ;;
+  *)
+    echo "  Unexpected redirect after login: $cb_url" >&2
+    return 1
+    ;;
+  esac
+  qs="${cb_url#*\?}"
+  curl -s -o /dev/null -c "$jar" -b "$jar" "$API/api/v1/auth/callback?$qs"
+  grep -q arc_session "$jar" 2>/dev/null
+}
+
+if [[ -n "$AUTH_USER" ]]; then
+  JAR=$(mktemp)
+  if oidc_login "$AUTH_USER" "$AUTH_PASSWORD" "$JAR"; then
+    AUTH_OPTS=(-b "$JAR")
+    echo "  Authenticated as $AUTH_USER"
+  else
+    echo "Login failed for $AUTH_USER — aborting (pass a valid --user/--password, or omit both to run unauthenticated)." >&2
+    exit 1
+  fi
+fi
+unset AUTH_PASSWORD
 
 # ── State ────────────────────────────────────────────────────────────────────
 PASS=0
@@ -56,7 +196,7 @@ check() {
   local label="$1" expected="$2" url="$3"
   local method="${4:-GET}" body="${5:-}" jq_expr="${6:-}"
   # Use -s (silent) not -sf (-f exits non-zero on 4xx/5xx which we want to capture)
-  local args=(-s -o /tmp/arc_verify_body -w "%{http_code}" --max-time 8)
+  local args=(-s -o /tmp/arc_verify_body -w "%{http_code}" --max-time 8 "${AUTH_OPTS[@]}")
   [[ "$method" != "GET" ]] && args+=(-X "$method")
   [[ -n "$body" ]] && args+=(-H "Content-Type: application/json" -d "$body")
 
@@ -66,6 +206,7 @@ check() {
   body_text=$(cat /tmp/arc_verify_body 2>/dev/null || echo "")
 
   if [[ "$status" != "$expected" ]]; then
+    [[ "$status" == "401" && -z "$JAR" ]] && ((UNAUTH_401++))
     fail "$label  [expected $expected, got $status]  ${body_text:0:120}"
     return
   fi
@@ -116,7 +257,7 @@ check "GET /health/ready" 200 "$API/health/ready" GET "" ".status"
 check "GET /health" 200 "$API/health" GET "" ".status"
 
 # Extract version from health for display
-VERSION=$(curl -sf --max-time 5 "$API/health" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "?")
+VERSION=$(curl -sf --max-time 5 "${AUTH_OPTS[@]}" "$API/health" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "?")
 echo -e "     ${YLW}API version: $VERSION${RST}"
 
 # ── 2. Applications ────────────────────────────────────────────────────────────
@@ -124,7 +265,7 @@ section "2. Applications"
 check "GET  /api/v1/applications" 200 "$API/api/v1/applications" GET "" ".0.name"
 
 # Pick an existing app_id for detail/patch tests
-APP_ID=$(curl -sf --max-time 5 "$API/api/v1/applications" 2>/dev/null |
+APP_ID=$(curl -sf --max-time 5 "${AUTH_OPTS[@]}" "$API/api/v1/applications" 2>/dev/null |
   python3 -c "import sys,json; apps=json.load(sys.stdin); print(apps[0]['id'] if apps else '')" 2>/dev/null || echo "")
 
 if [[ -n "$APP_ID" ]]; then
@@ -137,22 +278,22 @@ else
 fi
 
 # POST + DELETE lifecycle (ephemeral test app)
-TEST_APP=$(curl -sf --max-time 5 -X POST "$API/api/v1/applications" \
+TEST_APP=$(curl -sf --max-time 5 "${AUTH_OPTS[@]}" -X POST "$API/api/v1/applications" \
   -H "Content-Type: application/json" \
   -d '{"name":"verify-stack-test-app","description":"ephemeral smoke test"}' 2>/dev/null |
   python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
 if [[ -n "$TEST_APP" ]]; then
   pass "POST /api/v1/applications  → $TEST_APP"
-  STATUS=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 5 \
+  STATUS=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 5 "${AUTH_OPTS[@]}" \
     -X DELETE "$API/api/v1/applications/$TEST_APP" 2>/dev/null || echo "000")
   if [[ "$STATUS" == "204" ]]; then pass "DELETE /api/v1/applications/:id"; else fail "DELETE /api/v1/applications/:id  [got $STATUS]"; fi
 else
-  warn "Could not create ephemeral test app (409 name conflict is OK)"
+  warn "Could not create ephemeral test app (409 name conflict is OK, 401/403 means --user needs provisioning rights)"
 fi
 
 # 409 on duplicate name (use -s not -sf so 4xx doesn't cause non-zero exit)
-DUPE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+DUPE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${AUTH_OPTS[@]}" \
   -X POST "$API/api/v1/applications" \
   -H "Content-Type: application/json" \
   -d '{"name":"payments-api"}' 2>/dev/null || echo "000")
@@ -179,7 +320,7 @@ check "GET  /api/v1/pki/roles" 200 "$API/api/v1/pki/roles"
 section "5. Suppliers"
 check "GET  /api/v1/suppliers" 200 "$API/api/v1/suppliers" GET "" ".0.name"
 
-SUPPLIER_ID=$(curl -sf --max-time 5 "$API/api/v1/suppliers" 2>/dev/null |
+SUPPLIER_ID=$(curl -sf --max-time 5 "${AUTH_OPTS[@]}" "$API/api/v1/suppliers" 2>/dev/null |
   python3 -c "import sys,json; s=json.load(sys.stdin); print(s[0]['id'] if s else '')" 2>/dev/null || echo "")
 
 if [[ -n "$SUPPLIER_ID" ]]; then
@@ -196,7 +337,7 @@ check "GET  /api/v1/approvals (pending)" 200 "$API/api/v1/approvals" GET "" ""
 check "GET  /api/v1/approvals?all=true" 200 "$API/api/v1/approvals?all=true" GET "" ""
 
 # Count pending / approved / rejected
-APPROVAL_SUMMARY=$(curl -sf --max-time 5 "$API/api/v1/approvals?all=true" 2>/dev/null |
+APPROVAL_SUMMARY=$(curl -sf --max-time 5 "${AUTH_OPTS[@]}" "$API/api/v1/approvals?all=true" 2>/dev/null |
   python3 -c "
 import sys,json
 rows=json.load(sys.stdin)
@@ -209,7 +350,7 @@ print(', '.join(parts) or 'empty')
 echo -e "     ${YLW}Approval breakdown: $APPROVAL_SUMMARY${RST}"
 
 # Fetch the newest pending approval for traceability
-NEWEST_PENDING=$(curl -sf --max-time 5 "$API/api/v1/approvals" 2>/dev/null |
+NEWEST_PENDING=$(curl -sf --max-time 5 "${AUTH_OPTS[@]}" "$API/api/v1/approvals" 2>/dev/null |
   python3 -c "
 import sys,json
 rows=sorted(json.load(sys.stdin), key=lambda r: r['created_at'], reverse=True)
@@ -383,6 +524,10 @@ if [[ $FAIL -eq 0 ]]; then
   echo -e "${GRN}${BLD}  ✓ All checks passed${RST}  (${PASS} pass, ${WARN} warn, ${FAIL} fail / ${TOTAL} total)"
 else
   echo -e "${RED}${BLD}  ✗ Some checks failed${RST}  (${PASS} pass, ${WARN} warn, ${FAIL} fail / ${TOTAL} total)"
+fi
+if [[ -z "$JAR" && $UNAUTH_401 -gt 0 ]]; then
+  echo -e "  ${YLW}$UNAUTH_401 check(s) failed with 401 — this deployment has ARCANIUM_AUTH_ENABLED=true.${RST}"
+  echo -e "  ${YLW}Re-run with --user <username> --password <password> (see --help).${RST}"
 fi
 echo ""
 
