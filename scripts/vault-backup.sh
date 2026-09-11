@@ -7,7 +7,10 @@ source "$(dirname -- "$0")/vault-common.sh"
 mkdir -p "$VAULT_PROJECT_ROOT/backups"
 backup=$(mktemp -d "$VAULT_PROJECT_ROOT/backups/vault-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")
 for cluster in vault-s cluster; do
-  if [ "$cluster" = vault-s ]; then vault_node vault-s; else vault_node vault-1; fi
+  # Prompt 24 — talk to the current Raft leader directly, not a hardcoded
+  # node: a snapshot-save call against a standby redirects to the leader's
+  # cluster-internal hostname, which a host-side script can't resolve.
+  if [ "$cluster" = vault-s ]; then vault_node vault-s; else vault_node_leader; fi
   vault_root "$cluster"
   vault operator raft snapshot save "$backup/$cluster.snap"
   vault operator raft snapshot inspect "$backup/$cluster.snap" >"$backup/$cluster.inspect.txt"

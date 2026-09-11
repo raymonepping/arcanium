@@ -169,6 +169,10 @@ verify: ## Run full stack verification — smoke-tests all API routes + workload
 vault-backup: ## Save and inspect both Raft snapshots outside the Podman VM
 	@./scripts/vault-backup.sh
 
+.PHONY: restore-drill-vault
+restore-drill-vault: ## Prompt 24, Drill A — real Vault snapshot restore into an isolated instance, measured RTO/RPO
+	@./scripts/vault-restore-drill.sh
+
 .PHONY: hsm-bootstrap
 hsm-bootstrap: ## Build vault-hsm image, start softhsm-server, resolve slot, start vault-hsm
 	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" -t arcanium-vault-hsm:local \

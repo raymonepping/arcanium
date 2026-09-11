@@ -3,6 +3,7 @@
 
 import express from "express";
 import { createServer } from "node:http";
+import { randomBytes } from "node:crypto";
 
 import config from "./config.js";
 import { init as vaultInit, getDbCredentials } from "./vault.js";
@@ -62,12 +63,46 @@ async function main() {
   app.use("/health", healthRouter);
   app.use("/api/v1/auth", authRouter);
 
+  // Prompt 23 (extended) — /api-docs is a real, browser-rendered HTML page,
+  // not a JSON endpoint, so the blanket `default-src 'none'` from
+  // securityHeaders (correct for the API surface) leaves it unable to run
+  // Scalar's bootstrap script or load its bundle from the CDN — found live
+  // as a blank page with the browser console reporting the blocked inline
+  // script and the CDN load. Rather than loosen the CSP for everyone (or
+  // drop it for this route), give /api-docs its own scoped, nonce-based
+  // policy: Scalar's renderer accepts a `nonce` and, when given one,
+  // switches to the single-file UMD bundle (no un-nonceable ESM `import`
+  // chunks) and stamps both its <script> tags plus a
+  // <meta property="csp-nonce"> it reads at runtime for the stylesheet it
+  // injects. One nonce generated per process start (not per request) is
+  // enough here — /api-docs is already dev-only, opt-in, and behind the
+  // same session-cookie gate as the rest of the API.
+  const API_DOCS_NONCE =
+    config.apiExplorerEnabled && config.nodeEnv !== "production"
+      ? randomBytes(16).toString("base64")
+      : null;
+  const API_DOCS_DIRECT_SERVER = "http://localhost:3001";
+
   // Prompt 23 — /api-docs is a browser-navigated page (not a fetch target).
   // When auth is enabled and the request arrives without a valid session cookie,
   // redirect to the login flow instead of returning a bare JSON 401. On return
   // from Keycloak the browser will land back at /api-docs via the `next` param.
   if (config.apiExplorerEnabled && config.nodeEnv !== "production") {
     app.use("/api-docs", (req, res, next) => {
+      res.setHeader(
+        "Content-Security-Policy",
+        [
+          "default-src 'none'",
+          `script-src 'nonce-${API_DOCS_NONCE}' https://cdn.jsdelivr.net`,
+          `style-src 'self' 'nonce-${API_DOCS_NONCE}' https://fonts.googleapis.com`,
+          "font-src https://fonts.gstatic.com data:",
+          "img-src 'self' data: https:",
+          `connect-src 'self' ${API_DOCS_DIRECT_SERVER}`,
+          "object-src 'none'",
+          "base-uri 'none'",
+          "frame-ancestors 'none'",
+        ].join("; "),
+      );
       if (!config.auth.enabled) return next();
       const raw = req.headers.cookie || "";
       const hasCookie = raw
@@ -127,11 +162,14 @@ async function main() {
         spec: { content: spec },
         // Use the direct API server (servers[0] in openapi/arcanium.yaml),
         // not the Nuxt gateway — /api-docs is a backend-developer tool.
-        servers: [{ url: "http://localhost:3001", description: "Direct API" }],
+        servers: [{ url: API_DOCS_DIRECT_SERVER, description: "Direct API" }],
         // Do not inject a default auth value — the operator's browser cookie
         // (arc_session) is already in play when they open this in the same
         // browser profile they used to log into the Arcanium UI.
         authentication: { preferredSecurityScheme: "sessionCookie" },
+        // Matches the CSP set above on this same route — see that comment
+        // for why a nonce (not 'unsafe-inline') is the fix here.
+        nonce: API_DOCS_NONCE,
       }),
     );
 
