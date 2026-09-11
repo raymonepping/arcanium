@@ -109,6 +109,14 @@ const config = {
       );
     },
   },
+
+  // Prompt 24 — one number, used by both routes/jobs.js's ?status=stuck
+  // filter and telemetry/slo.js's "Stuck job age" SLO, so a job counts as
+  // stuck the same way in both places rather than two independently
+  // tunable thresholds that could silently drift apart.
+  stuckJobThresholdMinutes: Number(
+    optional("ARCANIUM_STUCK_JOB_THRESHOLD_MINUTES", "10"),
+  ),
 };
 
 export default config;

@@ -28,6 +28,7 @@
 import { query } from "../db.js";
 import { getStatus } from "../vault.js";
 import { ping } from "../db.js";
+import config from "../config.js";
 
 const PROM = (process.env.PROMETHEUS_URL || "http://prometheus:9090").replace(
   /\/$/,
@@ -189,7 +190,7 @@ async function stuckJobAge() {
             max(EXTRACT(EPOCH FROM (now() - updated_at))) AS max_age_s
        FROM provisioning_jobs
       WHERE status = 'running'
-        AND updated_at < now() - interval '10 minutes'`,
+        AND updated_at < now() - interval '${config.stuckJobThresholdMinutes} minutes'`,
   );
   const stuckCount = rows[0]?.n ?? 0;
   const maxAge = rows[0]?.max_age_s === null ? null : Number(rows[0].max_age_s);
@@ -199,7 +200,7 @@ async function stuckJobAge() {
     samples: stuckCount,
     min_samples: 0,
     value: maxAge,
-    target: 600,
+    target: config.stuckJobThresholdMinutes * 60,
     status: stuckCount === 0 ? "MET" : "BREACHED",
   };
 }

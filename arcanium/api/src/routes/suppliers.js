@@ -117,6 +117,7 @@ suppliersRouter.post("/", async (req, res, next) => {
         vault_namespace: supplier.vault_namespace,
         sla_tier: supplier.sla_tier,
       },
+      request_id: req.requestId,
     });
     const finished = await runOrQueue(job, (j) =>
       provisionSupplier(j, supplier),
@@ -258,6 +259,7 @@ suppliersRouter.delete("/:id", async (req, res, next) => {
       action: "deprovision",
       requested_by: req.identity?.user ?? "arcanium",
       params: { force: req.query.force === "true" },
+      request_id: req.requestId,
     });
     const finished = await deprovisionSupplier(job, sup[0], {
       force: req.query.force === "true",

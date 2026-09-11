@@ -17,6 +17,14 @@
       </div>
     </section>
 
+    <!-- Prompt 24, Deliverable 4 — actionable, not silently accumulating.
+         Always visible when non-empty, never collapsed by default. -->
+    <div v-if="stuckJobs.length" class="stuck-alert">
+      <span class="stuck-dot" />
+      <strong>{{ stuckJobs.length }} stuck job{{ stuckJobs.length === 1 ? '' : 's' }}</strong>
+      <span class="stuck-detail">running past the {{ STUCK_THRESHOLD_MINUTES }}-minute threshold — oldest {{ oldestStuckAge }}</span>
+    </div>
+
     <div v-if="loading" class="state"><div class="spinner" /><span>Loading jobs…</span></div>
     <div v-else-if="error" class="state err">{{ error }}</div>
     <div v-else-if="!filtered.length" class="state">No {{ filter === 'all' ? '' : filter + ' ' }}jobs yet. Provision a supplier or an application to see one here.</div>
@@ -38,6 +46,7 @@
             <span v-if="s.detail && typeof s.detail === 'string'" class="step-detail">{{ s.detail }}</span>
           </div>
           <div v-if="j.error" class="job-error">{{ j.error }}</div>
+          <div v-if="j.request_id" class="job-request-id">request_id: {{ j.request_id }}</div>
         </div>
       </div>
       <RecordPagination v-model:page="page" :total="filtered.length" />
@@ -55,14 +64,21 @@ definePageMeta({ layout: 'default' })
 useHead({ title: 'Provisioning Jobs' })
 
 const PER = 10
+const STUCK_THRESHOLD_MINUTES = 10 // matches config.stuckJobThresholdMinutes's default (arcanium/api/src/config.js)
 const { jobs: fetchJobs } = useArcaniumApi()
 const loading = ref(true)
 const error = ref('')
 const list = ref<ProvisioningJob[]>([])
+const stuckJobs = ref<ProvisioningJob[]>([])
 const open = ref(new Set<string>())
 const filters = ['all', 'succeeded', 'failed', 'rolled_back', 'running'] as const
 const filter = ref<typeof filters[number]>('all')
 const page = ref(1)
+
+const oldestStuckAge = computed(() => {
+  const max = Math.max(0, ...stuckJobs.value.map(j => j.stuck_age_seconds ?? 0))
+  return max >= 60 ? `${Math.floor(max / 60)}m` : `${max}s`
+})
 
 const filtered = computed(() =>
   filter.value === 'all' ? list.value : list.value.filter(j => j.status === filter.value),
@@ -90,6 +106,13 @@ async function load() {
     error.value = apiErrorMessage(e, 'Failed to load jobs.')
   } finally {
     loading.value = false
+  }
+  // Prompt 24, Deliverable 4 — independent of the main list's own error
+  // state; a stuck-job alert failing to load shouldn't block the page.
+  try {
+    stuckJobs.value = await fetchJobs({ status: 'stuck' })
+  } catch {
+    stuckJobs.value = []
   }
 }
 onMounted(load)
@@ -139,4 +162,10 @@ usePolling(load, 10000)
 .step.failed .step-name { color: var(--arc-critical); }
 .step-detail { color: var(--arc-text-dim); font-family: ui-monospace, monospace; font-size: 10.5px; }
 .job-error { font-size: 11px; color: var(--arc-critical); font-family: ui-monospace, monospace; margin-top: 6px; padding: 8px 10px; background: var(--arc-critical-bg); border-radius: 6px; }
+.job-request-id { font-size: 10.5px; color: var(--arc-text-dim); font-family: ui-monospace, monospace; margin-top: 4px; }
+
+.stuck-alert { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 10px; background: var(--arc-critical-bg); border: 1px solid rgba(220,47,2,0.3); font-size: 12.5px; color: var(--arc-text-primary); }
+.stuck-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--arc-critical); flex-shrink: 0; animation: pulse 1.4s ease-in-out infinite; }
+.stuck-detail { color: var(--arc-text-muted); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 </style>

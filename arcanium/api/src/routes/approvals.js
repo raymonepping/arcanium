@@ -89,7 +89,7 @@ approvalsRouter.get("/", async (req, res, next) => {
     const all = req.query.all === "true";
     const scope = await tenantScope(req);
     const cols = `id, app_id, key_name, action, status, requester, approver,
-                  reason, accessor, source, supplier_id, created_at, updated_at`;
+                  reason, accessor, source, supplier_id, request_id, created_at, updated_at`;
     const where = all ? "" : "status = 'pending'";
     const parts = [];
     const params = [];
@@ -171,9 +171,9 @@ approvalsRouter.post("/", async (req, res, next) => {
 
     const { rows } = await query(
       `INSERT INTO approval_requests
-         (app_id, key_name, action, requester, accessor, reason, source, supplier_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, app_id, key_name, action, status, requester, accessor, reason, source, supplier_id, created_at`,
+         (app_id, key_name, action, requester, accessor, reason, source, supplier_id, request_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, app_id, key_name, action, status, requester, accessor, reason, source, supplier_id, request_id, created_at`,
       [
         app_id,
         key_name,
@@ -183,6 +183,7 @@ approvalsRouter.post("/", async (req, res, next) => {
         reason ?? null,
         source ?? "external",
         supplier_id && UUID_RE.test(supplier_id) ? supplier_id : null,
+        req.requestId,
       ],
     );
     res.status(201).json(rows[0]);

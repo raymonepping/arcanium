@@ -14,9 +14,15 @@
 -- from any Arcanium request — those legitimately have no request_id, and
 -- this migration does not pretend otherwise by backfilling one.
 
-ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS request_id UUID;
-ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS request_id UUID;
-ALTER TABLE evidence          ADD COLUMN IF NOT EXISTS request_id UUID;
+-- TEXT, not UUID: middleware/requestId.js honors a caller-supplied
+-- X-Request-Id verbatim (up to 128 chars) as an opaque correlation token —
+-- found live while proving this migration: a non-UUID-shaped client trace
+-- ID correctly crashed a UUID column's insert. A generated ID is always a
+-- real UUID (crypto.randomUUID()), but nothing requires a caller-supplied
+-- one to be shaped like one.
+ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS request_id TEXT;
+ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS request_id TEXT;
+ALTER TABLE evidence          ADD COLUMN IF NOT EXISTS request_id TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_request_id ON provisioning_jobs(request_id);
 CREATE INDEX IF NOT EXISTS idx_approval_requests_request_id ON approval_requests(request_id);

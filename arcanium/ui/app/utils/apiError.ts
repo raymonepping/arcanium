@@ -10,6 +10,17 @@
 // apiErrorMessage() always returns a string, and only ever the gateway's already-
 // sanitised text — never a boolean, an object, or an upstream payload.
 
+// Prompt 24, Deliverable 2 — the one field the gateway deliberately DOES
+// forward from an otherwise-sanitised error payload (see
+// gateway/[...path].ts's own catch block): an opaque correlation token,
+// never sensitive. Read here so a toast can point back at the exact
+// server-side log line for this failure.
+export function apiErrorRequestId(err: unknown): string | undefined {
+  const e = err as { data?: { request_id?: unknown } } | null | undefined
+  const id = e?.data?.request_id
+  return typeof id === 'string' && id.length ? id : undefined
+}
+
 export function apiErrorMessage(err: unknown, fallback = 'Something went wrong.'): string {
   const e = err as {
     data?: { statusMessage?: unknown; message?: unknown; error?: unknown }
@@ -25,12 +36,15 @@ export function apiErrorMessage(err: unknown, fallback = 'Something went wrong.'
     e?.message,
   ]
 
+  let message = fallback
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim() && c !== 'true' && c !== 'false') {
-      return c.trim()
+      message = c.trim()
+      break
     }
   }
-  return fallback
+  const requestId = apiErrorRequestId(err)
+  return requestId ? `${message} (request ${requestId})` : message
 }
 
 /** HTTP status behind a gateway/fetch error, or 0 if unknown. */

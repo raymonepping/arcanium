@@ -291,6 +291,7 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
       action: "provision",
       requested_by: req.identity?.user ?? "arcanium",
       params,
+      request_id: req.requestId,
     });
     const finished = await runOrQueue(job, (j) =>
       provisionApplication(j, app, params),

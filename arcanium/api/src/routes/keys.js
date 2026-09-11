@@ -175,6 +175,7 @@ keysRouter.post("/:name/rotate", async (req, res, next) => {
       target_name: name,
       action: "rotate",
       requested_by: req.identity?.user ?? "arcanium",
+      request_id: req.requestId,
     });
     const finished = await runOrQueue(job, (j) => rotateKey(j, name));
     res

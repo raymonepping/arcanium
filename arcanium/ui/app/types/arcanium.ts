@@ -62,6 +62,7 @@ export interface ApprovalRecord {
   accessor?: string | null
   source: ApprovalSource
   supplier_id?: string | null
+  request_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -273,6 +274,8 @@ export interface ProvisioningJob {
   steps: ProvisioningStep[]
   error: string | null
   requested_by: string
+  request_id?: string | null
+  stuck_age_seconds?: number
   created_at: string
   updated_at: string
 }

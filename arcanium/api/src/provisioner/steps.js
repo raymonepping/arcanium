@@ -40,10 +40,11 @@ export async function createJob({
   action,
   requested_by,
   params,
+  request_id,
 }) {
   const { rows } = await query(
-    `INSERT INTO provisioning_jobs (target_type, target_id, target_name, action, requested_by, params, status)
-     VALUES ($1,$2,$3,$4,$5,$6,'pending') RETURNING *`,
+    `INSERT INTO provisioning_jobs (target_type, target_id, target_name, action, requested_by, params, status, request_id)
+     VALUES ($1,$2,$3,$4,$5,$6,'pending',$7) RETURNING *`,
     [
       target_type,
       target_id,
@@ -51,6 +52,7 @@ export async function createJob({
       action,
       requested_by ?? "arcanium",
       JSON.stringify(params ?? {}),
+      request_id ?? null,
     ],
   );
   return rows[0];

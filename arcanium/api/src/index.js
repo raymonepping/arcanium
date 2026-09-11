@@ -10,6 +10,7 @@ import { init as dbInit } from "./db.js";
 import { runMigrations } from "./migrations.js";
 
 import { requestLogger } from "./middleware/requestLogger.js";
+import { requestId } from "./middleware/requestId.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { securityHeaders } from "./middleware/securityHeaders.js";
 import { healthRouter } from "./routes/health.js";
@@ -53,6 +54,7 @@ async function main() {
 
   app.use(securityHeaders);
   app.use(express.json({ limit: "100kb" }));
+  app.use(requestId); // Prompt 24 — before everything else that logs or persists
   app.use(metricsMiddleware);
   app.use(requestLogger);
 

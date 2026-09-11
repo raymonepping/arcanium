@@ -98,6 +98,10 @@
                 </div>
                 <div class="dl-row"><span class="dl-l">Status</span><span class="status-pill" :class="drawer.record.status">{{ drawer.record.status }}</span></div>
                 <div class="dl-row"><span class="dl-l">Created</span><span class="dl-v">{{ formatDate(drawer.record.created_at) }}</span></div>
+                <div class="dl-row" v-if="drawer.record.request_id">
+                  <span class="dl-l">Request</span>
+                  <span class="dl-v mono">{{ drawer.record.request_id }}</span>
+                </div>
               </div>
             </div>
 

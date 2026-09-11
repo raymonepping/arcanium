@@ -50,10 +50,21 @@ export default defineEventHandler(async (event) => {
   } catch (error: unknown) {
     const code = (error as { statusCode?: number }).statusCode || 502
     // A degraded health response is useful data, but error payloads are never forwarded.
-    const data = (error as { data?: { status?: string; vault?: { authenticated?: boolean }; database?: { reachable?: boolean } } }).data
+    const data = (error as { data?: { status?: string; vault?: { authenticated?: boolean }; database?: { reachable?: boolean }; request_id?: string } }).data
     if (path === 'health' && code === 503 && data?.status === 'degraded') {
       return { status: 'degraded', vault: { authenticated: !!data.vault?.authenticated }, database: { reachable: !!data.database?.reachable } }
     }
-    throw createError({ statusCode: code, statusMessage: code === 401 ? 'Authentication required' : code === 403 ? 'Permission denied' : code === 409 ? 'Conflict: this record already exists, is in use, or was already resolved.' : code === 400 ? 'Invalid input. Check the supplied fields.' : code === 404 ? 'Resource unavailable' : 'Arcanium API unavailable' })
+    // Prompt 24, Deliverable 2 — request_id is the one deliberate exception
+    // to "error payloads are never forwarded": it's an opaque correlation
+    // token, never sensitive, and apiError.ts / job & approval error toasts
+    // need it to point back at the exact server-side log line. Most routes
+    // 4xx/403 directly (authorize() checks scattered across every route
+    // file) without going through errorHandler.js's JSON body — but
+    // requestId middleware sets the X-Request-Id RESPONSE HEADER
+    // unconditionally on every response, so that's the reliable fallback
+    // when the body doesn't carry one.
+    const headerRequestId = (error as { response?: { headers?: Headers } }).response?.headers?.get('x-request-id')
+    const requestId = data?.request_id || headerRequestId || undefined
+    throw createError({ statusCode: code, statusMessage: code === 401 ? 'Authentication required' : code === 403 ? 'Permission denied' : code === 409 ? 'Conflict: this record already exists, is in use, or was already resolved.' : code === 400 ? 'Invalid input. Check the supplied fields.' : code === 404 ? 'Resource unavailable' : 'Arcanium API unavailable', data: requestId ? { request_id: requestId } : undefined })
   }
 })
