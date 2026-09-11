@@ -80,7 +80,14 @@ podman_ok() {
 running() {
   local attempt
   for attempt in 1 2 3; do
-    if podman ps --format '{{.Names}}' 2>/dev/null | grep -qx "$1"; then return 0; fi
+    # Not `grep -qx`: under `set -o pipefail` (this script's own top-level
+    # setting), grep -q's early exit on a match can SIGPIPE the still-
+    # writing `podman ps`, and pipefail then reports THAT non-zero exit
+    # instead of grep's successful match — an intermittent false-negative
+    # found live while testing Deliverable 12's capture_persistence().
+    # Plain `grep -x` (redirected, not quieted) reads to completion, so
+    # `podman ps` always exits 0 and pipefail has nothing non-zero to report.
+    if podman ps --format '{{.Names}}' 2>/dev/null | grep -x "$1" >/dev/null; then return 0; fi
     podman ps >/dev/null 2>&1 || {
       sleep 1
       continue
@@ -425,6 +432,100 @@ capture_workloads() {
   set_status workloads CAPTURED
 }
 
+# ---------------------------------------------------------- persistence --
+# Pre-24, Deliverable 12. Safe, non-secret persistence indicators only —
+# volume PRESENCE (podman volume ls), never volume CONTENTS. Never
+# SecretIDs, OIDC client secrets, LDAP passwords, Vault tokens, HSM PINs,
+# or database passwords — see capture_persistence's own field list below
+# against docs/persistence.md's PERSIST/REHYDRATE/REISSUE/EPHEMERAL model.
+capture_persistence() {
+  local d="$TMP/components/persistence"
+  mkdir -p "$d"
+  local vols
+  vols=$(podman volume ls --format '{{.Name}}' 2>/dev/null || true)
+  vol_present() { echo "$vols" | grep -qx "$1" && echo true || echo false; }
+
+  local schema_version="unknown"
+  schema_version=$(ls arcanium/api/src/migrations/ 2>/dev/null | sort | tail -1 | grep -oE '^[0-9]+' || echo "unknown")
+
+  local cluster_id="unknown"
+  if running arcanium-vault_1; then
+    # No -f: sys/health returns non-200 for standby/perf-standby nodes by
+    # design (docs/architecture.md, docs/operations.md — a healthy standby
+    # is not an error). Read the body regardless of status.
+    cluster_id=$(curl -sk --max-time 5 https://127.0.0.1:18200/v1/sys/health 2>/dev/null |
+      jq -r '.cluster_id // "unknown"' 2>/dev/null || echo "unknown")
+  fi
+
+  local cred_ready="false" cred_detail="not checked"
+  if [ -x scripts/workload-credentials.sh ]; then
+    if ./scripts/workload-credentials.sh verify-all >"$d/workload-credentials-verify.log" 2>&1; then
+      cred_ready="true"
+      cred_detail="verify-all PASS"
+    else
+      local rc=$?
+      if [ "$rc" -eq 2 ]; then
+        cred_detail="verify-all UNKNOWN (Vault unreachable for one or more identities)"
+      else
+        cred_detail="verify-all FAIL — see workload-credentials-verify.log"
+      fi
+    fi
+  else
+    cred_detail="scripts/workload-credentials.sh not found"
+  fi
+
+  # restart_persistence reflects the hostile Deliverable-9 scenario, not
+  # this capture itself — UNKNOWN unless that scenario left its own result
+  # marker (scenarios/pre_24_persistence/test_restart_persistence.sh writes
+  # state/.last-persistence-scenario-result on completion).
+  local restart_persistence="UNKNOWN"
+  local restart_detail="scenarios/pre_24_persistence/test_restart_persistence.sh has not been run"
+  if [ -f state/.last-persistence-scenario-result ]; then
+    restart_persistence=$(cat state/.last-persistence-scenario-result)
+    restart_detail="from scenarios/pre_24_persistence/test_restart_persistence.sh's last run"
+  fi
+
+  jq -n \
+    --arg postgres_vol "$(vol_present arcanium-infra_postgres-data)" \
+    --arg schema_version "$schema_version" \
+    --arg vault_1 "$(vol_present arcanium-vault_vault-1-data)" \
+    --arg vault_2 "$(vol_present arcanium-vault_vault-2-data)" \
+    --arg vault_3 "$(vol_present arcanium-vault_vault-3-data)" \
+    --arg vault_s "$(vol_present arcanium-vault_vault-s-data)" \
+    --arg cluster_id "$cluster_id" \
+    --arg ldap_data "$(vol_present arcanium-identity_ldap-data)" \
+    --arg keycloak_data "$(vol_present arcanium-identity_keycloak-data)" \
+    --arg softhsm "$(vol_present arcanium-hsm_softhsm-data)" \
+    --arg vault_hsm "$(vol_present arcanium-hsm_vault-hsm-data)" \
+    --arg cred_ready "$cred_ready" \
+    --arg cred_detail "$cred_detail" \
+    --arg restart_persistence "$restart_persistence" \
+    --arg restart_detail "$restart_detail" \
+    '{
+      postgres: {volume_present: ($postgres_vol=="true"), schema_version: $schema_version},
+      vault: {
+        raft_storage_present: {main_1: ($vault_1=="true"), main_2: ($vault_2=="true"), main_3: ($vault_3=="true"), seal_provider: ($vault_s=="true")},
+        cluster_id: $cluster_id
+      },
+      identity: {ldap_directory_present: ($ldap_data=="true"), keycloak_data_present: ($keycloak_data=="true")},
+      hsm: {softhsm_token_store_present: ($softhsm=="true"), vault_hsm_storage_present: ($vault_hsm=="true")},
+      workloads: {credential_bootstrap_ready: ($cred_ready=="true"), detail: $cred_detail},
+      restart_persistence: {result: $restart_persistence, detail: $restart_detail}
+    }' >"$d/persistence.json"
+
+  # Volume-name guesses above depend on the podman-compose project-name
+  # prefix actually in use on this machine — verify at least one resolved
+  # rather than silently reporting an all-false false negative.
+  local any_found=false
+  echo "$vols" | grep -q "postgres-data\|vault.*data\|ldap-data\|keycloak-data\|softhsm-data" && any_found=true
+
+  if [ "$any_found" = true ]; then
+    set_status persistence CAPTURED
+  else
+    set_status persistence PARTIAL
+  fi
+}
+
 # ------------------------------------------------------------- verification --
 capture_verification() {
   local results="[]"
@@ -554,7 +655,7 @@ echo "Capturing baseline: $FINAL"
 echo "  purpose: $PURPOSE"
 echo
 
-for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_verification; do
+for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_verification; do
   echo "-> ${fn#capture_}"
   "$fn"
 done
@@ -609,13 +710,45 @@ fi
     echo "    capture_status: ${STATUS[$c]:-UNKNOWN}"
   done
   echo
+  echo "# Pre-24, Deliverable 12 — safe, non-secret persistence indicators only."
+  echo "# Never a SecretID, OIDC client secret, LDAP password, Vault token, HSM"
+  echo "# PIN, or database password — see docs/persistence.md."
+  echo "persistence:"
+  if [ -s "$TMP/components/persistence/persistence.json" ]; then
+    jq -r '
+      "  postgres:",
+      "    volume_present: \(.postgres.volume_present)",
+      "    schema_version: \"\(.postgres.schema_version)\"",
+      "  vault:",
+      "    raft_storage_present:",
+      "      main_1: \(.vault.raft_storage_present.main_1)",
+      "      main_2: \(.vault.raft_storage_present.main_2)",
+      "      main_3: \(.vault.raft_storage_present.main_3)",
+      "      seal_provider: \(.vault.raft_storage_present.seal_provider)",
+      "    cluster_id: \"\(.vault.cluster_id)\"",
+      "  identity:",
+      "    ldap_directory_present: \(.identity.ldap_directory_present)",
+      "    keycloak_data_present: \(.identity.keycloak_data_present)",
+      "  hsm:",
+      "    softhsm_token_store_present: \(.hsm.softhsm_token_store_present)",
+      "    vault_hsm_storage_present: \(.hsm.vault_hsm_storage_present)",
+      "  workloads:",
+      "    credential_bootstrap_ready: \(.workloads.credential_bootstrap_ready)",
+      "    detail: \"\(.workloads.detail)\"",
+      "  restart_persistence: \(.restart_persistence.result)",
+      "  restart_persistence_detail: \"\(.restart_persistence.detail)\""
+    ' "$TMP/components/persistence/persistence.json"
+  else
+    echo "  status: UNKNOWN"
+  fi
+  echo
   echo "verification:"
   jq -r '.results[] | "  \(.check): \(.result)"' "$TMP/verification/results.json"
   echo
   echo "capture:"
   echo "  overall: ${overall}"
   echo "  checks:"
-  for c in source runtime arcanium vault hsm identity infra kms observability workloads verification; do
+  for c in source runtime arcanium vault hsm identity infra kms observability workloads persistence verification; do
     echo "    ${c}: ${STATUS[$c]:-UNKNOWN}"
   done
 } >"$TMP/manifest.yaml"
@@ -635,7 +768,7 @@ AUTH_ENABLED="$(jq -r '.ARCANIUM_AUTH_ENABLED // "(unset)"' "$TMP/components/arc
   echo
   echo "| Check | Status |"
   echo "|---|---|"
-  for c in source runtime arcanium vault hsm identity infra kms observability workloads verification; do
+  for c in source runtime arcanium vault hsm identity infra kms observability workloads persistence verification; do
     echo "| $c | ${STATUS[$c]:-UNKNOWN} |"
   done
   echo
