@@ -79,16 +79,39 @@ fi
 echo
 
 # --- 5. commit + push via commit_gh ---------------------------------------
+HEAD_BEFORE="$(git rev-parse HEAD)"
+
+run_commit_gh() {
+  echo "-> commit_gh --message \"$MESSAGE\" --tree false"
+  echo "   (stages, gitleaks-scans staged files, rebases onto origin/main, commits, pushes)"
+  commit_gh --message "$MESSAGE" --tree false
+}
+
 if ! command -v commit_gh >/dev/null 2>&1; then
   echo "commit_gh not found on PATH — falling back to plain git." >&2
   git add state/
   git commit -m "$MESSAGE"
 else
-  echo "-> commit_gh --message \"$MESSAGE\" --tree false"
-  echo "   (stages, gitleaks-scans staged files, rebases onto origin/main, commits, pushes)"
-  commit_gh --message "$MESSAGE" --tree false
+  run_commit_gh
+  # The repo's pre-commit hook runs sanity_check --fix, which can reformat
+  # staged shell scripts and then deliberately blocks the commit once, so
+  # the reformatted content gets committed rather than silently dropped.
+  # commit_gh's own `git add .` re-stages everything on each invocation, so
+  # retrying is just calling it again — do that once automatically instead
+  # of leaving a half-finished commit for the caller to notice by hand.
+  if [ "$(git rev-parse HEAD)" = "$HEAD_BEFORE" ]; then
+    echo
+    echo "-> commit did not land (pre-commit hook likely reformatted staged files) — retrying once"
+    run_commit_gh
+  fi
 fi
 echo
+
+if [ "$(git rev-parse HEAD)" = "$HEAD_BEFORE" ]; then
+  echo "ABORT: commit still did not land after retry — check commit_gh output above." >&2
+  echo "The tag (if newly created) has NOT been pushed; nothing else to clean up." >&2
+  exit 1
+fi
 
 # --- 6. push the tag (commit_gh's plain commit flow does not push tags) --
 echo "-> pushing tag $TAG"
