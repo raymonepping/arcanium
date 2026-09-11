@@ -10,6 +10,7 @@
 import { query } from "../db.js";
 import config from "../config.js";
 import { JOB_STATES, assertTransition } from "../domain/state-machines.js";
+import { jobEvent, observe } from "../telemetry/metrics.js";
 
 // A same-state write (e.g. re-persisting "running" mid-loop) is not a
 // transition at all — JOB_STATES has no self-loops (matching the real DB
@@ -76,6 +77,12 @@ async function event(resource_type, resource_id, ev, detail) {
  * Returns the final job row.
  */
 export async function runSteps(job, steps) {
+  // Prompt 24, Deliverable 1 — "Provision success rate" / "P95 provision
+  // latency" SLOs need real outcome+duration data, not just the job row.
+  // startedAt is wall-clock from the moment this job actually starts
+  // running (not from job creation — a queued job's wait time is a
+  // separate concern from its own execution latency).
+  const startedAt = Date.now();
   setStatus(job, "running");
   job.steps = steps.map((s) => ({ step: s.name, status: "pending" }));
   await persist(job);
@@ -136,6 +143,12 @@ export async function runSteps(job, steps) {
       await event(job.target_type, job.target_id, `${job.action}.failed`, {
         error: job.error,
       });
+      jobEvent(job.action, job.status);
+      observe(
+        "arcanium_provision_duration_seconds",
+        { action: job.action, outcome: job.status },
+        (Date.now() - startedAt) / 1000,
+      );
       return job;
     }
   }
@@ -143,6 +156,12 @@ export async function runSteps(job, steps) {
   setStatus(job, "succeeded");
   await persist(job);
   await event(job.target_type, job.target_id, `${job.action}.succeeded`, null);
+  jobEvent(job.action, job.status);
+  observe(
+    "arcanium_provision_duration_seconds",
+    { action: job.action, outcome: job.status },
+    (Date.now() - startedAt) / 1000,
+  );
   return job;
 }
 

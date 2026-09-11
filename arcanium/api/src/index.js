@@ -29,6 +29,7 @@ import { controlsRouter } from "./routes/controls.js";
 import { authRouter, requireSession } from "./auth/index.js";
 import { observabilityRouter } from "./routes/observability.js";
 import { metricsMiddleware, metricsHandler } from "./telemetry/metrics.js";
+import { startVaultHealthPoll } from "./telemetry/slo.js";
 import { maturityRouter } from "./maturity/report.js";
 
 async function main() {
@@ -149,6 +150,12 @@ async function main() {
   console.log(
     `[startup] arcanium-api listening on port ${config.port} (${config.nodeEnv})`,
   );
+
+  // Prompt 24 — "Vault dependency health" SLO needs periodic samples;
+  // nothing previously polled /health/ready-equivalent state on a
+  // schedule (only the container's own /health/live liveness check runs
+  // periodically, and it never touches Vault/DB — see routes/health.js).
+  startVaultHealthPoll();
 
   // 6. Graceful shutdown
   function shutdown(signal) {

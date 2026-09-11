@@ -3,6 +3,7 @@
 // never talks to Prometheus.
 
 import { Router } from "express";
+import { computeAllSlos } from "../telemetry/slo.js";
 
 export const observabilityRouter = Router();
 
@@ -67,4 +68,17 @@ observabilityRouter.get("/summary", async (_req, res) => {
       ? null
       : "Observability stack not reachable. Run `make observability-up`.",
   });
+});
+
+// GET /api/v1/observability/slo — Prompt 24, Deliverable 1.
+// Every entry carries window/samples/min_samples/status together — a
+// value is present only when status is MET or BREACHED, never alongside
+// INSUFFICIENT_DATA. See telemetry/slo.js for how each is computed.
+observabilityRouter.get("/slo", async (_req, res, next) => {
+  try {
+    const slos = await computeAllSlos();
+    res.json({ slos });
+  } catch (err) {
+    next(err);
+  }
 });

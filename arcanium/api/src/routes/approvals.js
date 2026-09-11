@@ -10,6 +10,7 @@ import { Router } from "express";
 import { query } from "../db.js";
 import { tenantScope } from "../auth/index.js";
 import { authorize } from "../auth/authorize.js";
+import { approvalEvent } from "../telemetry/metrics.js";
 
 export const approvalsRouter = Router();
 
@@ -235,6 +236,7 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
        RETURNING id, app_id, key_name, action, status, approver, accessor, updated_at`,
       [req.params.id],
     );
+    approvalEvent("approved", "local");
     res.json(updated[0]);
   } catch (err) {
     next(err);
@@ -272,6 +274,7 @@ approvalsRouter.post("/:id/deny", async (req, res, next) => {
        RETURNING id, app_id, key_name, action, status, approver, reason, updated_at`,
       [req.params.id, reason ?? null],
     );
+    approvalEvent("rejected", "local");
     res.json(updated[0]);
   } catch (err) {
     next(err);
@@ -332,6 +335,7 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
        RETURNING id, app_id, key_name, action, status, approver, accessor, updated_at`,
       [record.id, approver],
     );
+    approvalEvent("approved", source === "manual" ? "manual" : "local");
     res.json(updated[0]);
   } catch (err) {
     next(err);
