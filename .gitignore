@@ -234,3 +234,9 @@ input/*
 output/*
 !output/.gitkeep
 compose/observability/prometheus/vault-token
+
+# state/ capture staging — an in-progress or failed capture-state.sh run
+# (Prompt 00 atomic capture: built in .tmp, only renamed into
+# state/baselines/ once validated). Never a finalized baseline; must never
+# be swept into a commit by accident.
+state/.capture-*.tmp/

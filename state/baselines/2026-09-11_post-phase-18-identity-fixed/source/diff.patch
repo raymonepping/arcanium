@@ -1,0 +1,1456 @@
+diff --git a/.gitignore b/.gitignore
+index 15dc44d..b946f0d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -234,3 +234,9 @@ input/*
+ output/*
+ !output/.gitkeep
+ compose/observability/prometheus/vault-token
++
++# state/ capture staging — an in-progress or failed capture-state.sh run
++# (Prompt 00 atomic capture: built in .tmp, only renamed into
++# state/baselines/ once validated). Never a finalized baseline; must never
++# be swept into a commit by accident.
++state/.capture-*.tmp/
+diff --git a/state/README.md b/state/README.md
+index c2b09de..db65a72 100644
+--- a/state/README.md
++++ b/state/README.md
+@@ -1,78 +1,141 @@
+-# Arcanium state baselines
+-
+-Reproducible, controllable records of what actually ran and worked at a
+-point in time — **not a backup**. See "state vs backup" below.
+-
+-## Why this exists
+-
+-Prompts 18–22 move Arcanium from capability-building to application
+-hardening (`input/34`–`37`). The point of a baseline captured now is to be
+-able to say, later, with evidence rather than assertion:
+-
+-> "This was the state before Security Foundation. This changed through
+-> 18–22. This still works."
+-
+-## Three kinds of state, captured together per baseline
+-
+-1. **Source state** — exactly which code formed the baseline: git commit,
+-   branch, tag, dirty/clean, the actual diff, compose/terraform file hashes,
+-   tool versions. Git is the real source snapshot; `state/` doesn't
+-   duplicate it, it references it (`source/git.txt`) plus records the diff
+-   that HEAD alone doesn't show (uncommitted changes at capture time).
+-2. **Deployment state** — what was actually running: per component,
+-   image/digest, container status, health, ports, networks, and
+-   non-secret **configuration mode** (e.g. `ARCANIUM_AUTH_ENABLED`) — never
+-   configuration *values* that could be credentials.
+-3. **Observed functional state** — not "container running" but "the thing
+-   the container is for actually works": supplier isolation verified,
+-   maturity endpoint responds, (opt-in) scenario results. This is the
+-   regression baseline — six phases from now, `compare-state.sh` shows what
+-   changed against it.
+-
+-## Rules
+-
+-1. **Never hand-edit a file under `state/baselines/`.** Everything there is
+-   written by `state/scripts/capture-state.sh`. If a capture looks wrong,
+-   fix the script and re-capture — a hand-edited baseline can drift from
+-   reality exactly the way hand-synced lists drift elsewhere in this repo
+-   (the failure mode Phase 20 exists to eliminate).
+-2. **One directory per capture, never overwritten in place**:
+-   `state/baselines/<id>/`. `capture-state.sh` refuses to run if the target
+-   directory already exists.
+-3. **Every check has a status** — `CAPTURED` / `PARTIAL` / `UNKNOWN` /
+-   `FAILED` — recorded per-component in `manifest.yaml`'s `capture.checks`
+-   block. A check that couldn't run says `UNKNOWN`; it never leaves an empty
+-   file that later reads as "no problems found". `UNKNOWN` is itself useful
+-   information, not a gap to paper over.
+-4. **Zero secrets, by whitelist, not by redaction.** The capture script
+-   never runs `podman inspect`, `podman compose config`, or dumps a full
+-   process environment — all of those can casually put credentials into the
+-   baseline. It only ever captures explicitly whitelisted fields (image,
+-   digest, status, health, networks, ports — never raw env) and an explicit
+-   `.env` mode-flag allowlist (booleans/enums only, never anything named
+-   `*PASSWORD*`/`*SECRET*`/`*TOKEN*`/`*_KEY*`/`*PIN*`/`*LICENSE*`).
+-   **Run `state/scripts/validate-state.sh <id>` after every capture, before
+-   committing it** — it independently checks the baseline for both direct
+-   `.env` value leaks and credential-shaped strings (Vault token prefixes,
+-   PEM private-key headers, bearer tokens).
+-5. **Mutating scenario checks are opt-in.** `capture-state.sh` always runs
+-   the non-mutating supplier-isolation check (mints ephemeral tokens,
+-   verifies 403 cross-tenant, touches no persistent state). Scenarios that
+-   create/rotate/destroy real resources (onboarding, Transit, PKI, KMIP,
+-   Managed Key, Sentinel negative test) are only run with `--with-scenarios`,
+-   and even then only against a stack you're prepared to have mutated.
++# Project state baselines
++
++Reproducible, evidence-based records of what source formed a point in time,
++what was actually running, and what was actually verified to work —
++**not a backup**. See "State vs backup" below.
++
++This convention (Prompt 00) is deliberately project-neutral in design, even
++though the adapters underneath it are specific to this project's actual
++components (Arcanium, Vault, HSM, identity, infra, KMS, observability,
++workloads). If this repository's stack changes, the adapters change; the
++three-tier model, status semantics, and tooling contract below do not.
++
++## Why baselines exist
++
++Before substantial feature work, hardening, refactoring, or migration
++begins, a baseline answers three questions with evidence, not memory:
++
++1. **Source state** — exactly which code/configuration formed this baseline?
++2. **Deployment state** — what was actually running or deployed?
++3. **Observed functional state** — what was actually verified to work, by a
++   real (usually non-mutating) check — not inferred from "the container is
++   up"?
++
++The result is a diffable engineering record. Six phases from now,
++`compare-state.sh` shows what actually changed against a real prior state,
++not a reconstruction from git log and memory.
++
++## Mandatory tooling
++
++Two local tools are load-bearing here and are never reimplemented:
++
++- **`commit_gh`** — the only commit/repository-security mechanism. Baseline
++  commits, `--doctor` preflight, and `--scan` secret scanning all go through
++  it. There is no plain-`git commit` fallback in `commit-baseline.sh` — if
++  `commit_gh` is missing, the script fails clearly rather than silently
++  downgrading the guarantee.
++- **`folder_tree --output git .`** — the only project-structure discovery
++  tool used here. Every baseline's `source/project-tree.md` comes from it,
++  never from `find`/`tree`/`ls -R` or hand-rolled formatting.
++
++## Status semantics
++
++Every capture and every check reports one of four states:
++
++| Status | Meaning |
++|---|---|
++| `CAPTURED` | the intended observation completed and produced trustworthy data |
++| `PARTIAL` | some useful state was captured, but part of the intended observation could not complete |
++| `UNKNOWN` | the state could not be determined — a valid, first-class result, not a gap to paper over |
++| `FAILED` | the check ran and **positively observed** a failure |
++
++Never collapsed: `unreachable → empty`, `unknown → healthy`,
++`not run → pass`, `no results → no problems`.
++
++Overall baseline status:
++
++```text
++FAILED    if any mandatory verification positively FAILED
++PARTIAL   if nothing failed, but any required capture is PARTIAL or UNKNOWN
++CAPTURED  if every required capture completed
++```
++
++A `PARTIAL` or even `FAILED` baseline is still retained — the status itself
++is part of the evidence, never a reason to discard the capture.
++
++## The three-tier model, and where each lands in a baseline
++
++1. **Source state** — `source/`: git commit/branch/tag/dirty state, the
++   actual uncommitted diff if any, tool versions, whitelisted config file
++   hashes, and the git-tracked project structure from `folder_tree`.
++2. **Deployment state** — `components/<name>/`: per first-class project
++   component, whitelisted fields only — image/digest, container state,
++   health, ports, network membership, non-secret **mode flags** (never
++   values that could be credentials).
++3. **Observed functional state** — `verification/`: not "the container is
++   up" but "the thing it's for actually works" — a live, normally
++   non-mutating check. Mutating checks (that create/rotate/delete/provision
++   real resources) are opt-in only via `--with-scenarios`; without it they
++   report `UNKNOWN` with an explicit reason, never a fabricated pass.
++
++## Secret safety
++
++**Whitelist, don't redact.** The capture script never runs
++`podman inspect`, `podman compose config`, or dumps a full process
++environment — all of those can casually put credentials into a baseline.
++It only ever captures explicitly whitelisted fields, plus a `.env`
++mode-flag allowlist (booleans/enums only, never anything named
++`*PASSWORD*`/`*SECRET*`/`*TOKEN*`/`*_KEY*`/`*PIN*`/`*LICENSE*`/`*CREDENTIAL*`).
++
++`validate-state.sh` is not advisory — `capture-state.sh` calls it itself,
++**before** the atomic rename that makes a capture into a real baseline (see
++below). It independently checks for direct `.env` value leaks and
++credential-shaped patterns (Vault token prefixes, PEM private-key headers,
++bearer tokens, cloud access-key patterns). Exit codes: `0` clean, `1`
++suspected secret (must not be committed), `2` validation could not run.
++There is no `--force` bypass. A value that's flagged but is genuinely not a
++secret gets a narrowly-scoped, documented allowlist rule — not a disabled
++check (see `.env`-key exclusions inside the script for a worked example).
++
++`commit-baseline.sh` additionally runs `commit_gh --scan` across the whole
++working tree before ever staging anything.
++
++## Atomic capture — never a half-finished baseline
++
++`capture-state.sh` builds every artifact inside `state/.capture-<id>.tmp/`,
++never directly under `state/baselines/`. Only after all of the following are
++true does it atomically rename the temp directory into place:
++
++1. every component adapter has run;
++2. `manifest.yaml` and `summary.md` exist;
++3. `validate-state.sh` passes against the temp directory.
++
++If any step fails, the `.tmp` directory is left in place for inspection and
++`state/baselines/<id>/` is never created — the existence of a baseline
++directory is itself proof it completed and validated. `state/CURRENT` is
++only updated after the rename succeeds. (`state/.capture-*.tmp/` is
++gitignored — it must never be swept into a commit by accident.)
++
++## Baselines are immutable
++
++One directory per capture, never overwritten: `state/baselines/<id>/`.
++`capture-state.sh` refuses to run if the target already exists. History is
++the point — `git log` on this directory shows the platform's own state
++evolving across phases.
+ 
+ ## State vs backup — do not conflate these
+ 
+ ```text
+ state/
+-= evidence of configuration and observed runtime condition
+-  (text, JSON, YAML — safe to commit, no restore capability)
+-
+-backup/  (not this directory — wherever the project keeps real backups)
+-= material needed to actually RESTORE persistent state
+-  (Vault Raft snapshots, pg_dump output, HSM token backups —
+-   sensitive, NOT casually committed to Git)
++= evidence of source/configuration, observed deployment condition, and
++  functional verification
++= safe-to-commit metadata only
++= NOT sufficient to restore the system
++
++backup/  (wherever this project keeps real backups — not this directory)
++= actual recovery material: Vault Raft snapshots, pg_dump output, HSM
++  backup material, etc.
++= sensitive, NOT casually committed to Git
+ ```
+ 
+ A baseline can *record that a backup exists* without holding the backup
+@@ -83,80 +146,104 @@ backup:
+   vault_snapshot:
+     available: true
+     sha256: <hash>
+-    stored_at: external-secure-location
+-  postgres:
+-    available: true
+-    sha256: <hash>
++    location_class: external-secure-storage
+ ```
+ 
+-This distinction matters concretely for Phase 22, which is explicitly about
+-moving from "a snapshot exists" to "restored, with a measured RTO/RPO" — the
+-baseline records the claim, the restore drill proves it.
++## Layout
++
++```text
++state/
++├── README.md
++├── CURRENT                        — path of the most recently completed baseline
++├── scripts/
++│   ├── capture-state.sh
++│   ├── validate-state.sh
++│   ├── compare-state.sh
++│   └── commit-baseline.sh
++└── baselines/
++    └── <baseline-id>/
++        ├── manifest.yaml           — machine-readable centerpiece
++        ├── summary.md              — generic section (from manifest) + project narrative
++        ├── source/
++        │   ├── git.txt  git-status.txt  diff.patch
++        │   ├── versions.json  hashes.sha256
++        │   └── project-tree.md      — from folder_tree, mandatory
++        ├── runtime/
++        │   ├── containers.json  images.json  networks.json  volumes.txt
++        ├── components/
++        │   ├── arcanium/  vault/  hsm/  identity/  infra/  kms/
++        │   └── observability/  workloads/
++        └── verification/
++            ├── results.json
++            └── summary.md
++```
++
++Components today: **arcanium, vault, hsm, identity, infra, kms,
++observability, workloads** — identity (OpenLDAP + Keycloak, Prompt 18) was
++missing from earlier captures until this rewrite; check `manifest.yaml`'s
++`components:` block for what a given baseline actually covers rather than
++assuming this list is exhaustive going forward.
+ 
+ ## Usage
+ 
+ ```bash
+-# capture a new baseline
+-state/scripts/capture-state.sh 2026-09-11_pre-hardening "baseline before Prompt 18"
++# capture a new baseline (non-mutating verification only, the default)
++state/scripts/capture-state.sh 2026-09-11_initial "baseline before Prompt 18"
+ 
+-# with the mutating scenario suite too (touches the running demo estate)
+-state/scripts/capture-state.sh 2026-09-20_post-18-security "after Phase 18" --with-scenarios
++# include the opt-in mutating scenario suite too (touches the running demo estate)
++state/scripts/capture-state.sh 2026-09-20_post-phase "after Phase N" --with-scenarios
+ 
+-# before committing ANY baseline
+-state/scripts/validate-state.sh 2026-09-11_pre-hardening
++# validate any baseline (or an in-progress .tmp capture) for secrets
++state/scripts/validate-state.sh 2026-09-11_initial
+ 
+-# compare two baselines (or a baseline against whatever came before it)
+-state/scripts/compare-state.sh 2026-09-11_pre-hardening 2026-09-20_post-18-security
+-state/scripts/compare-state.sh 2026-09-20_post-18-security
++# compare two baselines, or a baseline against its recorded predecessor
++state/scripts/compare-state.sh 2026-09-11_initial 2026-09-20_post-phase
++state/scripts/compare-state.sh 2026-09-20_post-phase
+ 
+-# tag + commit + push a baseline (runs validate-state.sh first as a hard
+-# gate; refuses to run if anything outside state/ is dirty, since commit_gh
+-# stages the whole working tree, not just state/)
+-state/scripts/commit-baseline.sh 2026-09-11_pre-hardening
+-state/scripts/commit-baseline.sh 2026-09-11_pre-hardening arcanium-pre-hardening \
++# tag + commit + push a baseline — requires commit_gh, no fallback
++state/scripts/commit-baseline.sh 2026-09-11_initial
++state/scripts/commit-baseline.sh 2026-09-11_initial arcanium-initial \
+   "Arcanium baseline before Prompt 18 Security Foundation"
+ ```
+ 
+-`state/CURRENT` holds the path of the most recently captured baseline, e.g.:
++## Baseline naming
+ 
+-```text
+-state/baselines/2026-09-11_pre-hardening
+-```
++`YYYY-MM-DD_<label>`, e.g. `2026-09-11_initial`,
++`2026-09-11_pre-auth-hardening`, `2026-09-12_post-auth-hardening`,
++`2026-09-20_pre-migration`. The post-state of one phase is normally
++sufficient as the pre-state of the next — don't create redundant duplicate
++baselines without a reason.
++
++## Commit and tag semantics
++
++`commit-baseline.sh` tags the baseline's **recorded source commit**
++(`manifest.yaml`'s `baseline.git.commit`), not whatever commit the state
++artifacts themselves end up on — those are two different things, and only
++the source commit is what the tag is meant to mark. It reports both SHAs
++(source and artifact) on completion. Nothing outside `state/` may be dirty
++when committing a baseline (`commit_gh` stages the whole working tree) —
++commit or stash unrelated changes first.
++
++## Comparison semantics
+ 
+-Recommended cadence for the current hardening programme: one baseline before
+-Phase 18 starts, then one after each of 18/19/20/21/22 closes — not for six
+-piles of screenshots, but for a real before/after engineering record of
+-Arcanium moving from a capable lab to a hardened control plane.
++`compare-state.sh` resolves a baseline's predecessor from
++`manifest.yaml`'s `previous_baseline` field (recorded at capture time — the
++authoritative predecessor, unaffected by renames or checkouts), falling
++back to sorting every baseline's `captured_at` timestamp if that field is
++absent. **Never** directory modification time — it doesn't survive a
++checkout, a copy, or a restore. The diff distinguishes `ABSENT` /
++`UNKNOWN` / `FAILED` / `CAPTURED_EMPTY` / `CAPTURED_VALUE` — a value that
++went from `UNKNOWN` to actually captured is reported as "previously
++unobserved; now captured", never manufactured into a false "changed" story.
+ 
+-## Layout of one baseline
++## Recommended cadence
+ 
+ ```text
+-state/baselines/2026-09-11_pre-hardening/
+-  manifest.yaml           — the centerpiece: git/runtime/components/verification/capture-status
+-  summary.md               — human-readable characteristics + capture-status table
+-
+-  source/
+-    git.txt                 — commit, branch, tag
+-    git-status.txt           — porcelain status at capture time
+-    diff.patch                — uncommitted diff, if any
+-    versions.json              — node/terraform/vault-cli/podman versions
+-    hashes.sha256                — compose + terraform file hashes (never .env)
+-
+-  runtime/
+-    containers.json          — name/image/state/status/ports/networks (whitelisted fields only)
+-    images.json                — repository/id/digest/size
+-    networks.json                — podman network list
+-    volumes.txt                    — volume names only, no content
+-
+-  arcanium/    health.json, capabilities.json (mode-flag allowlist only), migrations.txt, api-smoke.json
+-  vault/       cluster.json, mounts.json, auth-methods.json, audit-devices.json, namespaces.json, policies-summary.json
+-  hsm/         status.json, pkcs11-slots.txt, managed-keys.json
+-  infra/       postgres.json, schema.txt
+-  kms/         status.json  (kms-sim / LocalStack — always labeled emulated)
+-  observability/  status.json, targets.json
+-  workloads/   status.json, inventory.json
+-  scenarios/   results.json, summary.md   — the observed-functional-state regression baseline
++initial / pre-change
++post-change
++post-next-major-phase
++...
+ ```
+ 
+-These seven components match the ones named when this convention was set
+-up: Arcanium, HSM, Infra, KMS, Observability stack, Vault(s), Workloads.
++Not for six piles of screenshots — for a real before/after engineering
++record of the platform evolving.
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index 4db0e43..d29c2d3 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -1,29 +1,31 @@
+ #!/usr/bin/env bash
+-# capture-state.sh — build one baseline under state/baselines/<id>/.
++# capture-state.sh — Prompt 00. Build one immutable, atomic baseline under
++# state/baselines/<id>/.
+ #
+-# Three tiers, per input/37:
+-#   source     — exactly which code formed this baseline (git, file hashes, tool versions)
+-#   deployment — what is actually running (containers, images, config MODE flags — never values)
+-#   observed   — functional checks against live endpoints (health, isolation, maturity)
++# Three tiers:
++#   source     — exactly which code formed this baseline (git, hashes, tool
++#                versions, folder_tree's git-tracked structure)
++#   deployment — what is actually running (components/<name>/*.json —
++#                whitelisted fields, config MODE flags, never values)
++#   observed   — functional checks against live endpoints (verification/)
+ #
+-# Hard rule: never write a secret to disk. No .env values beyond an explicit
+-# non-secret allowlist, no `podman inspect`, no `podman compose config`
+-# (resolves .env substitution — exactly the leak input/37 warns about), no
+-# Vault token, no full process environment. Prefer whitelisted fields over
+-# capturing-then-redacting.
+-#
+-# Every check sets its own status — CAPTURED / PARTIAL / UNKNOWN / FAILED —
+-# recorded in manifest.yaml. A check that can't run says so; it never leaves
+-# an empty file that later reads as "no problems found".
++# Hard rules (never violated):
++#  - Whitelist fields, never capture-then-redact. No `podman inspect`, no
++#    `podman compose config`, no full process environment.
++#  - Every check reports CAPTURED / PARTIAL / UNKNOWN / FAILED — a check
++#    that couldn't run says so; it never reads as "no problems found".
++#  - Mutating verification is opt-in only (--with-scenarios).
++#  - Atomic: built entirely in a .tmp dir, validated, then renamed into
++#    place. A baseline directory existing means it completed and validated
++#    — never a partial artifact of a killed run.
++#  - commit_gh and folder_tree are the mandatory tools for what they do;
++#    this script does not reimplement project-tree discovery or repo
++#    secret-scanning logic itself.
+ #
+ # Usage:
+-#   state/scripts/capture-state.sh <baseline-id> ["purpose text"] [--with-scenarios]
+-#
+-# Examples:
+-#   state/scripts/capture-state.sh 2026-09-11_pre-hardening "baseline before Prompt 18"
+-#   state/scripts/capture-state.sh 2026-09-20_post-18-security "after Phase 18" --with-scenarios
++#   state/scripts/capture-state.sh <baseline-id> ["purpose"] [--with-scenarios]
+ set -uo pipefail
+-cd "$(dirname -- "$0")/../.." # -> repo root
++cd "$(dirname -- "$0")/../.."   # -> repo root
+ 
+ BASELINE_ID="${1:?usage: capture-state.sh <baseline-id> [purpose] [--with-scenarios]}"
+ shift || true
+@@ -31,21 +33,34 @@ PURPOSE="baseline capture"
+ WITH_SCENARIOS=false
+ for arg in "$@"; do
+   case "$arg" in
+-  --with-scenarios) WITH_SCENARIOS=true ;;
+-  *) PURPOSE="$arg" ;;
++    --with-scenarios) WITH_SCENARIOS=true ;;
++    *) PURPOSE="$arg" ;;
+   esac
+ done
+ 
+-BASE="state/baselines/${BASELINE_ID}"
+-if [ -d "$BASE" ]; then
+-  echo "error: $BASE already exists — baselines are never overwritten in place." >&2
++FINAL="state/baselines/${BASELINE_ID}"
++TMP="state/.capture-${BASELINE_ID}.tmp"
++
++if [ -d "$FINAL" ]; then
++  echo "error: $FINAL already exists — baselines are immutable, never overwritten in place." >&2
+   echo "Pick a new id, or remove the directory yourself first if this was a mistake." >&2
+   exit 1
+ fi
+-mkdir -p "$BASE"/{source,runtime,arcanium,vault,hsm,infra,kms,observability,workloads,scenarios}
++if [ -d "$TMP" ]; then
++  echo "error: $TMP already exists from a previous incomplete run — remove it first." >&2
++  exit 1
++fi
++mkdir -p "$TMP"/{source,runtime,components,verification}
++
++command -v folder_tree >/dev/null 2>&1 || {
++  echo "error: folder_tree not found on PATH — it is the mandatory project-structure tool for this capture (Prompt 00)." >&2
++  rm -rf "$TMP"
++  exit 2
++}
+ 
+ TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+-declare -A STATUS # check-name -> CAPTURED|PARTIAL|UNKNOWN|FAILED
++PROJECT_NAME="$(basename "$(pwd)")"
++declare -A STATUS   # check-name -> CAPTURED|PARTIAL|UNKNOWN|FAILED
+ 
+ set_status() { STATUS["$1"]="$2"; }
+ 
+@@ -66,11 +81,8 @@ running() {
+   local attempt
+   for attempt in 1 2 3; do
+     if podman ps --format '{{.Names}}' 2>/dev/null | grep -qx "$1"; then return 0; fi
+-    podman ps >/dev/null 2>&1 || {
+-      sleep 1
+-      continue
+-    }
+-    return 1 # podman answered, container just isn't in the list
++    podman ps >/dev/null 2>&1 || { sleep 1; continue; }
++    return 1   # podman answered, container just isn't in the list
+   done
+   return 1
+ }
+@@ -79,17 +91,16 @@ running() {
+ capture_source() {
+   local ok=true
+ 
+-  git rev-parse HEAD >"$BASE/source/git.txt" 2>/dev/null || ok=false
+-  {
+-    echo "branch: $(git branch --show-current 2>/dev/null || echo unknown)"
++  git rev-parse HEAD > "$TMP/source/git.txt" 2>/dev/null || ok=false
++  { echo "branch: $(git branch --show-current 2>/dev/null || echo unknown)"
+     echo "tag: $(git describe --tags --exact-match 2>/dev/null || echo none)"
+-  } >>"$BASE/source/git.txt"
++  } >> "$TMP/source/git.txt"
+ 
+-  git status --short >"$BASE/source/git-status.txt" 2>/dev/null || ok=false
++  git status --short > "$TMP/source/git-status.txt" 2>/dev/null || ok=false
+   local dirty=false
+-  [ -s "$BASE/source/git-status.txt" ] && dirty=true
++  [ -s "$TMP/source/git-status.txt" ] && dirty=true
+ 
+-  git diff HEAD -- . >"$BASE/source/diff.patch" 2>/dev/null || true
++  git diff HEAD -- . > "$TMP/source/diff.patch" 2>/dev/null || true
+ 
+   jq -n \
+     --arg node "$(node --version 2>/dev/null || echo unknown)" \
+@@ -97,13 +108,21 @@ capture_source() {
+     --arg vault_cli "$(vault version 2>/dev/null || echo unknown)" \
+     --arg podman "$(podman --version 2>/dev/null || echo unknown)" \
+     '{node:$node, terraform:$terraform, vault_cli:$vault_cli, podman:$podman}' \
+-    >"$BASE/source/versions.json"
++    > "$TMP/source/versions.json"
+ 
+   # Whitelisted file hashes only — compose + terraform definitions, never .env.
+-  {
+-    find compose -name 'compose.yaml' -o -name 'compose.yml' 2>/dev/null
++  { find compose -name 'compose.yaml' -o -name 'compose.yml' 2>/dev/null
+     find terraform -name '*.tf' 2>/dev/null
+-  } | sort | xargs shasum -a 256 >"$BASE/source/hashes.sha256" 2>/dev/null || ok=false
++  } | sort | xargs shasum -a 256 > "$TMP/source/hashes.sha256" 2>/dev/null || ok=false
++
++  # Mandatory per Prompt 00 — the git-tracked project structure, via the
++  # project's own discovery tool. Never substituted with find/tree/ls -R.
++  if folder_tree --output git . > "$TMP/source/project-tree.md" 2>/dev/null \
++      && [ -s "$TMP/source/project-tree.md" ]; then
++    :
++  else
++    ok=false
++  fi
+ 
+   $ok && set_status source CAPTURED || set_status source PARTIAL
+   echo "  git dirty: $dirty"
+@@ -113,30 +132,30 @@ capture_source() {
+ capture_runtime() {
+   if ! podman_ok; then
+     for f in containers.json images.json networks.json; do
+-      echo '{"status":"UNKNOWN","detail":"podman unreachable at capture time"}' >"$BASE/runtime/$f"
++      echo '{"status":"UNKNOWN","detail":"podman unreachable at capture time"}' > "$TMP/runtime/$f"
+     done
+-    echo "podman unreachable at capture time" >"$BASE/runtime/volumes.txt"
++    echo "podman unreachable at capture time" > "$TMP/runtime/volumes.txt"
+     set_status runtime UNKNOWN
+     return
+   fi
+ 
+   # Whitelisted fields only: never podman inspect (pulls full env), never
+   # podman compose config (resolves .env substitution).
+-  podman ps -a --format json 2>/dev/null |
+-    jq '[.[] | {name: .Names[0], image: .Image, state: .State, status: .Status,
++  podman ps -a --format json 2>/dev/null \
++    | jq '[.[] | {name: .Names[0], image: .Image, state: .State, status: .Status,
+                    ports: (.Ports // []), networks: (.Networks // [])}]' \
+-      >"$BASE/runtime/containers.json" || echo '[]' >"$BASE/runtime/containers.json"
++    > "$TMP/runtime/containers.json" || echo '[]' > "$TMP/runtime/containers.json"
+ 
+-  podman images --format json 2>/dev/null |
+-    jq '[.[] | {repository: (.Names[0] // "none"), id: .Id, digest: (.Digest // "unknown"),
++  podman images --format json 2>/dev/null \
++    | jq '[.[] | {repository: (.Names[0] // "none"), id: .Id, digest: (.Digest // "unknown"),
+                    size: .Size, created: .CreatedAt}]' \
+-      >"$BASE/runtime/images.json" || echo '[]' >"$BASE/runtime/images.json"
++    > "$TMP/runtime/images.json" || echo '[]' > "$TMP/runtime/images.json"
+ 
+-  podman network ls --format json 2>/dev/null |
+-    jq '[.[] | {name: .Name, driver: .Driver}]' \
+-      >"$BASE/runtime/networks.json" || echo '[]' >"$BASE/runtime/networks.json"
++  podman network ls --format json 2>/dev/null \
++    | jq '[.[] | {name: .Name, driver: .Driver}]' \
++    > "$TMP/runtime/networks.json" || echo '[]' > "$TMP/runtime/networks.json"
+ 
+-  podman volume ls --format '{{.Name}}' 2>/dev/null >"$BASE/runtime/volumes.txt" || true
++  podman volume ls --format '{{.Name}}' 2>/dev/null > "$TMP/runtime/volumes.txt" || true
+ 
+   set_status runtime CAPTURED
+ }
+@@ -147,6 +166,7 @@ capture_runtime() {
+ ENV_ALLOWLIST="ARCANIUM_AUTH_ENABLED ARCANIUM_DEMO_PERSONA_SWITCH PROVISION_MODE NODE_ENV POSTGRES_DB"
+ 
+ capture_arcanium() {
++  local d="$TMP/components/arcanium"; mkdir -p "$d"
+   local health_ok=false
+ 
+   {
+@@ -162,46 +182,45 @@ capture_arcanium() {
+     done
+     echo
+     echo "}"
+-  } >"$BASE/arcanium/capabilities.json"
++  } > "$d/mode-flags.json"
+ 
+   if running arcanium-api; then
+-    if curl -fsS --max-time 5 http://localhost:3001/health >"$BASE/arcanium/health.json" 2>/dev/null ||
+-      curl -fsS --max-time 5 http://localhost:3001/api/v1/health >"$BASE/arcanium/health.json" 2>/dev/null; then
++    if curl -fsS --max-time 5 http://localhost:3001/health > "$d/health.json" 2>/dev/null \
++       || curl -fsS --max-time 5 http://localhost:3001/api/v1/health > "$d/health.json" 2>/dev/null; then
+       health_ok=true
+     else
+-      echo '{"status":"UNKNOWN","detail":"arcanium-api running but health endpoint did not respond"}' >"$BASE/arcanium/health.json"
++      echo '{"status":"UNKNOWN","detail":"arcanium-api running but health endpoint did not respond"}' > "$d/health.json"
+     fi
+-
+-    curl -fsS --max-time 5 http://localhost:3001/api/v1/maturity 2>/dev/null \
+-      >"$BASE/arcanium/api-smoke.json" ||
+-      echo '{"status":"UNKNOWN","detail":"maturity endpoint did not respond"}' >"$BASE/arcanium/api-smoke.json"
++    curl -fsS --max-time 5 http://localhost:3001/api/v1/maturity 2>/dev/null > "$d/api-smoke.json" \
++      || echo '{"status":"UNKNOWN","detail":"maturity endpoint did not respond"}' > "$d/api-smoke.json"
+   else
+-    echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' >"$BASE/arcanium/health.json"
+-    echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' >"$BASE/arcanium/api-smoke.json"
++    echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' > "$d/health.json"
++    echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' > "$d/api-smoke.json"
+   fi
+ 
+-  ls arcanium/api/src/migrations/ 2>/dev/null >"$BASE/arcanium/migrations.txt" || echo "(migrations dir unreadable)" >"$BASE/arcanium/migrations.txt"
++  ls arcanium/api/src/migrations/ 2>/dev/null > "$d/migrations.txt" || echo "(migrations dir unreadable)" > "$d/migrations.txt"
+ 
+-  if $health_ok; then
+-    set_status arcanium CAPTURED
+-  elif running arcanium-api; then
+-    set_status arcanium PARTIAL
+-  else
+-    set_status arcanium UNKNOWN
++  jq -n --arg expected true --arg observed "$(running arcanium-api && echo true || echo false)" \
++    '{expected: ($expected=="true"), observed: ($observed=="true")}' > "$d/status.json"
++
++  if $health_ok; then set_status arcanium CAPTURED
++  elif running arcanium-api; then set_status arcanium PARTIAL
++  else set_status arcanium UNKNOWN
+   fi
+ }
+ 
+ # ------------------------------------------------------------------ vault --
+ capture_vault() {
+-  # shellcheck source=scripts/vault-common.sh
++  local d="$TMP/components/vault"; mkdir -p "$d"
+   if ! running arcanium-vault_1; then
+     for f in cluster.json mounts.json auth-methods.json audit-devices.json namespaces.json policies-summary.json; do
+-      echo '{"status":"UNKNOWN","detail":"vault-1 not running"}' >"$BASE/vault/$f"
++      echo '{"status":"UNKNOWN","detail":"vault-1 not running"}' > "$d/$f"
+     done
+     set_status vault UNKNOWN
+     return
+   fi
+ 
++  # shellcheck source=scripts/vault-common.sh
+   source scripts/vault-common.sh 2>/dev/null
+ 
+   local nodes_json="[]"
+@@ -214,28 +233,28 @@ capture_vault() {
+       nodes_json=$(jq --arg name "$node" '. + [{node:$name, reachable:false}]' <<<"$nodes_json")
+     fi
+   done
+-  echo "$nodes_json" | jq '{nodes: .}' >"$BASE/vault/cluster.json"
++  echo "$nodes_json" | jq '{nodes: .}' > "$d/cluster.json"
+ 
+   # Authenticated, metadata-only reads. Token comes from the existing local
+   # secrets file via vault_root — used only to authenticate this process,
+   # never written to any output file.
+   local vault_status="PARTIAL"
+   if vault_node vault-1 && vault_root cluster 2>/dev/null; then
+-    vault secrets list -format=json 2>/dev/null >"$BASE/vault/mounts.json" ||
+-      echo '{"status":"UNKNOWN"}' >"$BASE/vault/mounts.json"
+-    vault auth list -format=json 2>/dev/null >"$BASE/vault/auth-methods.json" ||
+-      echo '{"status":"UNKNOWN"}' >"$BASE/vault/auth-methods.json"
+-    vault audit list -format=json 2>/dev/null >"$BASE/vault/audit-devices.json" ||
+-      echo '{"status":"UNKNOWN"}' >"$BASE/vault/audit-devices.json"
+-    vault namespace list -format=json 2>/dev/null >"$BASE/vault/namespaces.json" ||
+-      echo '[]' >"$BASE/vault/namespaces.json"
+-    vault policy list -format=json 2>/dev/null | jq '{acl: .}' >"$BASE/vault/policies-summary.json" 2>/dev/null ||
+-      echo '{"status":"UNKNOWN"}' >"$BASE/vault/policies-summary.json"
++    vault secrets list -format=json 2>/dev/null > "$d/mounts.json" \
++      || echo '{"status":"UNKNOWN"}' > "$d/mounts.json"
++    vault auth list -format=json 2>/dev/null > "$d/auth-methods.json" \
++      || echo '{"status":"UNKNOWN"}' > "$d/auth-methods.json"
++    vault audit list -format=json 2>/dev/null > "$d/audit-devices.json" \
++      || echo '{"status":"UNKNOWN"}' > "$d/audit-devices.json"
++    vault namespace list -format=json 2>/dev/null > "$d/namespaces.json" \
++      || echo '[]' > "$d/namespaces.json"
++    vault policy list -format=json 2>/dev/null | jq '{acl: .}' > "$d/policies-summary.json" 2>/dev/null \
++      || echo '{"status":"UNKNOWN"}' > "$d/policies-summary.json"
+     unset VAULT_TOKEN
+     vault_status="CAPTURED"
+   else
+     for f in mounts.json auth-methods.json audit-devices.json namespaces.json policies-summary.json; do
+-      echo '{"status":"UNKNOWN","detail":"could not authenticate for metadata read"}' >"$BASE/vault/$f"
++      echo '{"status":"UNKNOWN","detail":"could not authenticate for metadata read"}' > "$d/$f"
+     done
+   fi
+ 
+@@ -244,115 +263,191 @@ capture_vault() {
+ 
+ # -------------------------------------------------------------------- hsm --
+ capture_hsm() {
++  local d="$TMP/components/hsm"; mkdir -p "$d"
+   local st="UNKNOWN"
+   if running arcanium-vault_hsm; then st="PARTIAL"; fi
+   if running arcanium-softhsm_server; then st="PARTIAL"; fi
+   if running arcanium-vault_hsm && running arcanium-softhsm_server; then st="CAPTURED"; fi
+ 
+   jq -n --arg vault_hsm "$(running arcanium-vault_hsm && echo running || echo down)" \
+-    --arg softhsm "$(running arcanium-softhsm_server && echo running || echo down)" \
+-    --arg impl "SoftHSM/PKCS11 (emulated HSM, not a production HSM)" \
+-    '{vault_hsm: $vault_hsm, softhsm_proxy: $softhsm, implementation: $impl}' \
+-    >"$BASE/hsm/status.json"
++        --arg softhsm "$(running arcanium-softhsm_server && echo running || echo down)" \
++        --arg impl "SoftHSM/PKCS11 (emulated HSM, not a production HSM)" \
++        '{vault_hsm: $vault_hsm, softhsm_proxy: $softhsm, implementation: $impl}' \
++    > "$d/status.json"
+ 
+   echo "not captured in this baseline — requires an authenticated container exec against softhsm; deferred, not fabricated" \
+-    >"$BASE/hsm/pkcs11-slots.txt"
+-  echo '{"status":"UNKNOWN","detail":"Managed Key inventory not queried in this capture — see vault/mounts.json for the keymgmt mount presence instead"}' \
+-    >"$BASE/hsm/managed-keys.json"
++    > "$d/pkcs11-slots.txt"
++  echo '{"status":"UNKNOWN","detail":"Managed Key inventory not queried in this capture — see components/vault/mounts.json for the keymgmt mount presence instead"}' \
++    > "$d/managed-keys.json"
+ 
+   set_status hsm "$st"
+ }
+ 
++# ----------------------------------------------------------------- identity --
++# Prompt 18's OpenLDAP + Keycloak identity stack. Added here because it was
++# missing entirely from earlier captures — found live, by the person who
++# actually reads these baselines, not by re-reading this script more
++# carefully. OpenLDAP is never queried anonymously (see docs/security.md /
++# Prompt 18 execution log — its default ACLs hide entry existence from
++# unauthenticated binds), so the LDAP check authenticates the same way
++# compose/identity/ldap/setup_ldap.sh does. Keycloak's realm discovery
++# document is public by OIDC spec design — reachable straight from the host
++# on its published port, no exec/auth needed.
++capture_identity() {
++  local d="$TMP/components/identity"; mkdir -p "$d"
++  local ldap_up=false kc_up=false ldap_auth_ok=false kc_discovery_ok=false
++
++  running arcanium-openldap && ldap_up=true
++  running arcanium-keycloak && kc_up=true
++
++  jq -n --arg openldap "$($ldap_up && echo running || echo down)" \
++        --arg ldap_admin "$(running arcanium-ldap-admin && echo running || echo down)" \
++        --arg keycloak "$($kc_up && echo running || echo down)" \
++        '{openldap: $openldap, ldap_admin: $ldap_admin, keycloak: $keycloak}' \
++    > "$d/status.json"
++
++  if $ldap_up; then
++    LDAP_ADMIN_PASSWORD="$(grep -E '^LDAP_ADMIN_PASSWORD=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
++    if [ -n "$LDAP_ADMIN_PASSWORD" ] && podman exec arcanium-openldap \
++        ldapsearch -x -H ldap://localhost -D "cn=admin,dc=arcanium,dc=local" \
++        -w "$LDAP_ADMIN_PASSWORD" -b "dc=arcanium,dc=local" -s base >/dev/null 2>&1; then
++      ldap_auth_ok=true
++      echo '{"result":"PASS","detail":"authenticated base-DN search succeeded"}' > "$d/ldap-check.json"
++    else
++      echo '{"result":"UNKNOWN","detail":"authenticated base-DN search did not succeed (LDAP_ADMIN_PASSWORD unset, or container not ready)"}' > "$d/ldap-check.json"
++    fi
++  else
++    echo '{"result":"UNKNOWN","detail":"openldap not running"}' > "$d/ldap-check.json"
++  fi
++
++  if $kc_up; then
++    ISSUER="$(grep -E '^ARCANIUM_OIDC_PUBLIC_URL=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
++    if [ -n "$ISSUER" ] && curl -fsS --max-time 5 "${ISSUER}/realms/arcanium/.well-known/openid-configuration" \
++        > "$d/keycloak-discovery.json" 2>/dev/null; then
++      kc_discovery_ok=true
++    else
++      echo '{"status":"UNKNOWN","detail":"realm discovery endpoint did not respond"}' > "$d/keycloak-discovery.json"
++    fi
++  else
++    echo '{"status":"UNKNOWN","detail":"keycloak not running"}' > "$d/keycloak-discovery.json"
++  fi
++
++  if $ldap_auth_ok && $kc_discovery_ok; then set_status identity CAPTURED
++  elif $ldap_up || $kc_up; then set_status identity PARTIAL
++  else set_status identity UNKNOWN
++  fi
++}
++
+ # ------------------------------------------------------------------ infra --
+ capture_infra() {
++  local d="$TMP/components/infra"; mkdir -p "$d"
+   local st="UNKNOWN"
+   if running arcanium-postgres; then
+     st="CAPTURED"
+     jq -n '{postgres: "running", note: "no query executed against the database — container status only"}' \
+-      >"$BASE/infra/postgres.json"
++      > "$d/postgres.json"
+   else
+-    echo '{"status":"UNKNOWN","detail":"arcanium-postgres not running"}' >"$BASE/infra/postgres.json"
++    echo '{"status":"UNKNOWN","detail":"arcanium-postgres not running"}' > "$d/postgres.json"
+   fi
+-  ls arcanium/api/src/migrations/ 2>/dev/null >"$BASE/infra/schema.txt" || echo "(unreadable)" >"$BASE/infra/schema.txt"
++  ls arcanium/api/src/migrations/ 2>/dev/null > "$d/schema.txt" || echo "(unreadable)" > "$d/schema.txt"
+   set_status infra "$st"
+ }
+ 
+ # -------------------------------------------------------------------- kms --
+ capture_kms() {
++  local d="$TMP/components/kms"; mkdir -p "$d"
+   if running arcanium-localstack; then
+-    if curl -fsS --max-time 5 http://localhost:4566/_localstack/health >"$BASE/kms/status.json" 2>/dev/null; then
++    if curl -fsS --max-time 5 http://localhost:4566/_localstack/health > "$d/status.json" 2>/dev/null; then
+       set_status kms CAPTURED
+     else
+-      echo '{"status":"PARTIAL","detail":"container running, health endpoint did not respond"}' >"$BASE/kms/status.json"
++      echo '{"status":"PARTIAL","detail":"container running, health endpoint did not respond"}' > "$d/status.json"
+       set_status kms PARTIAL
+     fi
+   else
+-    echo '{"status":"UNKNOWN","detail":"kms-sim (LocalStack) not running","emulated":true}' >"$BASE/kms/status.json"
++    echo '{"status":"UNKNOWN","detail":"kms-sim (LocalStack) not running","emulated":true}' > "$d/status.json"
+     set_status kms UNKNOWN
+   fi
+ }
+ 
+ # ---------------------------------------------------------- observability --
+ capture_observability() {
++  local d="$TMP/components/observability"; mkdir -p "$d"
+   local containers
+   containers=$(podman ps --format '{{.Names}}' 2>/dev/null | grep -E 'arcanium-(prometheus|grafana|otel-collector)$' || true)
+   jq -n --arg containers "$containers" '{running_containers: ($containers | split("\n") | map(select(length>0)))}' \
+-    >"$BASE/observability/status.json"
++    > "$d/status.json"
+ 
+-  if curl -fsS --max-time 5 http://localhost:9090/api/v1/targets 2>/dev/null |
+-    jq '{activeTargets: [.data.activeTargets[]? | {job: .labels.job, health: .health}]}' \
+-      >"$BASE/observability/targets.json" 2>/dev/null; then
++  if curl -fsS --max-time 5 http://localhost:9090/api/v1/targets 2>/dev/null \
++      | jq '{activeTargets: [.data.activeTargets[]? | {job: .labels.job, health: .health}]}' \
++      > "$d/targets.json" 2>/dev/null; then
+     set_status observability CAPTURED
+   else
+-    echo '{"status":"UNKNOWN","detail":"prometheus targets endpoint not reachable"}' >"$BASE/observability/targets.json"
++    echo '{"status":"UNKNOWN","detail":"prometheus targets endpoint not reachable"}' > "$d/targets.json"
+     [ -n "$containers" ] && set_status observability PARTIAL || set_status observability UNKNOWN
+   fi
+ }
+ 
+ # -------------------------------------------------------------- workloads --
+ capture_workloads() {
++  local d="$TMP/components/workloads"; mkdir -p "$d"
+   local names
+   names=$(podman ps -a --format '{{.Names}}' 2>/dev/null | grep -E 'arcanium-(payments-api|pki-client|kmip-client|document-signing|external-supplier)$' || true)
+   if [ -z "$names" ]; then
+-    echo '{"status":"UNKNOWN","detail":"no workload containers found"}' >"$BASE/workloads/status.json"
+-    echo '[]' >"$BASE/workloads/inventory.json"
++    echo '{"status":"UNKNOWN","detail":"no workload containers found"}' > "$d/status.json"
++    echo '[]' > "$d/inventory.json"
+     set_status workloads UNKNOWN
+     return
+   fi
+-  podman ps -a --format json 2>/dev/null |
+-    jq '[.[] | select(.Names[0] | test("arcanium-(payments-api|pki-client|kmip-client|document-signing|external-supplier)$")) | {name: .Names[0], state: .State, status: .Status}]' \
+-      >"$BASE/workloads/inventory.json"
+-  jq '{count: length, running: [.[] | select(.state=="running")] | length}' "$BASE/workloads/inventory.json" \
+-    >"$BASE/workloads/status.json"
++  podman ps -a --format json 2>/dev/null \
++    | jq '[.[] | select(.Names[0] | test("arcanium-(payments-api|pki-client|kmip-client|document-signing|external-supplier)$")) | {name: .Names[0], state: .State, status: .Status}]' \
++    > "$d/inventory.json"
++  jq '{count: length, running: [.[] | select(.state=="running")] | length}' "$d/inventory.json" \
++    > "$d/status.json"
+   set_status workloads CAPTURED
+ }
+ 
+-# ------------------------------------------------------------- scenarios --
+-capture_scenarios() {
++# ------------------------------------------------------------- verification --
++capture_verification() {
+   local results="[]"
+ 
+   # Always-safe: the supplier isolation check is a live-but-non-mutating
+   # verification the API itself performs continuously for the dashboard
+   # (mints ephemeral tokens, checks 403, doesn't touch persistent state).
++  # When ARCANIUM_AUTH_ENABLED=true this endpoint now requires a session —
++  # an anonymous probe correctly gets 401, which is reported honestly as
++  # UNKNOWN (not run, not a failure of the isolation mechanism itself).
+   if running arcanium-api; then
+-    local iso
+-    if iso=$(curl -fsS --max-time 10 http://localhost:3001/api/v1/suppliers/isolation 2>/dev/null); then
++    local iso http_code
++    http_code=$(curl -s -o /tmp/arc-iso-check.$$ -w '%{http_code}' --max-time 10 \
++      http://localhost:3001/api/v1/suppliers/isolation 2>/dev/null || echo 000)
++    if [ "$http_code" = "200" ]; then
+       local verified
+-      verified=$(jq -r '.verified // false' <<<"$iso" 2>/dev/null || echo false)
++      verified=$(jq -r '.verified // false' /tmp/arc-iso-check.$$ 2>/dev/null || echo false)
+       results=$(jq --arg v "$([ "$verified" = true ] && echo PASS || echo FAIL)" \
+         '. + [{check:"supplier_isolation", result:$v, method:"live API check, non-mutating"}]' <<<"$results")
++    elif [ "$http_code" = "401" ]; then
++      results=$(jq '. + [{check:"supplier_isolation", result:"UNKNOWN", detail:"endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"}]' <<<"$results")
+     else
+-      results=$(jq '. + [{check:"supplier_isolation", result:"UNKNOWN", detail:"endpoint did not respond"}]' <<<"$results")
++      results=$(jq --arg c "$http_code" '. + [{check:"supplier_isolation", result:"UNKNOWN", detail:("endpoint did not respond (http " + $c + ")")}]' <<<"$results")
+     fi
++    rm -f /tmp/arc-iso-check.$$
+   else
+     results=$(jq '. + [{check:"supplier_isolation", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
+   fi
+ 
++  # OIDC discovery — read-only, public-by-spec endpoint. Distinct from the
++  # "identity" component's own deployment-status capture: this proves the
++  # realm/client configuration is actually functioning, not just that the
++  # containers are up.
++  if [ -s "$TMP/components/identity/keycloak-discovery.json" ] \
++      && jq -e '.issuer' "$TMP/components/identity/keycloak-discovery.json" >/dev/null 2>&1; then
++    results=$(jq '. + [{check:"oidc_discovery", result:"PASS", method:"GET realm .well-known/openid-configuration, non-mutating"}]' <<<"$results")
++  else
++    results=$(jq '. + [{check:"oidc_discovery", result:"UNKNOWN", detail:"realm discovery document not captured or missing issuer field"}]' <<<"$results")
++  fi
++
+   local mutating_checks="onboarding transit pki kmip managed_key sentinel_negative"
+   if $WITH_SCENARIOS; then
+-    # Opt-in only: these scenario scripts create/rotate/destroy real
+-    # resources against the running demo estate. Not run unless the caller
+-    # explicitly passed --with-scenarios.
+     results=$(jq '. + [{check:"onboarding", result:"UNKNOWN", detail:"scenario runner wiring not implemented yet — run scenarios/01_onboarding manually and record the result"}]' <<<"$results")
+   else
+     for c in $mutating_checks; do
+@@ -360,126 +455,141 @@ capture_scenarios() {
+     done
+   fi
+ 
+-  echo "$results" | jq '{results: .}' >"$BASE/scenarios/results.json"
++  echo "$results" | jq '{results: .}' > "$TMP/verification/results.json"
+   {
+-    echo "# Scenario verification — ${BASELINE_ID}"
++    echo "# Verification — ${BASELINE_ID}"
+     echo
+-    jq -r '.results[] | "- **\(.check)**: \(.result)" + (if .detail then " — \(.detail)" else "" end)' <<<"$(echo "$results" | jq '{results:.}')"
+-  } >"$BASE/scenarios/summary.md"
++    jq -r '.results[] | "- **\(.check)**: \(.result)" + (if .detail then " — \(.detail)" else "" end)' "$TMP/verification/results.json"
++  } > "$TMP/verification/summary.md"
+ 
+   local any_fail any_unknown
+   any_fail=$(jq -e '[.[] | select(.result=="FAIL")] | length > 0' <<<"$results" 2>/dev/null && echo true || echo false)
+   any_unknown=$(jq -e '[.[] | select(.result=="UNKNOWN")] | length > 0' <<<"$results" 2>/dev/null && echo true || echo false)
+-  if [ "$any_fail" = true ]; then
+-    set_status scenarios FAILED
+-  elif [ "$any_unknown" = true ]; then
+-    set_status scenarios PARTIAL
+-  else
+-    set_status scenarios CAPTURED
++  if [ "$any_fail" = true ]; then set_status verification FAILED
++  elif [ "$any_unknown" = true ]; then set_status verification PARTIAL
++  else set_status verification CAPTURED
+   fi
+ }
+ 
+-echo "Capturing baseline: $BASE"
++echo "Capturing baseline: $FINAL"
+ echo "  purpose: $PURPOSE"
+ echo
+ 
+-for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_infra capture_kms capture_observability capture_workloads capture_scenarios; do
++for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_verification; do
+   echo "-> ${fn#capture_}"
+   "$fn"
+ done
+ 
+ # ------------------------------------------------------------- manifest ---
++# Part 3: FAILED if any mandatory verification positively FAILED; PARTIAL if
++# no FAIL but any required capture is PARTIAL/UNKNOWN; CAPTURED only if
++# every required capture completed.
+ overall="CAPTURED"
+ for v in "${STATUS[@]}"; do
+   case "$v" in
+-  FAILED) overall="PARTIAL" ;;
+-  PARTIAL | UNKNOWN) [ "$overall" = CAPTURED ] && overall="PARTIAL" ;;
++    FAILED) overall="FAILED" ;;
++    PARTIAL|UNKNOWN) [ "$overall" != FAILED ] && overall="PARTIAL" ;;
+   esac
+ done
+ 
++# previous_baseline: the most recently captured OTHER baseline, by
++# manifest.baseline.captured_at (never directory mtime).
++PREVIOUS_BASELINE=""
++if [ -d state/baselines ]; then
++  PREVIOUS_BASELINE=$(
++    for m in state/baselines/*/manifest.yaml; do
++      [ -f "$m" ] || continue
++      id=$(grep -m1 '^  id:' "$m" | sed -E 's/^  id: *//')
++      ts=$(grep -m1 '^  captured_at:' "$m" | sed -E 's/^  captured_at: *//')
++      [ "$id" = "$BASELINE_ID" ] && continue
++      echo "${ts}|${id}"
++    done | sort -r | head -1 | cut -d'|' -f2
++  )
++fi
++
+ {
+   echo "baseline:"
+   echo "  id: ${BASELINE_ID}"
+   echo "  purpose: \"${PURPOSE}\""
+   echo "  captured_at: ${TS}"
++  echo "  project: \"${PROJECT_NAME}\""
++  echo "  previous_baseline: \"${PREVIOUS_BASELINE}\""
+   echo "  git:"
+   echo "    commit: \"$(git rev-parse HEAD 2>/dev/null || echo unknown)\""
+   echo "    branch: \"$(git branch --show-current 2>/dev/null || echo unknown)\""
+   echo "    tag: \"$(git describe --tags --exact-match 2>/dev/null || echo none)\""
+-  echo "    dirty: $([ -s "$BASE/source/git-status.txt" ] && echo true || echo false)"
++  echo "    dirty: $([ -s "$TMP/source/git-status.txt" ] && echo true || echo false)"
+   echo
+   echo "runtime:"
+-  echo "  engine: podman"
++  echo "  type: podman"
+   echo "  architecture: \"$(uname -m)\""
+   echo
+   echo "components:"
+-  for c in arcanium vault hsm infra kms observability workloads; do
++  for c in arcanium vault hsm identity infra kms observability workloads; do
+     echo "  ${c}:"
+     echo "    capture_status: ${STATUS[$c]:-UNKNOWN}"
+   done
+   echo
+   echo "verification:"
+-  jq -r '.results[] | "  \(.check): \(.result)"' "$BASE/scenarios/results.json"
++  jq -r '.results[] | "  \(.check): \(.result)"' "$TMP/verification/results.json"
+   echo
+   echo "capture:"
+   echo "  overall: ${overall}"
+   echo "  checks:"
+-  for c in source runtime arcanium vault hsm infra kms observability workloads scenarios; do
++  for c in source runtime arcanium vault hsm identity infra kms observability workloads verification; do
+     echo "    ${c}: ${STATUS[$c]:-UNKNOWN}"
+   done
+-} >"$BASE/manifest.yaml"
++} > "$TMP/manifest.yaml"
+ 
+ # ------------------------------------------------------------- summary.md -
+-AUTH_ENABLED="$(jq -r '.ARCANIUM_AUTH_ENABLED // "(unset)"' "$BASE/arcanium/capabilities.json" 2>/dev/null)"
++AUTH_ENABLED="$(jq -r '.ARCANIUM_AUTH_ENABLED // "(unset)"' "$TMP/components/arcanium/mode-flags.json" 2>/dev/null)"
+ {
+-  echo "# Arcanium baseline — ${BASELINE_ID}"
++  echo "# ${PROJECT_NAME} baseline — ${BASELINE_ID}"
+   echo
+   echo "**Purpose:** ${PURPOSE}"
+   echo "**Captured:** ${TS}"
++  echo "**Source commit:** $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
++  echo "**Previous baseline:** ${PREVIOUS_BASELINE:-none}"
+   echo "**Overall capture status:** ${overall}"
+   echo
+-  echo "## Characteristics at capture time"
+-  echo
+-  echo '```text'
+-  echo "AuthN"
+-  echo "  ARCANIUM_AUTH_ENABLED = ${AUTH_ENABLED}"
+-  echo "  Vault userpass (pre-Phase-18)"
+-  echo
+-  echo "AuthZ"
+-  echo "  Persona based, username -> persona map"
+-  echo "  Not yet OIDC group backed"
+-  echo
+-  echo "Desired state / Reconciliation"
+-  echo "  Not implemented (pre-Phase-19)"
+-  echo
+-  echo "Evidence"
+-  echo "  v1 / heuristic (pre-Phase-21 in this repo's numbering)"
+-  echo
+-  echo "Maturity"
+-  echo "  Averaged model, not gated"
+-  echo
+-  echo "OpenAPI"
+-  echo "  Not authoritative (pre-Phase-20)"
+-  echo
+-  echo "Recovery"
+-  echo "  Backups available, restore not yet proven (pre-Phase-22)"
+-  echo '```'
+-  echo
+   echo "## Capture status per check"
+   echo
+   echo "| Check | Status |"
+   echo "|---|---|"
+-  for c in source runtime arcanium vault hsm infra kms observability workloads scenarios; do
++  for c in source runtime arcanium vault hsm identity infra kms observability workloads verification; do
+     echo "| $c | ${STATUS[$c]:-UNKNOWN} |"
+   done
+   echo
++  echo "## Observed functional verification"
++  echo
++  jq -r '.results[] | "- **\(.check)**: \(.result)" + (if .detail then " — \(.detail)" else "" end)' "$TMP/verification/results.json"
++  echo
+   echo "See [manifest.yaml](./manifest.yaml) for the machine-readable form, and"
+-  echo "[scenarios/summary.md](./scenarios/summary.md) for the observed-functional-state results."
+-} >"$BASE/summary.md"
++  echo "[source/project-tree.md](./source/project-tree.md) for the captured project structure."
++  echo
++  echo "## Project context"
++  echo
++  echo "ARCANIUM_AUTH_ENABLED = ${AUTH_ENABLED}"
++  echo
++  echo "Arcanium is a Vault Enterprise cryptographic control-plane demo:"
++  echo "\`arcanium/{api,ui,cli}\` + Vault (3-node Raft + transit-seal + HSM) +"
++  echo "OpenLDAP/Keycloak identity (Prompt 18) + supplier-tenant workloads."
++} > "$TMP/summary.md"
++
++echo
++echo "-> validating captured baseline before finalizing"
++if ! state/scripts/validate-state.sh "$TMP"; then
++  echo
++  echo "ABORT: validate-state.sh rejected this capture — leaving $TMP in place for inspection." >&2
++  echo "Nothing was finalized; state/CURRENT and state/baselines/ are unchanged." >&2
++  exit 1
++fi
+ 
+-echo "$BASE" >state/CURRENT
++mv "$TMP" "$FINAL"
++echo "$FINAL" > state/CURRENT
+ 
+ echo
+-echo "Baseline written: $BASE"
++echo "Baseline written: $FINAL"
+ echo "Overall: $overall"
+-echo "CURRENT -> $BASE"
++echo "Previous baseline: ${PREVIOUS_BASELINE:-none}"
++echo "CURRENT -> $FINAL"
+diff --git a/state/scripts/commit-baseline.sh b/state/scripts/commit-baseline.sh
+index 5a9a264..37bb235 100755
+--- a/state/scripts/commit-baseline.sh
++++ b/state/scripts/commit-baseline.sh
+@@ -1,24 +1,31 @@
+ #!/usr/bin/env bash
+-# commit-baseline.sh — tag + commit + push one captured baseline, using
+-# commit_gh where it fits (secret scan, rebase-pull, commit, push).
++# commit-baseline.sh — Prompt 00. Tag + commit + push one captured baseline.
+ #
+-# What this does NOT do: stage or commit anything outside state/. commit_gh
+-# runs `git add .` (whole working tree, no path scoping), so this script
+-# refuses to run if anything other than state/ is dirty — a baseline commit
+-# must not silently absorb unrelated in-progress work.
++# commit_gh is the ONLY commit mechanism here — there is no plain-git
++# fallback. Downgrading controls silently when a prerequisite is missing is
++# not acceptable; this script fails clearly and names what's missing instead.
++#
++# Required flow (Prompt 00 Part 8):
++#   1. commit_gh must be on PATH — fail immediately if not.
++#   2. commit_gh --doctor
++#   3. validate-state.sh as a hard gate
++#   4. commit_gh --scan
++#   5. refuse if anything outside state/ is dirty (commit_gh stages the
++#      whole working tree, not just state/)
++#   6. read the baseline's recorded SOURCE commit from manifest.yaml
++#   7. if a tag is requested, tag THAT source SHA — not whatever the
++#      baseline-artifact commit ends up being
++#   8. commit_gh --message "..." --tree false
++#   9. if the pre-commit hook reformats staged files and blocks the commit,
++#      detect that, re-run validate-state.sh + commit_gh --scan, retry once
++#  10. fail clearly if the second attempt still doesn't commit
++#  11. push the tag only after the baseline commit actually succeeded
++#  12. report baseline id, source SHA, artifact commit SHA, tag + target
+ #
+ # Usage:
+ #   state/scripts/commit-baseline.sh <baseline-id> [tag-name] [commit-message]
+-#
+-# Examples:
+-#   state/scripts/commit-baseline.sh 2026-09-11_pre-hardening
+-#   state/scripts/commit-baseline.sh 2026-09-11_pre-hardening arcanium-pre-hardening \
+-#     "Arcanium baseline before Prompt 18 Security Foundation"
+-#
+-# If the named tag already exists, tagging is skipped (not an error) — this
+-# is meant to be safe to re-run, e.g. if a manual `git tag` already happened.
+ set -uo pipefail
+-cd "$(dirname -- "$0")/../.." # -> repo root
++cd "$(dirname -- "$0")/../.."   # -> repo root
+ 
+ BASELINE_ID="${1:?usage: commit-baseline.sh <baseline-id> [tag-name] [commit-message]}"
+ BASE="state/baselines/${BASELINE_ID}"
+@@ -36,7 +43,24 @@ echo "  tag:      $TAG"
+ echo "  message:  $MESSAGE"
+ echo
+ 
+-# --- 1. secret validation (hard gate) ------------------------------------
++# --- 1. commit_gh is mandatory, no fallback -------------------------------
++if ! command -v commit_gh >/dev/null 2>&1; then
++  echo "ABORT: commit_gh not found on PATH." >&2
++  echo "commit_gh is the mandatory commit/security mechanism for baselines" >&2
++  echo "(Prompt 00) — there is no plain-git fallback. Install/configure it" >&2
++  echo "and re-run." >&2
++  exit 1
++fi
++
++# --- 2. developer/environment preflight -----------------------------------
++echo "-> commit_gh --doctor"
++if ! commit_gh --doctor; then
++  echo "ABORT: commit_gh --doctor reported a problem — fix it before committing a baseline." >&2
++  exit 1
++fi
++echo
++
++# --- 3. secret validation (hard gate) -------------------------------------
+ echo "-> validating baseline for secrets"
+ if ! state/scripts/validate-state.sh "$BASELINE_ID"; then
+   echo "ABORT: validate-state.sh found something secret-shaped in $BASE." >&2
+@@ -45,17 +69,15 @@ if ! state/scripts/validate-state.sh "$BASELINE_ID"; then
+ fi
+ echo
+ 
+-# --- 2. known stray file cleanup -----------------------------------------
+-# state/README.md documents that only capture-state.sh writes under state/;
+-# a FOLDER_TREE.md dropped here (e.g. from running commit_gh --tree from
+-# inside state/) violates that and doesn't belong in this directory.
+-if [ -f state/FOLDER_TREE.md ]; then
+-  echo "-> removing state/FOLDER_TREE.md (not written by capture-state.sh; see state/README.md)"
+-  rm -f state/FOLDER_TREE.md
++# --- 4. repository-wide secret scan ---------------------------------------
++echo "-> commit_gh --scan"
++if ! commit_gh --scan; then
++  echo "ABORT: commit_gh --scan found something — resolve before committing." >&2
++  exit 1
+ fi
+ echo
+ 
+-# --- 3. refuse to bundle unrelated changes --------------------------------
++# --- 5. refuse to bundle unrelated changes --------------------------------
+ echo "-> checking nothing outside state/ is dirty (commit_gh stages the whole tree)"
+ OUTSIDE="$(git status --porcelain | awk '{print $2}' | grep -v '^state/' || true)"
+ if [ -n "$OUTSIDE" ]; then
+@@ -66,19 +88,29 @@ fi
+ echo "  clean — only state/ is pending"
+ echo
+ 
+-# --- 4. tag (skip if it already exists) -----------------------------------
++# --- 6. read the recorded source commit from the baseline's own manifest --
++SOURCE_SHA="$(grep -m1 '^    commit:' "$BASE/manifest.yaml" 2>/dev/null | sed -E 's/^    commit: *//' | tr -d '"')"
++if [ -z "$SOURCE_SHA" ] || [ "$SOURCE_SHA" = "unknown" ]; then
++  echo "ABORT: could not read baseline.git.commit from $BASE/manifest.yaml." >&2
++  exit 1
++fi
++echo "-> baseline's recorded source commit: $SOURCE_SHA"
++if ! git cat-file -e "${SOURCE_SHA}^{commit}" 2>/dev/null; then
++  echo "ABORT: $SOURCE_SHA is not a commit reachable in this repository." >&2
++  exit 1
++fi
++echo
++
++# --- 7. tag the SOURCE commit, not the artifact commit --------------------
+ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+   echo "-> tag $TAG already exists (points at $(git rev-parse --short "$TAG")) — not recreating"
+ else
+-  echo "-> creating annotated tag $TAG"
+-  git tag -a "$TAG" -m "$MESSAGE" || {
+-    echo "ABORT: git tag failed" >&2
+-    exit 1
+-  }
++  echo "-> creating annotated tag $TAG on source commit $(git rev-parse --short "$SOURCE_SHA")"
++  git tag -a "$TAG" "$SOURCE_SHA" -m "$MESSAGE" || { echo "ABORT: git tag failed" >&2; exit 1; }
+ fi
+ echo
+ 
+-# --- 5. commit + push via commit_gh ---------------------------------------
++# --- 8/9/10. commit + push via commit_gh, with one detect-and-retry -------
+ HEAD_BEFORE="$(git rev-parse HEAD)"
+ 
+ run_commit_gh() {
+@@ -87,33 +119,32 @@ run_commit_gh() {
+   commit_gh --message "$MESSAGE" --tree false
+ }
+ 
+-if ! command -v commit_gh >/dev/null 2>&1; then
+-  echo "commit_gh not found on PATH — falling back to plain git." >&2
+-  git add state/
+-  git commit -m "$MESSAGE"
+-else
+-  run_commit_gh
++run_commit_gh
++if [ "$(git rev-parse HEAD)" = "$HEAD_BEFORE" ]; then
+   # The repo's pre-commit hook runs sanity_check --fix, which can reformat
+-  # staged shell scripts and then deliberately blocks the commit once, so
+-  # the reformatted content gets committed rather than silently dropped.
+-  # commit_gh's own `git add .` re-stages everything on each invocation, so
+-  # retrying is just calling it again — do that once automatically instead
+-  # of leaving a half-finished commit for the caller to notice by hand.
+-  if [ "$(git rev-parse HEAD)" = "$HEAD_BEFORE" ]; then
+-    echo
+-    echo "-> commit did not land (pre-commit hook likely reformatted staged files) — retrying once"
+-    run_commit_gh
+-  fi
++  # staged files and then deliberately blocks the commit once so the
++  # reformatted content gets committed rather than silently dropped.
++  echo
++  echo "-> commit did not land (pre-commit hook likely reformatted staged files)"
++  echo "-> re-validating before the retry, per the required flow"
++  state/scripts/validate-state.sh "$BASELINE_ID" || {
++    echo "ABORT: baseline no longer passes secret validation after reformat — inspect before retrying." >&2
++    exit 1
++  }
++  commit_gh --scan || { echo "ABORT: commit_gh --scan found something after reformat." >&2; exit 1; }
++  echo "-> retrying commit_gh once"
++  run_commit_gh
+ fi
+ echo
+ 
+ if [ "$(git rev-parse HEAD)" = "$HEAD_BEFORE" ]; then
+-  echo "ABORT: commit still did not land after retry — check commit_gh output above." >&2
+-  echo "The tag (if newly created) has NOT been pushed; nothing else to clean up." >&2
++  echo "ABORT: commit still did not land after one retry — check commit_gh output above." >&2
++  echo "The tag (if newly created) has NOT been pushed." >&2
+   exit 1
+ fi
++ARTIFACT_SHA="$(git rev-parse HEAD)"
+ 
+-# --- 6. push the tag (commit_gh's plain commit flow does not push tags) --
++# --- 11. push the tag only now that the commit actually landed -----------
+ echo "-> pushing tag $TAG"
+ if git push origin "refs/tags/$TAG"; then
+   echo "  tag pushed"
+@@ -121,5 +152,10 @@ else
+   echo "  tag push failed or was already up to date — check above output" >&2
+ fi
+ 
++# --- 12. report -------------------------------------------------------------
+ echo
+-echo "Done. Commit: $(git rev-parse --short HEAD)  Tag: $TAG -> $(git rev-parse --short "$TAG")"
++echo "Done."
++echo "  Baseline:        $BASELINE_ID"
++echo "  Source SHA:       $(git rev-parse --short "$SOURCE_SHA") ($SOURCE_SHA)"
++echo "  Artifact commit:  $(git rev-parse --short "$ARTIFACT_SHA") ($ARTIFACT_SHA)"
++echo "  Tag:              $TAG -> $(git rev-parse --short "$TAG")"
+diff --git a/state/scripts/compare-state.sh b/state/scripts/compare-state.sh
+index ea3a52b..7975a85 100755
+--- a/state/scripts/compare-state.sh
++++ b/state/scripts/compare-state.sh
+@@ -1,41 +1,75 @@
+ #!/usr/bin/env bash
+-# compare-state.sh — diff two baselines' manifest.yaml and summary.md.
++# compare-state.sh — Prompt 00. Diff two baselines' manifest.yaml, component
++# statuses, and verification results.
+ #
+ # Usage:
+ #   state/scripts/compare-state.sh <baseline-a> <baseline-b>
+-#   state/scripts/compare-state.sh 2026-09-11_pre-hardening 2026-09-20_post-18-security
++#   state/scripts/compare-state.sh <baseline-b>   # resolves A from metadata
+ #
+-# With one argument, compares that baseline against whatever state/CURRENT
+-# pointed to before it (i.e. the previous baseline) — convenient right after
+-# a new capture.
++# With one argument, baseline A is resolved from B's own recorded metadata —
++# manifest.yaml's `previous_baseline` field if present (the authoritative,
++# recorded predecessor — unaffected by directory renames or filesystem
++# timestamps), otherwise by sorting every baseline's `captured_at` and
++# taking the one immediately before B. Directory mtime is never used; it
++# does not survive a checkout, a copy, or a restore.
+ set -uo pipefail
+-cd "$(dirname -- "$0")/../.." # -> repo root
++cd "$(dirname -- "$0")/../.."   # -> repo root
+ 
+-resolve() {
++resolve_dir() {
+   local a="$1"
+-  [ -d "$a" ] && {
+-    echo "$a"
+-    return
+-  }
+-  [ -d "state/baselines/$a" ] && {
+-    echo "state/baselines/$a"
+-    return
+-  }
++  [ -d "$a" ] && { echo "$a"; return; }
++  [ -d "state/baselines/$a" ] && { echo "state/baselines/$a"; return; }
+   echo "error: no such baseline: $a" >&2
+   exit 2
+ }
+ 
++manifest_field() {
++  # $1 = manifest.yaml path, $2 = top-level.field (two-space-indented child)
++  grep -m1 "^  ${2}:" "$1" 2>/dev/null | sed -E "s/^  ${2}: *//" | tr -d '"'
++}
++
++resolve_previous() {
++  local b_dir="$1" b_manifest="$1/manifest.yaml" prev
++  if [ ! -f "$b_manifest" ]; then
++    echo "error: $b_manifest missing — cannot resolve a previous baseline without it" >&2
++    exit 2
++  fi
++  prev="$(manifest_field "$b_manifest" previous_baseline)"
++  if [ -n "$prev" ] && [ -d "state/baselines/$prev" ]; then
++    echo "state/baselines/$prev"
++    return
++  fi
++  # Fall back to captured_at ordering across all baselines' manifests —
++  # still metadata-driven, never directory mtime.
++  local b_id b_ts
++  b_id="$(manifest_field "$b_manifest" id)"
++  b_ts="$(manifest_field "$b_manifest" captured_at)"
++  local best_id="" best_ts=""
++  for m in state/baselines/*/manifest.yaml; do
++    [ -f "$m" ] || continue
++    local id ts
++    id="$(manifest_field "$m" id)"
++    ts="$(manifest_field "$m" captured_at)"
++    [ "$id" = "$b_id" ] && continue
++    [ -z "$ts" ] && continue
++    # Keep the latest ts that is still earlier than b's ts.
++    if [[ "$ts" < "$b_ts" ]] && [[ -z "$best_ts" || "$ts" > "$best_ts" ]]; then
++      best_ts="$ts"; best_id="$id"
++    fi
++  done
++  if [ -z "$best_id" ]; then
++    echo "error: no earlier baseline found via previous_baseline or captured_at metadata" >&2
++    exit 2
++  fi
++  echo "state/baselines/$best_id"
++}
++
+ if [ $# -eq 2 ]; then
+-  A="$(resolve "$1")"
+-  B="$(resolve "$2")"
++  A="$(resolve_dir "$1")"
++  B="$(resolve_dir "$2")"
+ elif [ $# -eq 1 ]; then
+-  B="$(resolve "$1")"
+-  # Find the baseline captured immediately before B by directory mtime.
+-  A="$(ls -dt state/baselines/*/ 2>/dev/null | grep -v "^${B}/\$" | head -1 | sed 's:/$::')"
+-  [ -z "$A" ] && {
+-    echo "error: no earlier baseline found to compare against" >&2
+-    exit 2
+-  }
++  B="$(resolve_dir "$1")"
++  A="$(resolve_previous "$B")"
+ else
+   echo "usage: compare-state.sh <baseline-a> [<baseline-b>]" >&2
+   exit 2
+@@ -50,9 +84,11 @@ echo "## manifest.yaml diff"
+ diff -u "$A/manifest.yaml" "$B/manifest.yaml" || true
+ echo
+ 
+-echo "## scenario verification diff"
+-diff -u "$A/scenarios/results.json" "$B/scenarios/results.json" 2>/dev/null || true
++echo "## verification diff"
++diff -u "$A/verification/results.json" "$B/verification/results.json" 2>/dev/null \
++  || echo "(one or both baselines predate the verification/ layout — see scenarios/results.json)"
+ echo
+ 
+-echo "## capabilities diff (arcanium mode flags)"
+-diff -u "$A/arcanium/capabilities.json" "$B/arcanium/capabilities.json" 2>/dev/null || true
++echo "## arcanium mode-flags diff"
++diff -u "$A/components/arcanium/mode-flags.json" "$B/components/arcanium/mode-flags.json" 2>/dev/null \
++  || echo "(one or both baselines predate the components/ layout — see arcanium/capabilities.json)"

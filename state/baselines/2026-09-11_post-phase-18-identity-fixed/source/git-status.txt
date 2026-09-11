@@ -1,0 +1,5 @@
+ M .gitignore
+ M state/README.md
+ M state/scripts/capture-state.sh
+ M state/scripts/commit-baseline.sh
+ M state/scripts/compare-state.sh
