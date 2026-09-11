@@ -526,6 +526,62 @@ capture_persistence() {
   fi
 }
 
+# ----------------------------------------------------------------- backup --
+# Prompt 24, Deliverable 8. state/README.md's "state is not backup" rule
+# applies exactly as written: this reads whether a restore drill has ever
+# actually verified recovery, and its measured RTO/RPO — never the
+# snapshot/dump itself. Only the most recent VERIFIED row per component
+# counts here; a later failed re-run must not blank out the last
+# known-good measurement (available only ever means "a drill has ever
+# actually verified recovery," not "a row exists").
+capture_backup() {
+  local d="$TMP/components/backup"
+  mkdir -p "$d"
+
+  if ! running arcanium-postgres; then
+    jq -n '{vault_snapshot: {available: false, last_verified_at: null, rto_seconds: null, rpo_seconds: null},
+            postgres:      {available: false, last_verified_at: null, rto_seconds: null, rpo_seconds: null}}' \
+      >"$d/backup.json"
+    set_status backup UNKNOWN
+    return
+  fi
+
+  local rows rc
+  rows=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -F'|' -c \
+    "select distinct on (component) component, completed_at, rto_seconds, rpo_seconds
+     from restore_drill_results where verified = true order by component, completed_at desc;" \
+    2>"$d/query.err")
+  rc=$?
+
+  component_json() {
+    local row="$1"
+    if [ -z "$row" ]; then
+      jq -n '{available: false, last_verified_at: null, rto_seconds: null, rpo_seconds: null}'
+    else
+      jq -n \
+        --arg t "$(cut -d'|' -f2 <<<"$row")" \
+        --arg rto "$(cut -d'|' -f3 <<<"$row")" \
+        --arg rpo "$(cut -d'|' -f4 <<<"$row")" \
+        '{available: true, last_verified_at: $t, rto_seconds: ($rto | tonumber), rpo_seconds: ($rpo | tonumber)}'
+    fi
+  }
+
+  local vault_row postgres_row
+  vault_row=$(echo "$rows" | awk -F'|' '$1=="vault"{print; exit}')
+  postgres_row=$(echo "$rows" | awk -F'|' '$1=="postgres"{print; exit}')
+
+  jq -n \
+    --argjson vault "$(component_json "$vault_row")" \
+    --argjson postgres "$(component_json "$postgres_row")" \
+    '{vault_snapshot: $vault, postgres: $postgres}' >"$d/backup.json"
+
+  if [ "$rc" -eq 0 ]; then
+    set_status backup CAPTURED
+  else
+    set_status backup PARTIAL
+  fi
+}
+
 # ------------------------------------------------------------- verification --
 capture_verification() {
   local results="[]"
@@ -655,7 +711,7 @@ echo "Capturing baseline: $FINAL"
 echo "  purpose: $PURPOSE"
 echo
 
-for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_verification; do
+for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_verification; do
   echo "-> ${fn#capture_}"
   "$fn"
 done
@@ -742,13 +798,35 @@ fi
     echo "  status: UNKNOWN"
   fi
   echo
+  echo "# Prompt 24, Deliverable 8 — whether a restore drill has ever actually"
+  echo "# verified recovery, and its measured RTO/RPO. Never the snapshot/dump"
+  echo "# itself (state/README.md's 'state is not backup' rule) — see"
+  echo "# restore_drill_results and docs/operations.md's Backup and recovery section."
+  echo "backup:"
+  if [ -s "$TMP/components/backup/backup.json" ]; then
+    jq -r '
+      "  vault_snapshot:",
+      "    available: \(.vault_snapshot.available)",
+      "    last_verified_at: \(if .vault_snapshot.last_verified_at then "\"" + .vault_snapshot.last_verified_at + "\"" else "null" end)",
+      "    rto_seconds: \(.vault_snapshot.rto_seconds // "null")",
+      "    rpo_seconds: \(.vault_snapshot.rpo_seconds // "null")",
+      "  postgres:",
+      "    available: \(.postgres.available)",
+      "    last_verified_at: \(if .postgres.last_verified_at then "\"" + .postgres.last_verified_at + "\"" else "null" end)",
+      "    rto_seconds: \(.postgres.rto_seconds // "null")",
+      "    rpo_seconds: \(.postgres.rpo_seconds // "null")"
+    ' "$TMP/components/backup/backup.json"
+  else
+    echo "  status: UNKNOWN"
+  fi
+  echo
   echo "verification:"
   jq -r '.results[] | "  \(.check): \(.result)"' "$TMP/verification/results.json"
   echo
   echo "capture:"
   echo "  overall: ${overall}"
   echo "  checks:"
-  for c in source runtime arcanium vault hsm identity infra kms observability workloads persistence verification; do
+  for c in source runtime arcanium vault hsm identity infra kms observability workloads persistence backup verification; do
     echo "    ${c}: ${STATUS[$c]:-UNKNOWN}"
   done
 } >"$TMP/manifest.yaml"

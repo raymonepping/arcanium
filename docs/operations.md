@@ -72,7 +72,16 @@ A job marked `rolled_back` still requires inspection of rollback steps: undo is 
 make vault-backup
 ```
 
-This saves and inspects snapshots for vault-s and the main Raft cluster outside the Podman VM. Inspection proves readability, not a successful restore exercise.
+This saves and inspects snapshots for vault-s and the main Raft cluster outside the Podman VM. Inspection proves readability, not a successful restore exercise — Prompt 24 closes that gap for real, with two separate, named, actually-executed drills instead of an assumption:
+
+```sh
+make scenario-recovery-drill-vault      # Drill A — Vault snapshot restore into an isolated instance
+make scenario-recovery-drill-postgres   # Drill B — destroys and recovers the REAL arcanium-postgres
+```
+
+Drill A (`scripts/vault-restore-drill.sh`) restores a fresh snapshot into a separate, disposable Vault instance and verifies real post-restore state — it never touches the running cluster. Drill B (`scenarios/15_operability/test_postgres_recovery.sh`) is genuinely destructive: it stops, removes, and deletes the volume of the real `arcanium-postgres` container, then recovers it via `pg_dump` → recreate → restore → migrate → verify. Do not run Drill B against a stack you cannot afford to lose without first confirming a separate backup exists.
+
+Both drills record a row in the `restore_drill_results` table (`component: 'vault'` or `'postgres'`) with a measured RTO/RPO and a `verified` boolean — never just "the script exited 0." `state/scripts/capture-state.sh`'s `capture_backup()` reads the most recent successful row per component into every baseline's `backup:` section, so a baseline can say "recovery was measured on \<date\>, RTO Ns, RPO Ns" instead of "a backup script exists." See `docs/slo.md` and `docs/scale.md` for the rest of Prompt 24's operability work, and `docs/upgrade.md` for the upgrade/rollback procedure that reuses Drill A's own backup step as its preflight safety net.
 
 Keep protected copies of:
 
@@ -82,7 +91,7 @@ Keep protected copies of:
 - SoftHSM token storage, proxy PSK and required PIN custody for the HSM demonstration.
 - Terraform state and deployment configuration.
 
-The current Vault snapshot helper is not a complete PostgreSQL or HSM backup solution. Define and test those recovery paths separately before depending on retained state.
+The current Vault snapshot helper is not a complete PostgreSQL or HSM backup solution. Drill B above proves the Postgres recovery path specifically; HSM recovery is not exercised by either drill and remains a gap — define and test that path separately before depending on retained state.
 
 After a VM restart, `vault-s` may need unsealing. Use `make vault-up` and [Vault recovery guidance](../compose/vault/README.md); do not reinitialize existing Vault volumes. Recovery shares do not replace a lost Transit seal key or lost HSM token.
 

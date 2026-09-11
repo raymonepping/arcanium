@@ -173,6 +173,19 @@ vault-backup: ## Save and inspect both Raft snapshots outside the Podman VM
 restore-drill-vault: ## Prompt 24, Drill A — real Vault snapshot restore into an isolated instance, measured RTO/RPO
 	@./scripts/vault-restore-drill.sh
 
+# Prompt 24, Deliverable 7 — two separate, named targets (not one generic
+# scenario-recovery-drill), because Drill A (Vault) and Drill B (Postgres)
+# are fundamentally different recovery procedures with different blast
+# radius; collapsing them into one interchangeable target would make the
+# exit criterion soft (input/36).
+.PHONY: scenario-recovery-drill-vault
+scenario-recovery-drill-vault: ## Prompt 24, Deliverable 7 — Drill A, re-run as the CI/scheduled check
+	@./scripts/vault-restore-drill.sh
+
+.PHONY: scenario-recovery-drill-postgres
+scenario-recovery-drill-postgres: ## Prompt 24, Deliverable 7 — Drill B: destroys and recovers the REAL arcanium-postgres (container + volume)
+	@./scenarios/15_operability/test_postgres_recovery.sh
+
 .PHONY: hsm-bootstrap
 hsm-bootstrap: ## Build vault-hsm image, start softhsm-server, resolve slot, start vault-hsm
 	@podman build --platform "linux/$(shell uname -m | sed 's/x86_64/amd64/')" -t arcanium-vault-hsm:local \
