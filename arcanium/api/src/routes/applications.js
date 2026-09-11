@@ -48,14 +48,32 @@ applicationsRouter.get("/", async (req, res, next) => {
 // POST /api/v1/applications
 applicationsRouter.post("/", async (req, res, next) => {
   try {
-    const decision = authorize({ identity: req.identity, action: "provision" });
+    const { name, description, supplier_id } = req.body ?? {};
+    // Prompt 19 — authorize()'s "limited" (supplier-admin) verdict only
+    // ALLOWs when `tenant` is passed and matches identity.tenantScopes; the
+    // original call here never passed one, so a supplier-admin could never
+    // create an application even in their own tenant — found while closing
+    // these routes, not exercised by the original negative-test suite
+    // (which only tested DENY for supplier-admin, never an own-tenant ALLOW).
+    let tenant = null;
+    if (supplier_id && UUID_RE.test(supplier_id)) {
+      const { rows } = await query(
+        "SELECT vault_namespace FROM suppliers WHERE id = $1",
+        [supplier_id],
+      );
+      tenant = rows[0]?.vault_namespace ?? null;
+    }
+    const decision = authorize({
+      identity: req.identity,
+      action: "provision",
+      tenant,
+    });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
         error: "forbidden",
         action: "provision",
         reason: decision.reason,
       });
-    const { name, description, supplier_id } = req.body ?? {};
     if (!name)
       return res.status(400).json({ error: "name is required", field: "name" });
     if (!NAME_RE.test(name))
@@ -116,10 +134,46 @@ applicationsRouter.get("/:id", async (req, res, next) => {
   }
 });
 
+// Prompt 19 — resolves the application's tenant namespace for authorize()'s
+// "limited" (supplier-admin) verdict, which only ALLOWs when a `tenant`
+// string is passed and matches identity.tenantScopes. Also doubles as the
+// existence + supplier_id lookup PATCH/DELETE need anyway.
+async function applicationTenant(id) {
+  const { rows } = await query(
+    `SELECT a.supplier_id, s.vault_namespace
+       FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
+      WHERE a.id = $1`,
+    [id],
+  );
+  return rows[0] ?? null; // null = application doesn't exist
+}
+
 // PATCH /api/v1/applications/:id
+// Prompt 19 — this route had NO authorization check of any kind (neither
+// role nor tenant): any authenticated session could patch any application's
+// registry row, cross-tenant, regardless of persona. Closed the same way
+// Phase 18 closed GET /applications/:id.
 applicationsRouter.patch("/:id", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
+    const app = await applicationTenant(req.params.id);
+    if (!app) return next(notFound());
+
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(app.supplier_id))
+      return next(notFound());
+    const decision = authorize({
+      identity: req.identity,
+      action: "provision",
+      tenant: app.vault_namespace,
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
+
     const { description } = req.body ?? {};
     if (
       description !== undefined &&
@@ -142,9 +196,32 @@ applicationsRouter.patch("/:id", async (req, res, next) => {
 });
 
 // DELETE /api/v1/applications/:id
+// Prompt 19 — same gap as PATCH above: no authorization check at all
+// previously. Deleting one application (unlike deleting a whole supplier)
+// stays within the matrix's ordinary "limited" destroy_request semantics —
+// a supplier-admin may delete their own tenant's application, not
+// arbitrary ones.
 applicationsRouter.delete("/:id", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
+    const app = await applicationTenant(req.params.id);
+    if (!app) return next(notFound());
+
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(app.supplier_id))
+      return next(notFound());
+    const decision = authorize({
+      identity: req.identity,
+      action: "destroy_request",
+      tenant: app.vault_namespace,
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "destroy_request",
+        reason: decision.reason,
+      });
+
     const { rowCount } = await query("DELETE FROM applications WHERE id = $1", [
       req.params.id,
     ]);
@@ -175,7 +252,16 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
     // Role check (Prompt 18) — the tenantScope check above only enforces the
     // TENANT boundary for supplier-admins; it says nothing about whether the
     // caller's ROLE may provision at all (ciso/auditor previously could).
-    const decision = authorize({ identity: req.identity, action: "provision" });
+    // Prompt 19 — this call never passed `tenant`, so authorize()'s "limited"
+    // (supplier-admin) verdict always denied, even for the caller's own
+    // tenant's application — the same missing-tenant-param bug already fixed
+    // in POST / and PATCH/DELETE /:id above. Resolve the same way.
+    const tenantInfo = await applicationTenant(req.params.id);
+    const decision = authorize({
+      identity: req.identity,
+      action: "provision",
+      tenant: tenantInfo?.vault_namespace ?? null,
+    });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
         error: "forbidden",

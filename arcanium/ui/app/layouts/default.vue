@@ -453,7 +453,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 }
 .brand-icon { width: 22px; height: 22px; flex-shrink: 0; }
 .brand-name {
-  font-size: 15px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--arc-text-primary);

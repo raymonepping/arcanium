@@ -22,7 +22,7 @@ ARCHIVE=$(mktemp /tmp/arcanium-ui-build.XXXXXX)
 trap 'rm -f "$ARCHIVE"' EXIT HUP INT TERM
 tar -C "$UI_DIR" --exclude=node_modules --exclude=.nuxt --exclude=.output --exclude=test-results --exclude=playwright-report --exclude=.env -czf "$ARCHIVE" .
 echo 'Building arcanium-ui:local…'
-podman build --format docker --platform linux/amd64 -t arcanium-ui:local -f Containerfile - <"$ARCHIVE"
+podman build --format docker --platform "linux/$(uname -m | sed 's/x86_64/amd64/')" -t arcanium-ui:local -f Containerfile - <"$ARCHIVE"
 echo 'Recreating arcanium-ui…'
 "$SCRIPT_DIR/compose.sh" arcanium up -d --no-deps --force-recreate arcanium-ui
 WAIT=0

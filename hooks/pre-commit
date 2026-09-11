@@ -1,0 +1,25 @@
+#!/bin/bash
+# Run sanity_check --fix on staged sources. Block the commit ONLY when the
+# fixers actually change a staged file (so you re-stage the fix). A clean tree
+# passes even though `sanity_check --fix` itself exits non-zero on success.
+set -uo pipefail
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM \
+  | grep -E '\.(sh|py|js|tf)$|Dockerfile$' || true)
+[ -z "$STAGED" ] && exit 0
+
+echo "🔍 pre-commit: sanity_check --fix on $(echo "$STAGED" | wc -l | tr -d ' ') staged file(s)"
+echo "$STAGED" | xargs sanity_check --fix --quiet || true
+
+CHANGED=$(echo "$STAGED" | xargs -r git diff --name-only --)
+if [ -n "$CHANGED" ]; then
+  echo ""
+  echo "✗ sanity_check reformatted staged files — re-stage and commit again:"
+  echo "$CHANGED" | sed 's/^/    /'
+  echo ""
+  echo "    git add $(echo "$CHANGED" | tr '\n' ' ')"
+  exit 1
+fi
+
+echo "✓ staged sources are clean"
+exit 0

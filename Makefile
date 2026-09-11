@@ -19,6 +19,12 @@ help: ## Show available commands
 
 check: ## Verify the Podman machine and Compose provider
 	@./scripts/podman-check.sh
+	@# Prompt 19 — hooks/ is tracked but core.hooksPath isn't set on a fresh
+	@# clone; idempotent, so re-running `make check` is always safe.
+	@if [ "$$(git config --get core.hooksPath 2>/dev/null)" != "hooks" ]; then \
+		git config core.hooksPath hooks; \
+		echo "Configured git core.hooksPath -> hooks/ (see CONTRIBUTING.md)"; \
+	fi
 
 status: check ## Show Arcanium containers and the shared network
 	@printf '\nArcanium containers\n'

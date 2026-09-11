@@ -33,6 +33,20 @@ function notFound() {
   return err;
 }
 
+// Prompt 19 — authorize()'s "limited" verdict (supplier-admin) only ALLOWs
+// when a `tenant` string is passed and matches identity.tenantScopes; a
+// call with no tenant always denies a "limited" persona, even for their own
+// resource. This resolves the supplier's own vault_namespace so that tenant
+// check can actually succeed — found while closing these routes: the same
+// missing-tenant-param bug already existed in applications.js's POST routes.
+async function namespaceOf(supplierId) {
+  const { rows } = await query(
+    "SELECT vault_namespace FROM suppliers WHERE id = $1",
+    [supplierId],
+  );
+  return rows[0]?.vault_namespace ?? null;
+}
+
 // GET /api/v1/suppliers
 suppliersRouter.get("/", async (req, res, next) => {
   try {
@@ -150,9 +164,28 @@ suppliersRouter.get("/:id", async (req, res, next) => {
 });
 
 // Update registry metadata only; Vault namespace provisioning is a separate workflow.
+// Prompt 19 — this route had NO authorization check of any kind (neither
+// role nor tenant): any authenticated session, including a different
+// tenant's supplier-admin, could patch any supplier's registry row. Closed
+// the same way Phase 18 closed GET /applications/:id — role via
+// authorize(), tenant via tenantScope(), both checked, neither assumed.
 suppliersRouter.patch("/:id", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(req.params.id))
+      throw notFound();
+    const decision = authorize({
+      identity: req.identity,
+      action: "provision",
+      tenant: await namespaceOf(req.params.id),
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
     const fields = supplierFields(req.body, true);
     const names = Object.keys(fields);
     const { rows } = await query(
@@ -174,6 +207,13 @@ suppliersRouter.patch("/:id", async (req, res, next) => {
 // DELETE /api/v1/suppliers/:id
 // Prompt 14.2 — de-provisions the Vault namespace (guarded: refuses a namespace
 // that still holds transit keys unless ?force=true), then removes the row.
+// Prompt 19 — deliberately stricter than the matrix's generic "limited"
+// destroy_request for supplier-admin: deleting a WHOLE tenant is a
+// platform-level action, not something a tenant-admin should ever self-serve
+// (unlike requesting destruction of one key within their own tenant). The
+// existing blanket block stays; authorize() below additionally denies
+// auditor (previously the only check was "not a supplier-admin" — ciso,
+// architect, operator, AND auditor could all reach this far).
 suppliersRouter.delete("/:id", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
@@ -181,6 +221,16 @@ suppliersRouter.delete("/:id", async (req, res, next) => {
       return res
         .status(403)
         .json({ error: "supplier-admins cannot delete tenants" });
+    const decision = authorize({
+      identity: req.identity,
+      action: "destroy_request",
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "destroy_request",
+        reason: decision.reason,
+      });
     const { rows: sup } = await query(
       "SELECT id, name, vault_namespace, sla_tier FROM suppliers WHERE id = $1",
       [req.params.id],

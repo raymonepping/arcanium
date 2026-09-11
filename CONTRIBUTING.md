@@ -1,5 +1,19 @@
 # Contributing
 
+## One-time setup
+
+`hooks/pre-commit` (sanity-check/format-fix on staged sources) is tracked in
+this repository, but Git only runs hooks from `.git/hooks/` unless
+`core.hooksPath` points elsewhere — a fresh clone gets the file but not the
+enforcement. Point Git at it once:
+
+```sh
+git config core.hooksPath hooks
+```
+
+`make check` also does this automatically (idempotent — safe to re-run), so
+running it once after cloning has the same effect.
+
 ## Workflow
 
 1. Work on a focused branch and inspect existing changes before editing.

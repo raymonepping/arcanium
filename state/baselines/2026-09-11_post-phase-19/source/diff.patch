@@ -1,0 +1,493 @@
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 64887bc..973f730 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -1,5 +1,19 @@
+ # Contributing
+ 
++## One-time setup
++
++`hooks/pre-commit` (sanity-check/format-fix on staged sources) is tracked in
++this repository, but Git only runs hooks from `.git/hooks/` unless
++`core.hooksPath` points elsewhere — a fresh clone gets the file but not the
++enforcement. Point Git at it once:
++
++```sh
++git config core.hooksPath hooks
++```
++
++`make check` also does this automatically (idempotent — safe to re-run), so
++running it once after cloning has the same effect.
++
+ ## Workflow
+ 
+ 1. Work on a focused branch and inspect existing changes before editing.
+diff --git a/Makefile b/Makefile
+index 3b524f3..9c6fd75 100644
+--- a/Makefile
++++ b/Makefile
+@@ -19,6 +19,12 @@ help: ## Show available commands
+ 
+ check: ## Verify the Podman machine and Compose provider
+ 	@./scripts/podman-check.sh
++	@# Prompt 19 — hooks/ is tracked but core.hooksPath isn't set on a fresh
++	@# clone; idempotent, so re-running `make check` is always safe.
++	@if [ "$$(git config --get core.hooksPath 2>/dev/null)" != "hooks" ]; then \
++		git config core.hooksPath hooks; \
++		echo "Configured git core.hooksPath -> hooks/ (see CONTRIBUTING.md)"; \
++	fi
+ 
+ status: check ## Show Arcanium containers and the shared network
+ 	@printf '\nArcanium containers\n'
+diff --git a/arcanium/api/src/routes/applications.js b/arcanium/api/src/routes/applications.js
+index 54acdd6..3ea16cc 100644
+--- a/arcanium/api/src/routes/applications.js
++++ b/arcanium/api/src/routes/applications.js
+@@ -48,14 +48,28 @@ applicationsRouter.get("/", async (req, res, next) => {
+ // POST /api/v1/applications
+ applicationsRouter.post("/", async (req, res, next) => {
+   try {
+-    const decision = authorize({ identity: req.identity, action: "provision" });
++    const { name, description, supplier_id } = req.body ?? {};
++    // Prompt 19 — authorize()'s "limited" (supplier-admin) verdict only
++    // ALLOWs when `tenant` is passed and matches identity.tenantScopes; the
++    // original call here never passed one, so a supplier-admin could never
++    // create an application even in their own tenant — found while closing
++    // these routes, not exercised by the original negative-test suite
++    // (which only tested DENY for supplier-admin, never an own-tenant ALLOW).
++    let tenant = null;
++    if (supplier_id && UUID_RE.test(supplier_id)) {
++      const { rows } = await query(
++        "SELECT vault_namespace FROM suppliers WHERE id = $1",
++        [supplier_id],
++      );
++      tenant = rows[0]?.vault_namespace ?? null;
++    }
++    const decision = authorize({ identity: req.identity, action: "provision", tenant });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+         error: "forbidden",
+         action: "provision",
+         reason: decision.reason,
+       });
+-    const { name, description, supplier_id } = req.body ?? {};
+     if (!name)
+       return res.status(400).json({ error: "name is required", field: "name" });
+     if (!NAME_RE.test(name))
+@@ -116,10 +130,42 @@ applicationsRouter.get("/:id", async (req, res, next) => {
+   }
+ });
+ 
++// Prompt 19 — resolves the application's tenant namespace for authorize()'s
++// "limited" (supplier-admin) verdict, which only ALLOWs when a `tenant`
++// string is passed and matches identity.tenantScopes. Also doubles as the
++// existence + supplier_id lookup PATCH/DELETE need anyway.
++async function applicationTenant(id) {
++  const { rows } = await query(
++    `SELECT a.supplier_id, s.vault_namespace
++       FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
++      WHERE a.id = $1`,
++    [id],
++  );
++  return rows[0] ?? null; // null = application doesn't exist
++}
++
+ // PATCH /api/v1/applications/:id
++// Prompt 19 — this route had NO authorization check of any kind (neither
++// role nor tenant): any authenticated session could patch any application's
++// registry row, cross-tenant, regardless of persona. Closed the same way
++// Phase 18 closed GET /applications/:id.
+ applicationsRouter.patch("/:id", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
++    const app = await applicationTenant(req.params.id);
++    if (!app) return next(notFound());
++
++    const scope = await tenantScope(req);
++    if (scope.scoped && !scope.supplierIds.includes(app.supplier_id))
++      return next(notFound());
++    const decision = authorize({
++      identity: req.identity,
++      action: "provision",
++      tenant: app.vault_namespace,
++    });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "provision", reason: decision.reason });
++
+     const { description } = req.body ?? {};
+     if (
+       description !== undefined &&
+@@ -142,9 +188,28 @@ applicationsRouter.patch("/:id", async (req, res, next) => {
+ });
+ 
+ // DELETE /api/v1/applications/:id
++// Prompt 19 — same gap as PATCH above: no authorization check at all
++// previously. Deleting one application (unlike deleting a whole supplier)
++// stays within the matrix's ordinary "limited" destroy_request semantics —
++// a supplier-admin may delete their own tenant's application, not
++// arbitrary ones.
+ applicationsRouter.delete("/:id", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
++    const app = await applicationTenant(req.params.id);
++    if (!app) return next(notFound());
++
++    const scope = await tenantScope(req);
++    if (scope.scoped && !scope.supplierIds.includes(app.supplier_id))
++      return next(notFound());
++    const decision = authorize({
++      identity: req.identity,
++      action: "destroy_request",
++      tenant: app.vault_namespace,
++    });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "destroy_request", reason: decision.reason });
++
+     const { rowCount } = await query("DELETE FROM applications WHERE id = $1", [
+       req.params.id,
+     ]);
+@@ -175,7 +240,16 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
+     // Role check (Prompt 18) — the tenantScope check above only enforces the
+     // TENANT boundary for supplier-admins; it says nothing about whether the
+     // caller's ROLE may provision at all (ciso/auditor previously could).
+-    const decision = authorize({ identity: req.identity, action: "provision" });
++    // Prompt 19 — this call never passed `tenant`, so authorize()'s "limited"
++    // (supplier-admin) verdict always denied, even for the caller's own
++    // tenant's application — the same missing-tenant-param bug already fixed
++    // in POST / and PATCH/DELETE /:id above. Resolve the same way.
++    const tenantInfo = await applicationTenant(req.params.id);
++    const decision = authorize({
++      identity: req.identity,
++      action: "provision",
++      tenant: tenantInfo?.vault_namespace ?? null,
++    });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+         error: "forbidden",
+diff --git a/arcanium/api/src/routes/approvals.js b/arcanium/api/src/routes/approvals.js
+index 141c393..023e149 100644
+--- a/arcanium/api/src/routes/approvals.js
++++ b/arcanium/api/src/routes/approvals.js
+@@ -30,6 +30,56 @@ function notFound() {
+   return err;
+ }
+ 
++// Prompt 19 — POST /approvals (create) had no authorization check at all.
++// The request body's free-text `action` field (e.g. "revoke", "rotate" —
++// see requestKeyDestroy in provisioner/key.js) doesn't map 1:1 onto
++// authorize()'s ACTIONS; map the ones that do, and conservatively default
++// everything else (including "revoke"/"destroy"/anything unrecognized) to
++// destroy_request — the heaviest-weight action this endpoint can gate —
++// per the prompt's own instruction, logging a warning when we guess.
++const KNOWN_ACTION_MAP = { rotate: "rotate", rewrap: "rewrap", read: "read" };
++function resolveApprovalAction(bodyAction) {
++  const mapped = KNOWN_ACTION_MAP[String(bodyAction ?? "").toLowerCase()];
++  if (mapped) return mapped;
++  if (bodyAction) {
++    console.warn(
++      `[approvals] POST / — unrecognized approval action "${bodyAction}", defaulting authorize() check to destroy_request`,
++    );
++  }
++  return "destroy_request";
++}
++
++// Resolves both the tenant namespace (for authorize()'s "limited" verdict)
++// and the supplier id (for tenantScope's cross-tenant check): prefer an
++// explicit supplier_id on the body, else fall back to the referenced
++// application's supplier — so a request that only names app_id still gets
++// the tenant boundary enforced, not just requests that also pass supplier_id.
++async function approvalTenant({ supplier_id, app_id }) {
++  if (supplier_id && UUID_RE.test(supplier_id)) {
++    const { rows } = await query(
++      "SELECT id, vault_namespace FROM suppliers WHERE id = $1",
++      [supplier_id],
++    );
++    return {
++      supplierId: rows[0]?.id ?? null,
++      vaultNamespace: rows[0]?.vault_namespace ?? null,
++    };
++  }
++  if (app_id && UUID_RE.test(app_id)) {
++    const { rows } = await query(
++      `SELECT s.id, s.vault_namespace
++         FROM applications a JOIN suppliers s ON s.id = a.supplier_id
++        WHERE a.id = $1`,
++      [app_id],
++    );
++    return {
++      supplierId: rows[0]?.id ?? null,
++      vaultNamespace: rows[0]?.vault_namespace ?? null,
++    };
++  }
++  return { supplierId: null, vaultNamespace: null };
++}
++
+ // GET /api/v1/approvals
+ // Returns all pending approvals (status = 'pending') by default.
+ // Query param ?all=true returns all approvals regardless of status.
+@@ -81,6 +131,34 @@ approvalsRouter.post("/", async (req, res, next) => {
+       return res
+         .status(400)
+         .json({ error: "app_id is required (UUID)", field: "app_id" });
++
++    // Prompt 19 — this route previously had no authorization or tenant-scope
++    // check: any authenticated session could create an approval request
++    // against any application, cross-tenant.
++    const scope = await tenantScope(req);
++    const { supplierId, vaultNamespace } = await approvalTenant({
++      supplier_id,
++      app_id,
++    });
++    if (
++      scope.scoped &&
++      supplierId &&
++      !scope.supplierIds.includes(supplierId)
++    ) {
++      return res.status(404).json({ error: "not found" });
++    }
++    const decision = authorize({
++      identity: req.identity,
++      action: resolveApprovalAction(action),
++      tenant: vaultNamespace,
++    });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({
++        error: "forbidden",
++        action: "approve-create",
++        reason: decision.reason,
++      });
++
+     if (!key_name)
+       return res
+         .status(400)
+@@ -210,12 +288,41 @@ approvalsRouter.post("/:id/deny", async (req, res, next) => {
+ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
+   try {
+     const { source } = req.body ?? {};
++    // Prompt 19 — this route had no authorization check at all: it calls
++    // Vault's Control Group authorize API (Prompt 08), the same CISO-weight
++    // action as POST /:id/approve, but was reachable by any authenticated
++    // session with no role or tenant check.
+     const { rows } = await query(
+-      `SELECT id, status FROM approval_requests WHERE accessor = $1`,
++      `SELECT ar.id, ar.status, ar.supplier_id, s.vault_namespace
++         FROM approval_requests ar
++         LEFT JOIN applications a ON a.id = ar.app_id
++         LEFT JOIN suppliers s ON s.id = COALESCE(ar.supplier_id, a.supplier_id)
++        WHERE ar.accessor = $1`,
+       [req.params.accessor],
+     );
+     if (!rows.length) return next(notFound());
+     const record = rows[0];
++
++    const scope = await tenantScope(req);
++    if (
++      scope.scoped &&
++      record.supplier_id &&
++      !scope.supplierIds.includes(record.supplier_id)
++    ) {
++      return next(notFound());
++    }
++    const decision = authorize({
++      identity: req.identity,
++      action: "approve",
++      tenant: record.vault_namespace ?? null,
++    });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({
++        error: "forbidden",
++        action: "approve",
++        reason: decision.reason,
++      });
++
+     if (record.status !== "pending")
+       return res
+         .status(409)
+diff --git a/arcanium/api/src/routes/suppliers.js b/arcanium/api/src/routes/suppliers.js
+index 04fea55..8a90cb1 100644
+--- a/arcanium/api/src/routes/suppliers.js
++++ b/arcanium/api/src/routes/suppliers.js
+@@ -33,6 +33,20 @@ function notFound() {
+   return err;
+ }
+ 
++// Prompt 19 — authorize()'s "limited" verdict (supplier-admin) only ALLOWs
++// when a `tenant` string is passed and matches identity.tenantScopes; a
++// call with no tenant always denies a "limited" persona, even for their own
++// resource. This resolves the supplier's own vault_namespace so that tenant
++// check can actually succeed — found while closing these routes: the same
++// missing-tenant-param bug already existed in applications.js's POST routes.
++async function namespaceOf(supplierId) {
++  const { rows } = await query(
++    "SELECT vault_namespace FROM suppliers WHERE id = $1",
++    [supplierId],
++  );
++  return rows[0]?.vault_namespace ?? null;
++}
++
+ // GET /api/v1/suppliers
+ suppliersRouter.get("/", async (req, res, next) => {
+   try {
+@@ -150,9 +164,23 @@ suppliersRouter.get("/:id", async (req, res, next) => {
+ });
+ 
+ // Update registry metadata only; Vault namespace provisioning is a separate workflow.
++// Prompt 19 — this route had NO authorization check of any kind (neither
++// role nor tenant): any authenticated session, including a different
++// tenant's supplier-admin, could patch any supplier's registry row. Closed
++// the same way Phase 18 closed GET /applications/:id — role via
++// authorize(), tenant via tenantScope(), both checked, neither assumed.
+ suppliersRouter.patch("/:id", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
++    const scope = await tenantScope(req);
++    if (scope.scoped && !scope.supplierIds.includes(req.params.id)) throw notFound();
++    const decision = authorize({
++      identity: req.identity,
++      action: "provision",
++      tenant: await namespaceOf(req.params.id),
++    });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "provision", reason: decision.reason });
+     const fields = supplierFields(req.body, true);
+     const names = Object.keys(fields);
+     const { rows } = await query(
+@@ -174,6 +202,13 @@ suppliersRouter.patch("/:id", async (req, res, next) => {
+ // DELETE /api/v1/suppliers/:id
+ // Prompt 14.2 — de-provisions the Vault namespace (guarded: refuses a namespace
+ // that still holds transit keys unless ?force=true), then removes the row.
++// Prompt 19 — deliberately stricter than the matrix's generic "limited"
++// destroy_request for supplier-admin: deleting a WHOLE tenant is a
++// platform-level action, not something a tenant-admin should ever self-serve
++// (unlike requesting destruction of one key within their own tenant). The
++// existing blanket block stays; authorize() below additionally denies
++// auditor (previously the only check was "not a supplier-admin" — ciso,
++// architect, operator, AND auditor could all reach this far).
+ suppliersRouter.delete("/:id", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
+@@ -181,6 +216,9 @@ suppliersRouter.delete("/:id", async (req, res, next) => {
+       return res
+         .status(403)
+         .json({ error: "supplier-admins cannot delete tenants" });
++    const decision = authorize({ identity: req.identity, action: "destroy_request" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "destroy_request", reason: decision.reason });
+     const { rows: sup } = await query(
+       "SELECT id, name, vault_namespace, sla_tier FROM suppliers WHERE id = $1",
+       [req.params.id],
+diff --git a/arcanium/ui/app/layouts/default.vue b/arcanium/ui/app/layouts/default.vue
+index ebf2ab1..ba22ab3 100644
+--- a/arcanium/ui/app/layouts/default.vue
++++ b/arcanium/ui/app/layouts/default.vue
+@@ -453,7 +453,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+ }
+ .brand-icon { width: 22px; height: 22px; flex-shrink: 0; }
+ .brand-name {
+-  font-size: 15px;
++  font-size: 18px;
+   font-weight: 700;
+   letter-spacing: 0.04em;
+   color: var(--arc-text-primary);
+diff --git a/scenarios/11_security_foundation/test_negative_auth.sh b/scenarios/11_security_foundation/test_negative_auth.sh
+index 9282a42..9b55ef5 100755
+--- a/scenarios/11_security_foundation/test_negative_auth.sh
++++ b/scenarios/11_security_foundation/test_negative_auth.sh
+@@ -300,8 +300,76 @@ else
+   unk "wrong audience -> rejected — identity stack/node not reachable"
+ fi
+ 
++# ── Prompt 19 — close_authorization_gaps: the 6 previously-unwired routes ──
++# Fixture ids read live from the running stack rather than hardcoded —
++# resilient to reseeding, and fails UNKNOWN (not a false PASS) if the demo
++# data this suite depends on isn't present.
++COKE_SUPPLIER=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
++  -c "SELECT id FROM suppliers WHERE vault_namespace='suppliers/cocacola' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
++[ -z "${COKE_APP:-}" ] && COKE_APP=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
++  -c "SELECT a.id FROM applications a JOIN suppliers s ON s.id=a.supplier_id WHERE s.vault_namespace='suppliers/cocacola' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
++ANY_ACCESSOR=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
++  -c "SELECT accessor FROM approval_requests WHERE accessor IS NOT NULL AND accessor <> '' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
++
++# ── auditor PATCH/DELETE suppliers/:id -> 403 ───────────────────────────
++if session_ok "${JAR[auditor]}" && [ -n "$COKE_SUPPLIER" ]; then
++  S=$(status_of -X PATCH -b "${JAR[auditor]}" -H 'content-type: application/json' \
++    -d '{"sla_tier":"gold"}' "$API/api/v1/suppliers/$COKE_SUPPLIER")
++  [ "$S" = "403" ] && ok "auditor PATCH /suppliers/:id -> 403" || bad "auditor PATCH /suppliers/:id (got $S)"
++
++  S=$(status_of -X DELETE -b "${JAR[auditor]}" "$API/api/v1/suppliers/$COKE_SUPPLIER")
++  [ "$S" = "403" ] && ok "auditor DELETE /suppliers/:id -> 403" || bad "auditor DELETE /suppliers/:id (got $S)"
++else
++  unk "auditor PATCH /suppliers/:id — no session or no supplier fixture"
++  unk "auditor DELETE /suppliers/:id — no session or no supplier fixture"
++fi
++
++# ── auditor PATCH/DELETE applications/:id -> 403 ────────────────────────
++if session_ok "${JAR[auditor]}" && [ -n "$COKE_APP" ]; then
++  S=$(status_of -X PATCH -b "${JAR[auditor]}" -H 'content-type: application/json' \
++    -d '{"description":"auditor should not be able to set this"}' "$API/api/v1/applications/$COKE_APP")
++  [ "$S" = "403" ] && ok "auditor PATCH /applications/:id -> 403" || bad "auditor PATCH /applications/:id (got $S)"
++
++  S=$(status_of -X DELETE -b "${JAR[auditor]}" "$API/api/v1/applications/$COKE_APP")
++  [ "$S" = "403" ] && ok "auditor DELETE /applications/:id -> 403" || bad "auditor DELETE /applications/:id (got $S)"
++else
++  unk "auditor PATCH /applications/:id — no session or no application fixture"
++  unk "auditor DELETE /applications/:id — no session or no application fixture"
++fi
++
++# ── architect POST /approvals/:accessor/authorize -> 403 ────────────────
++# 'approve' is CISO-only in the matrix; architect must be denied even
++# against a real accessor (status doesn't matter — role is checked first).
++if session_ok "${JAR[architect]}" && [ -n "$ANY_ACCESSOR" ]; then
++  S=$(status_of -X POST -b "${JAR[architect]}" -H 'content-type: application/json' \
++    -d '{}' "$API/api/v1/approvals/$ANY_ACCESSOR/authorize")
++  [ "$S" = "403" ] && ok "architect POST /approvals/:accessor/authorize -> 403" ||
++    bad "architect POST /approvals/:accessor/authorize (got $S)"
++else
++  unk "architect POST /approvals/:accessor/authorize — no session or no approval-request fixture"
++fi
++
++# ── pepsi-admin cross-tenant PATCH/DELETE on cocacola's resources ───────
++if session_ok "${JAR[pepsi]}" && [ -n "$COKE_SUPPLIER" ]; then
++  S=$(status_of -X PATCH -b "${JAR[pepsi]}" -H 'content-type: application/json' \
++    -d '{"sla_tier":"gold"}' "$API/api/v1/suppliers/$COKE_SUPPLIER")
++  { [ "$S" = "403" ] || [ "$S" = "404" ]; } && ok "pepsi-admin PATCH cocacola's supplier -> $S" ||
++    bad "pepsi-admin PATCH cocacola's supplier (got $S)"
++else
++  unk "pepsi-admin PATCH cocacola's supplier — no session or no supplier fixture"
++fi
++
++if session_ok "${JAR[pepsi]}" && [ -n "$COKE_APP" ]; then
++  S=$(status_of -X DELETE -b "${JAR[pepsi]}" "$API/api/v1/applications/$COKE_APP")
++  { [ "$S" = "403" ] || [ "$S" = "404" ]; } && ok "pepsi-admin DELETE cocacola's application -> $S" ||
++    bad "pepsi-admin DELETE cocacola's application (got $S)"
++else
++  unk "pepsi-admin DELETE cocacola's application — no session or no application fixture"
++fi
++
+ rm -f "${JAR[@]}" 2>/dev/null
+ 
++TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo
+-echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of 13) =="
++echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+ [ "$FAIL" -eq 0 ]
+diff --git a/scripts/ui-rebuild.sh b/scripts/ui-rebuild.sh
+index 0d9b2da..86935b3 100755
+--- a/scripts/ui-rebuild.sh
++++ b/scripts/ui-rebuild.sh
+@@ -22,7 +22,7 @@ ARCHIVE=$(mktemp /tmp/arcanium-ui-build.XXXXXX)
+ trap 'rm -f "$ARCHIVE"' EXIT HUP INT TERM
+ tar -C "$UI_DIR" --exclude=node_modules --exclude=.nuxt --exclude=.output --exclude=test-results --exclude=playwright-report --exclude=.env -czf "$ARCHIVE" .
+ echo 'Building arcanium-ui:local…'
+-podman build --format docker --platform linux/amd64 -t arcanium-ui:local -f Containerfile - <"$ARCHIVE"
++podman build --format docker --platform "linux/$(uname -m | sed 's/x86_64/amd64/')" -t arcanium-ui:local -f Containerfile - <"$ARCHIVE"
+ echo 'Recreating arcanium-ui…'
+ "$SCRIPT_DIR/compose.sh" arcanium up -d --no-deps --force-recreate arcanium-ui
+ WAIT=0
+diff --git a/state/CURRENT b/state/CURRENT
+index 1722fab..47342a8 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-11_post-phase-18-identity-fixed
++state/baselines/2026-09-11_post-phase-19

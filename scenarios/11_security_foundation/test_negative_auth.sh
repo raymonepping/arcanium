@@ -300,8 +300,76 @@ else
   unk "wrong audience -> rejected — identity stack/node not reachable"
 fi
 
+# ── Prompt 19 — close_authorization_gaps: the 6 previously-unwired routes ──
+# Fixture ids read live from the running stack rather than hardcoded —
+# resilient to reseeding, and fails UNKNOWN (not a false PASS) if the demo
+# data this suite depends on isn't present.
+COKE_SUPPLIER=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
+  -c "SELECT id FROM suppliers WHERE vault_namespace='suppliers/cocacola' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+[ -z "${COKE_APP:-}" ] && COKE_APP=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
+  -c "SELECT a.id FROM applications a JOIN suppliers s ON s.id=a.supplier_id WHERE s.vault_namespace='suppliers/cocacola' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+ANY_ACCESSOR=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
+  -c "SELECT accessor FROM approval_requests WHERE accessor IS NOT NULL AND accessor <> '' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+
+# ── auditor PATCH/DELETE suppliers/:id -> 403 ───────────────────────────
+if session_ok "${JAR[auditor]}" && [ -n "$COKE_SUPPLIER" ]; then
+  S=$(status_of -X PATCH -b "${JAR[auditor]}" -H 'content-type: application/json' \
+    -d '{"sla_tier":"gold"}' "$API/api/v1/suppliers/$COKE_SUPPLIER")
+  [ "$S" = "403" ] && ok "auditor PATCH /suppliers/:id -> 403" || bad "auditor PATCH /suppliers/:id (got $S)"
+
+  S=$(status_of -X DELETE -b "${JAR[auditor]}" "$API/api/v1/suppliers/$COKE_SUPPLIER")
+  [ "$S" = "403" ] && ok "auditor DELETE /suppliers/:id -> 403" || bad "auditor DELETE /suppliers/:id (got $S)"
+else
+  unk "auditor PATCH /suppliers/:id — no session or no supplier fixture"
+  unk "auditor DELETE /suppliers/:id — no session or no supplier fixture"
+fi
+
+# ── auditor PATCH/DELETE applications/:id -> 403 ────────────────────────
+if session_ok "${JAR[auditor]}" && [ -n "$COKE_APP" ]; then
+  S=$(status_of -X PATCH -b "${JAR[auditor]}" -H 'content-type: application/json' \
+    -d '{"description":"auditor should not be able to set this"}' "$API/api/v1/applications/$COKE_APP")
+  [ "$S" = "403" ] && ok "auditor PATCH /applications/:id -> 403" || bad "auditor PATCH /applications/:id (got $S)"
+
+  S=$(status_of -X DELETE -b "${JAR[auditor]}" "$API/api/v1/applications/$COKE_APP")
+  [ "$S" = "403" ] && ok "auditor DELETE /applications/:id -> 403" || bad "auditor DELETE /applications/:id (got $S)"
+else
+  unk "auditor PATCH /applications/:id — no session or no application fixture"
+  unk "auditor DELETE /applications/:id — no session or no application fixture"
+fi
+
+# ── architect POST /approvals/:accessor/authorize -> 403 ────────────────
+# 'approve' is CISO-only in the matrix; architect must be denied even
+# against a real accessor (status doesn't matter — role is checked first).
+if session_ok "${JAR[architect]}" && [ -n "$ANY_ACCESSOR" ]; then
+  S=$(status_of -X POST -b "${JAR[architect]}" -H 'content-type: application/json' \
+    -d '{}' "$API/api/v1/approvals/$ANY_ACCESSOR/authorize")
+  [ "$S" = "403" ] && ok "architect POST /approvals/:accessor/authorize -> 403" ||
+    bad "architect POST /approvals/:accessor/authorize (got $S)"
+else
+  unk "architect POST /approvals/:accessor/authorize — no session or no approval-request fixture"
+fi
+
+# ── pepsi-admin cross-tenant PATCH/DELETE on cocacola's resources ───────
+if session_ok "${JAR[pepsi]}" && [ -n "$COKE_SUPPLIER" ]; then
+  S=$(status_of -X PATCH -b "${JAR[pepsi]}" -H 'content-type: application/json' \
+    -d '{"sla_tier":"gold"}' "$API/api/v1/suppliers/$COKE_SUPPLIER")
+  { [ "$S" = "403" ] || [ "$S" = "404" ]; } && ok "pepsi-admin PATCH cocacola's supplier -> $S" ||
+    bad "pepsi-admin PATCH cocacola's supplier (got $S)"
+else
+  unk "pepsi-admin PATCH cocacola's supplier — no session or no supplier fixture"
+fi
+
+if session_ok "${JAR[pepsi]}" && [ -n "$COKE_APP" ]; then
+  S=$(status_of -X DELETE -b "${JAR[pepsi]}" "$API/api/v1/applications/$COKE_APP")
+  { [ "$S" = "403" ] || [ "$S" = "404" ]; } && ok "pepsi-admin DELETE cocacola's application -> $S" ||
+    bad "pepsi-admin DELETE cocacola's application (got $S)"
+else
+  unk "pepsi-admin DELETE cocacola's application — no session or no application fixture"
+fi
+
 rm -f "${JAR[@]}" 2>/dev/null
 
+TOTAL=$((PASS + FAIL + UNKNOWN))
 echo
-echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of 13) =="
+echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
 [ "$FAIL" -eq 0 ]
