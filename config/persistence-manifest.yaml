@@ -1,0 +1,221 @@
+# config/persistence-manifest.yaml — Pre-24, Deliverable 1.
+#
+# Machine-readable inventory of every stateful component in the Arcanium
+# lab. Hand-authored from the actual compose/*/compose.yaml, terraform/,
+# and scripts/ files in this repository — not assumed from the pre-24
+# prompt's illustrative examples. docs/persistence.md is the narrative
+# companion to this file; if the two ever disagree, this file (checked
+# against the real compose.yaml sources) is authoritative.
+#
+# persistence_class:
+#   PERSIST   — runtime data; losing it changes the logical estate.
+#   REHYDRATE — configuration reconstructed from Git-controlled source.
+#   REISSUE   — credentials regenerated at runtime, never committed.
+#   EPHEMERAL — intentionally disposable; loss is expected and reported
+#               honestly (not silently masked as still-synchronized).
+
+components:
+  postgres:
+    runtime: compose/infra/compose.yaml (postgres:16-alpine)
+    persistence_class: PERSIST
+    authoritative_source: postgres-data named volume
+    persistent_paths_or_volumes:
+      - postgres-data:/var/lib/postgresql/data
+    bootstrap_source: arcanium/api/src/migrations.js (schema_migrations table, idempotent — logs "already applied" per file on every startup)
+    required_startup_inputs:
+      - POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB (.env — Vault's own DB admin connection)
+      - arcanium-api obtains its OWN short-lived credentials from Vault's Database secrets engine (terraform/vault-database), not these
+    secret_inputs: [POSTGRES_PASSWORD]
+    generated_outputs: []
+    restart_expectation: survives `podman compose stop/start` and container recreation (named volume)
+    clean_rebuild_expectation: destroyed only by `down -v` / `volume rm postgres-data` — never used by any Makefile target
+    verification: state/scripts/capture-state.sh row counts; scenarios read live application/desired-state/reconciliation/approval/evidence/session/control rows
+
+  vault_main_raft:
+    runtime: compose/vault/compose.yaml (vault-1, vault-2, vault-3)
+    persistence_class: PERSIST
+    authoritative_source: per-node named volumes
+    persistent_paths_or_volumes:
+      - vault-1-data:/vault/file, vault-1-audit:/vault/audit
+      - vault-2-data:/vault/file, vault-2-audit:/vault/audit
+      - vault-3-data:/vault/file, vault-3-audit:/vault/audit
+    bootstrap_source: scripts/vault-bootstrap.sh (init-if-not-already-initialized, unseal, join Raft) + terraform/vault-platform,vault-transit,vault-pki,vault-database,vault-workloads,vault-kmip,vault-suppliers (idempotent apply)
+    required_startup_inputs: [VAULT_LICENSE, VAULT_LICENSE_ENT]
+    secret_inputs: [.secrets/vault/cluster-init.json (root token + unseal material) — vault-bootstrap.sh refuses to reinitialize an already-initialized cluster]
+    generated_outputs: [.secrets/vault/cluster-init.json]
+    restart_expectation: survives normal restart and container recreation; Raft state, mounts, policies, AppRoles, Transit keys, PKI/KMIP config all remain — vault-bootstrap.sh detects "already initialized" and only unseals + verifies peers
+    clean_rebuild_expectation: destroyed only by `down -v` on compose/vault; a fresh volume requires a full re-init + full terraform re-apply (this is the actual disaster-recovery path Prompt 24 measures, not this prompt's scope)
+    verification: make vault-status; state/scripts/capture-state.sh cluster_id + mount/namespace/key metadata
+
+  vault_seal_provider_vault_s:
+    runtime: compose/vault/compose.yaml (vault-s)
+    persistence_class: PERSIST
+    authoritative_source: vault-s-data / vault-s-audit named volumes — a SEPARATE persistence domain from the main Raft cluster and from vault-hsm
+    persistent_paths_or_volumes: [vault-s-data:/vault/file, vault-s-audit:/vault/audit]
+    bootstrap_source: scripts/vault-bootstrap.sh
+    required_startup_inputs: [VAULT_LICENSE]
+    secret_inputs: [.secrets/vault/vault-s-init.json]
+    generated_outputs: [.secrets/vault/vault-s-init.json]
+    restart_expectation: survives normal restart/recreation independently of the main cluster
+    clean_rebuild_expectation: destroying vault-s's volume without also re-keying the main cluster's Transit seal stanza breaks unseal for vault-1/2/3 — treat as a coupled pair, not independent
+    verification: make vault-status
+
+  vault_hsm:
+    runtime: compose/hsm/compose.yaml (vault-hsm) — a THIRD, independent Vault instance; never conflate with the main cluster or vault-s
+    persistence_class: PERSIST
+    authoritative_source: vault-hsm-data / vault-hsm-audit named volumes
+    persistent_paths_or_volumes: [vault-hsm-data:/vault/file, vault-hsm-audit:/vault/audit]
+    bootstrap_source: make hsm-bootstrap + make hsm-init (refuses to re-init if .secrets/vault/vault-hsm-init.json already exists) + make hsm-managed-keys (scripts/vault-hsm-bootstrap.sh)
+    required_startup_inputs: [SoftHSM slot/PIN via scripts/hsm-resolve-slot.sh, VAULT_LICENSE_ENT]
+    secret_inputs: [.secrets/vault/vault-hsm-init.json, SOFTHSM_USER_PIN/SOFTHSM_SO_PIN]
+    generated_outputs: [.secrets/vault/vault-hsm-init.json]
+    restart_expectation: survives normal restart/recreation
+    clean_rebuild_expectation: destroying this volume invalidates the document-signing-key Managed Key registration on the SoftHSM side too — see softhsm below, treat as a coupled pair
+    verification: scenarios exercising document-signing (real sign + tampered-payload verify)
+
+  softhsm:
+    runtime: compose/hsm/compose.yaml (softhsm-server)
+    persistence_class: PERSIST
+    authoritative_source: softhsm-data named volume — holds the actual non-exportable RSA-4096 private key material
+    persistent_paths_or_volumes: [softhsm-data:/var/lib/softhsm]
+    bootstrap_source: scripts/hsm-setup.sh / scripts/hsm-resolve-slot.sh (token/slot creation), scripts/vault-hsm-bootstrap.sh (Managed Key + document-signing-key)
+    required_startup_inputs: [SOFTHSM_TOKEN_LABEL, SOFTHSM_SO_PIN, SOFTHSM_USER_PIN]
+    secret_inputs: [SOFTHSM_SO_PIN, SOFTHSM_USER_PIN]
+    generated_outputs: [.secrets/hsm/slot-id, .secrets/hsm/pkcs11-proxy.psk]
+    restart_expectation: survives normal restart/recreation — the private key is generated once inside SoftHSM and never leaves it
+    clean_rebuild_expectation: NEVER reconstructible from Git — a non-exportable key is gone permanently if this volume is destroyed; document-signing must be re-provisioned against a newly generated key (a different key, not a restored one)
+    verification: real sign + verify + tampered-payload-rejected in document-signing's own logs
+
+  openldap:
+    runtime: compose/identity/compose.yaml (openldap)
+    persistence_class: PERSIST (directory) + REHYDRATE (demo model)
+    authoritative_source: ldap-data / ldap-config named volumes; demo entries reproducible from compose/identity/ldap/bootstrap.ldif
+    persistent_paths_or_volumes: [ldap-data:/var/lib/ldap, ldap-config:/etc/ldap/slapd.d]
+    bootstrap_source: ldap-bootstrap one-shot container (profiles:[init]) running compose/identity/ldap/setup_ldap.sh against bootstrap.ldif
+    required_startup_inputs: [LDAP_ADMIN_PASSWORD]
+    secret_inputs: [LDAP_ADMIN_PASSWORD]
+    generated_outputs: []
+    restart_expectation: survives normal restart and container recreation (named volumes)
+    clean_rebuild_expectation: setup_ldap.sh must skip/tolerate already-existing entries on a fresh volume rehydration — verified in Deliverable 9, Scenario C
+    verification: LDAP bind + demo user/group count
+
+  keycloak:
+    runtime: compose/identity/compose.yaml (keycloak, start-dev)
+    persistence_class: PERSIST (Model A — chosen and implemented this prompt)
+    authoritative_source: keycloak-data named volume mounted at /opt/keycloak/data (start-dev's embedded H2 database lives under data/h2/ — mounting the parent directory persists the realm/client/federation/group-mapper state across container recreation)
+    persistent_paths_or_volumes: [keycloak-data:/opt/keycloak/data]
+    bootstrap_source: keycloak-bootstrap one-shot container (profiles:[init]) running compose/identity/keycloak/setup_keycloak.sh — idempotent ensure_realm/ensure_ldap_federation/ensure_client/ensure_group_claim_mapper functions, safe to rerun against an already-configured realm
+    required_startup_inputs: [KEYCLOAK_ADMIN, KEYCLOAK_ADMIN_PASSWORD, KC_HOSTNAME, LDAP_ADMIN_PASSWORD]
+    secret_inputs: [KEYCLOAK_ADMIN_PASSWORD, ARCANIUM_OIDC_CLIENT_SECRET (client secret, printed once by setup_keycloak.sh and pasted into .env; setup_keycloak.sh can also re-set it FROM .env on a rerun — see the script's ensure_client)]
+    generated_outputs: [OIDC client secret, printed to the bootstrap container's own logs]
+    restart_expectation: >-
+      Before this prompt, start-dev's H2 database had no volume — a container
+      recreation silently lost the realm/client/federation configuration.
+      Fixed: keycloak-data is now a named volume. Warm restart and container
+      recreation (Scenario A/B) both now retain realm state without rerunning
+      keycloak-bootstrap; rerunning it anyway is safe (idempotent).
+    clean_rebuild_expectation: keycloak-bootstrap (profiles:[init]) reconstructs the realm/client/federation/group-mapper from code on an empty volume — this is Scenario C's isolated cold-rehydration proof
+    verification: compose/identity/keycloak/verify_keycloak.sh + a real OIDC login (scripts/*, scenarios/11_security_foundation)
+
+  arcanium_postgres_data_detail:
+    note: see postgres above — application records, desired-state history, reconciliation runs/actions, approvals, evidence, sessions, and control assessments are all rows in this one database and all PERSIST together.
+
+  arcanium_api_ui_worker:
+    runtime: compose/arcanium/compose.yaml (arcanium-api, arcanium-ui, arcanium-worker, arcanium-api-dev)
+    persistence_class: REHYDRATE (binaries/config) + REISSUE (Vault identity material)
+    authoritative_source: container images built from Git-tracked source (arcanium/api, arcanium/ui) + arcanium/api/src/migrations.js
+    persistent_paths_or_volumes: []
+    bootstrap_source: make arcanium-build; migrations run idempotently on every arcanium-api startup
+    required_startup_inputs: [ARCANIUM_VAULT_ROLE_ID/SECRET_ID, POSTGRES_HOST/PORT/DB, OIDC config when ARCANIUM_AUTH_ENABLED=true]
+    secret_inputs: [ARCANIUM_VAULT_SECRET_ID, ARCANIUM_OIDC_CLIENT_SECRET]
+    generated_outputs: []
+    restart_expectation: fully replaceable — no local state; business state lives in postgres (above), Vault identity material comes from scripts/workload-credentials.sh (REISSUE)
+    clean_rebuild_expectation: rebuild + recreate is the normal, expected operation — arcanium-ui/api run stale builds after edits otherwise, rebuild both
+    verification: /health/ready, scenarios/13_fitness
+
+  arcanium_hsm_reader:
+    note: config/identity used by arcanium-api to read vault-hsm's document-signing-key metadata — see workload_credentials below (REISSUE), not a separate persistence domain.
+
+  document_signing_key_private_material:
+    note: see softhsm above — the actual key never leaves SoftHSM; arcanium-hsm-read and document-signing only ever hold AppRole credentials (REISSUE), never the key itself.
+
+  workload_credentials:
+    runtime: scripts/workload-credentials.sh (this prompt) + scenarios/01_onboarding/run.sh, scenarios/06_supplier_isolation/provision.sh, scenarios/05_approval/provision.sh (pre-existing)
+    persistence_class: REISSUE
+    authoritative_source: Vault AppRole roles (Terraform-owned — see docs/resource-ownership.md); RoleID is a stable identifier, SecretID is minted fresh on every issue call
+    persistent_paths_or_volumes: []
+    bootstrap_source: >-
+      scripts/workload-credentials.sh issue-all covers arcanium-api,
+      arcanium-hsm-read, document-signing (.env). make onboarding covers
+      payments-workload, pki-workload (.env.workloads). make supplier-provision
+      covers pepsi/cocacola app+approver roles (.env.workloads). make
+      approval-provision covers external-supplier/approver-1 (.env.workloads).
+    required_startup_inputs: [an authenticated Vault session for the target instance — scripts/workload-credentials.sh self-authenticates via .secrets/vault/*.json root tokens; the scenario scripts assume an ambient `vault login` session, tracked as a REQUIRES_SECRET_INPUT in docs/local-dependency-audit.md]
+    secret_inputs: [every *_SECRET_ID value]
+    generated_outputs: [.env entries (workload-credentials.sh), .env.workloads entries (the scenario scripts)]
+    restart_expectation: >-
+      NOT persisted by design — this is credential material. A container
+      recreated without its RoleID/SecretID file/env populated is the
+      documented "Missing required env var: VAULT_ROLE_ID" failure class this
+      prompt exists to close. Fix is reissue-before-start, not persistence.
+    clean_rebuild_expectation: issue-all / make onboarding / make supplier-provision / make approval-provision are all safe to rerun — each mints a fresh SecretID (secret_id_num_uses=0 on every role in this repo, so the previous SecretID is not invalidated by a reissue, but the new one is what workloads should use going forward)
+    verification: scripts/workload-credentials.sh verify-all (a real, disposable auth/approle/login per identity)
+
+  localstack_kms_sim:
+    runtime: compose/kms-sim/compose.yaml (localstack, KMS service only)
+    persistence_class: EPHEMERAL
+    authoritative_source: >-
+      none — no named volume, deliberate. compose/kms-sim/README.md already
+      documents this: "when this stack is down, the distribution status
+      shows unreachable, not a fabricated success."
+    persistent_paths_or_volumes: []
+    bootstrap_source: make kms-sim-up + make tf-keymgmt (kmse_emulated=true when localstack is healthy)
+    required_startup_inputs: []
+    secret_inputs: []
+    generated_outputs: []
+    restart_expectation: >-
+      State intentionally does NOT survive restart/recreation. Vault's Key
+      Management secrets engine metadata (main cluster, PERSIST) can outlive
+      a recreated LocalStack container — Arcanium's own distribution-status
+      check already reports the mismatch as "unreachable" rather than stale
+      "synced", which is the honest behavior this prompt requires.
+    clean_rebuild_expectation: recreate + rerun make tf-keymgmt / scenarios/10_key_distribution
+    verification: GET /api/v1/keymgmt shows emulated:true and unreachable when localstack is down
+
+  observability:
+    runtime: compose/observability/compose.yaml (prometheus, grafana, otel-collector)
+    persistence_class: REHYDRATE (config/dashboards) + PERSIST (time-series, optional)
+    authoritative_source: >-
+      prometheus.yml, grafana/provisioning, grafana/dashboards are
+      Git-tracked and mounted read-only — dashboards are reconstructed from
+      source, never a manual GUI edit. prometheus-data / grafana-data are
+      named volumes for the metric history itself.
+    persistent_paths_or_volumes: [prometheus-data:/prometheus, grafana-data:/var/lib/grafana]
+    bootstrap_source: make observability-up
+    required_startup_inputs: []
+    secret_inputs: [./prometheus/vault-token (Vault-side read token for metrics scraping)]
+    generated_outputs: []
+    restart_expectation: dashboards/config always reconstructed from Git on start (read-only mounts); metric history in the named volumes survives normal restart/recreation, is not required for any functional claim in this repo, and is fine to lose
+    clean_rebuild_expectation: n/a — losing prometheus-data/grafana-data loses history only, never configuration
+    verification: make observability-up + Grafana reachable
+
+  workloads_generic:
+    runtime: compose/workloads/compose.yaml (payments-api, pki-client, kmip-client, document-signing, external-supplier)
+    persistence_class: REHYDRATE (binaries/config) + REISSUE (credentials, see workload_credentials)
+    authoritative_source: container images built from Git-tracked source
+    persistent_paths_or_volumes: []
+    bootstrap_source: make workloads-build; make workloads-up
+    required_startup_inputs: [per-workload RoleID/SecretID — see workload_credentials]
+    secret_inputs: [per-workload *_SECRET_ID]
+    generated_outputs: []
+    restart_expectation: >-
+      Fully stateless and replaceable — but only starts cleanly when its
+      credential material was issued BEFORE container creation (env vars
+      are fixed at creation time in Podman/Docker, not re-read on a plain
+      restart). Confirmed live during this prompt: three workload
+      containers (payments-api, pki-client, document-signing) had been
+      created before their RoleID/SecretID existed in .env/.env.workloads
+      and crash-looped with "Missing required env var: VAULT_ROLE_ID" until
+      recreated (not merely restarted) after credentials were issued.
+    clean_rebuild_expectation: make workloads-down && make workloads-up after credentials are current
+    verification: healthcheck + each workload's own log line proving a real Vault operation (encrypt, cert issue, sign+verify, KMIP create/activate/revoke/destroy)
