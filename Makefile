@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 .DEFAULT_GOAL := help
 
-STACKS     := vault infra hsm arcanium observability workloads kms-sim
+STACKS     := vault infra hsm arcanium observability workloads kms-sim identity
 PROJECT_ROOT := $(shell pwd)
 
 .PHONY: help check status storage ps images volumes compose-config \
@@ -11,7 +11,8 @@ PROJECT_ROOT := $(shell pwd)
 	tf-kmip kmip-provision \
 	tf-suppliers supplier-provision supplier-test \
 	docsign-build cli-install \
-	approval-provision external-supplier-build
+	approval-provision external-supplier-build \
+	identity-bootstrap scenario-security-foundation
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Arcanium (Podman)\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -329,3 +330,16 @@ maturity-report: ## Open the Arcanium maturity report in the browser
 scenario-automation-depth: ## Prompt 17 — Prove rotation-from-automation EGP blocks human tokens
 	@chmod +x scenarios/09_sentinel/test_automation_depth.sh
 	@./scenarios/09_sentinel/test_automation_depth.sh
+
+# ── Prompt 18 — Security Foundation (OpenLDAP + Keycloak OIDC) ─────────────
+.PHONY: identity-bootstrap scenario-security-foundation
+
+identity-bootstrap: identity-up ## Load the LDAP fixture and configure the Keycloak realm (one-shot, idempotent)
+	@./scripts/compose.sh identity --profile init run --rm ldap-bootstrap
+	@./scripts/compose.sh identity --profile init run --rm keycloak-bootstrap
+	@chmod +x compose/identity/keycloak/verify_keycloak.sh
+	@./compose/identity/keycloak/verify_keycloak.sh
+
+scenario-security-foundation: ## Prompt 18 — hostile negative-auth suite (401/403/forged-session/OIDC-callback checks)
+	@chmod +x scenarios/11_security_foundation/test_negative_auth.sh
+	@./scenarios/11_security_foundation/test_negative_auth.sh

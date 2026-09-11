@@ -9,68 +9,57 @@
         </svg>
         <span>Arcanium</span>
       </div>
-      <p class="login-sub">Cryptographic control plane · sign in</p>
+      <p class="login-sub">Enterprise Cryptographic Control Plane</p>
 
-      <form @submit.prevent="submit">
-        <label class="form-field">Username
-          <input v-model.trim="username" autocomplete="username" required autofocus />
-        </label>
-        <label class="form-field">Password
-          <input v-model="password" type="password" autocomplete="current-password" required />
-        </label>
-        <p v-if="error" class="inline-notice error">{{ error }}</p>
-        <button class="primary-button" :disabled="busy" style="width:100%;justify-content:center">
-          {{ busy ? 'Signing in…' : 'Sign in' }}
-        </button>
-      </form>
+      <p v-if="error" class="inline-notice error">{{ error }}</p>
 
-      <p class="login-hint">
-        Demo personas: <code>ciso</code> · <code>architect</code> · <code>operator</code> · <code>auditor</code>
-      </p>
+      <button class="primary-button" :disabled="busy" style="width:100%;justify-content:center" @click="signIn">
+        {{ busy ? 'Redirecting…' : 'Sign in' }}
+      </button>
+
       <p class="login-note">
-        Arcanium sign-in gates the management experience. Cross-tenant isolation is
-        enforced by Vault Enterprise namespaces, not by this view.
+        Sign-in is handled by your organisation's identity provider (OIDC, LDAP-backed).
+        Arcanium never sees your password — only a signed session once your identity
+        provider confirms who you are. Cross-tenant isolation is enforced by Vault
+        Enterprise namespaces, not by this view.
       </p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useArcaniumApi } from '~/composables/useArcaniumApi'
-import { apiErrorMessage, apiErrorStatus } from '~/utils/apiError'
 
 definePageMeta({ layout: false })
 useHead({ title: 'Sign in' })
 
 const route = useRoute()
 const router = useRouter()
-const { login, me } = useArcaniumApi()
+const { me } = useArcaniumApi()
 
-const username = ref('')
-const password = ref('')
 const busy = ref(false)
 const error = ref('')
 
 onMounted(async () => {
+  if (route.query.error) {
+    error.value = 'Sign-in was rejected. Please try again.'
+  }
   try {
     const m = await me()
     if (m.enabled === false || m.user) router.replace(String(route.query.next || '/'))
   } catch { /* not signed in */ }
 })
 
-async function submit() {
-  if (busy.value) return
-  busy.value = true; error.value = ''
-  try {
-    await login(username.value, password.value)
-    router.replace(String(route.query.next || '/'))
-  } catch (e: unknown) {
-    error.value = apiErrorStatus(e) === 401 ? 'Invalid credentials.' : apiErrorMessage(e, 'Sign-in failed.')
-  } finally {
-    busy.value = false
-  }
+// Prompt 18 — this is a full-page navigation, not a fetch/XHR call. The
+// browser needs to actually leave localhost:3000 and land on Keycloak's
+// authorization endpoint; a fetch() would just have Nuxt's server follow
+// the redirect itself and hand back Keycloak's login-page HTML as if it
+// were API data. See ui/server/routes/gateway/api/v1/auth/login.get.ts.
+function signIn() {
+  busy.value = true
+  const next = typeof route.query.next === 'string' ? route.query.next : '/'
+  window.location.href = `/gateway/api/v1/auth/login?next=${encodeURIComponent(next)}`
 }
 </script>
 
@@ -90,9 +79,6 @@ async function submit() {
 .login-brand { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 750; color: var(--arc-text-primary); }
 .brand-icon { width: 26px; height: 26px; }
 .login-sub { font-size: 12px; color: var(--arc-text-muted); margin: 6px 0 22px; text-transform: uppercase; letter-spacing: 0.08em; }
-form { display: flex; flex-direction: column; gap: 4px; }
-.form-field input { width: 100%; }
-.login-hint { font-size: 11px; color: var(--arc-text-muted); margin: 18px 0 0; }
-.login-hint code { color: var(--arc-action-bright); }
-.login-note { font-size: 10.5px; color: var(--arc-text-dim); line-height: 1.5; margin: 12px 0 0; }
+.login-note { font-size: 10.5px; color: var(--arc-text-dim); line-height: 1.5; margin: 16px 0 0; }
+.inline-notice.error { margin-bottom: 12px; }
 </style>

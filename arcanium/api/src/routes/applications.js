@@ -5,6 +5,7 @@ import { query } from "../db.js";
 import { createJob, runOrQueue } from "../provisioner/steps.js";
 import { provisionApplication } from "../provisioner/application.js";
 import { tenantScope } from "../auth/index.js";
+import { authorize } from "../auth/authorize.js";
 
 export const applicationsRouter = Router();
 
@@ -47,6 +48,13 @@ applicationsRouter.get("/", async (req, res, next) => {
 // POST /api/v1/applications
 applicationsRouter.post("/", async (req, res, next) => {
   try {
+    const decision = authorize({ identity: req.identity, action: "provision" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
     const { name, description, supplier_id } = req.body ?? {};
     if (!name)
       return res.status(400).json({ error: "name is required", field: "name" });
@@ -89,6 +97,14 @@ applicationsRouter.get("/:id", async (req, res, next) => {
       [req.params.id],
     );
     if (!apps.length) return next(notFound());
+
+    // Prompt 18 — this route had no tenant-scope check at all: any
+    // authenticated supplier-admin could read any application by id,
+    // cross-tenant. GET / already scoped correctly; this did not.
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(apps[0].supplier_id)) {
+      return next(notFound());
+    }
 
     const { rows: profiles } = await query(
       "SELECT id, type, vault_path, created_at FROM crypto_profiles WHERE application_id = $1 ORDER BY created_at",
@@ -156,6 +172,16 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
     if (scope.scoped && !scope.supplierIds.includes(app.supplier_id)) {
       return res.status(403).json({ error: "not your tenant's application" });
     }
+    // Role check (Prompt 18) — the tenantScope check above only enforces the
+    // TENANT boundary for supplier-admins; it says nothing about whether the
+    // caller's ROLE may provision at all (ciso/auditor previously could).
+    const decision = authorize({ identity: req.identity, action: "provision" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
 
     const body = req.body ?? {};
     const params = {

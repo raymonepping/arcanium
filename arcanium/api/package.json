@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "express": "^5.0.1",
+    "openid-client": "^6.8.8",
     "pg": "^8.13.3"
   }
 }

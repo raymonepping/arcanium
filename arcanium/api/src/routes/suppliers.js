@@ -11,6 +11,7 @@ import {
 } from "../provisioner/supplier.js";
 import { tenantScope } from "../auth/index.js";
 import { checkIsolation } from "../suppliers/isolation.js";
+import { authorize } from "../auth/authorize.js";
 
 export const suppliersRouter = Router();
 
@@ -70,6 +71,15 @@ suppliersRouter.post("/", async (req, res, next) => {
       return res
         .status(403)
         .json({ error: "supplier-admins cannot create tenants" });
+    // Role check (Prompt 18) — the tenantScope check above only ever blocked
+    // supplier-admins; ciso/auditor could previously create tenants too.
+    const decision = authorize({ identity: req.identity, action: "provision" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
     const { name, vault_namespace, sla_tier } = supplierFields(req.body);
     const { rows } = await query(
       `INSERT INTO suppliers (name, vault_namespace, sla_tier)

@@ -1,0 +1,117 @@
+# Prompt 18 — Arcanium demo identity fixture.
+#
+# Fresh, Arcanium-specific — NOT copied from workshop/zero_trust's
+# bootstrap.ldif (which carries real personal names). Every person entry
+# below is a fictional demo persona, and every password is POC-only,
+# matching the disclosure convention scripts/vault-seed-users.sh already
+# uses for the (now-retired) Vault userpass demo accounts.
+#
+# Structure: ou=people + ou=groups under dc=arcanium,dc=local. Groups use
+# groupOfNames (Keycloak's LDAP group mapper reads the `member` attribute).
+# arcanium-supplier-admin is a role group, separate from the per-tenant
+# arcanium-tenant-* scope groups (input/36 — role and tenant scope are two
+# independent axes, not inferred from each other).
+
+dn: ou=people,dc=arcanium,dc=local
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=arcanium,dc=local
+objectClass: organizationalUnit
+ou: groups
+
+# ── People ───────────────────────────────────────────────────────────────
+
+dn: uid=demo-ciso,ou=people,dc=arcanium,dc=local
+objectClass: inetOrgPerson
+uid: demo-ciso
+cn: Demo Ciso
+sn: Ciso
+givenName: Demo
+mail: demo-ciso@arcanium.local
+userPassword: Arcanium-ciso-2026
+
+dn: uid=demo-architect,ou=people,dc=arcanium,dc=local
+objectClass: inetOrgPerson
+uid: demo-architect
+cn: Demo Architect
+sn: Architect
+givenName: Demo
+mail: demo-architect@arcanium.local
+userPassword: Arcanium-arch-2026
+
+dn: uid=demo-operator,ou=people,dc=arcanium,dc=local
+objectClass: inetOrgPerson
+uid: demo-operator
+cn: Demo Operator
+sn: Operator
+givenName: Demo
+mail: demo-operator@arcanium.local
+userPassword: Arcanium-ops-2026
+
+dn: uid=demo-auditor,ou=people,dc=arcanium,dc=local
+objectClass: inetOrgPerson
+uid: demo-auditor
+cn: Demo Auditor
+sn: Auditor
+givenName: Demo
+mail: demo-auditor@arcanium.local
+userPassword: Arcanium-audit-2026
+
+dn: uid=demo-pepsi,ou=people,dc=arcanium,dc=local
+objectClass: inetOrgPerson
+uid: demo-pepsi
+cn: Demo Pepsi Admin
+sn: Admin
+givenName: Demo
+mail: demo-pepsi@arcanium.local
+userPassword: Arcanium-pepsi-2026
+
+dn: uid=demo-cocacola,ou=people,dc=arcanium,dc=local
+objectClass: inetOrgPerson
+uid: demo-cocacola
+cn: Demo Cocacola Admin
+sn: Admin
+givenName: Demo
+mail: demo-cocacola@arcanium.local
+userPassword: Arcanium-cocacola-2026
+
+# ── Groups ───────────────────────────────────────────────────────────────
+
+dn: cn=arcanium-ciso,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-ciso
+member: uid=demo-ciso,ou=people,dc=arcanium,dc=local
+
+dn: cn=arcanium-architect,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-architect
+member: uid=demo-architect,ou=people,dc=arcanium,dc=local
+
+dn: cn=arcanium-operator,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-operator
+member: uid=demo-operator,ou=people,dc=arcanium,dc=local
+
+dn: cn=arcanium-auditor,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-auditor
+member: uid=demo-auditor,ou=people,dc=arcanium,dc=local
+
+# Role group — separate axis from the tenant-scope groups below.
+dn: cn=arcanium-supplier-admin,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-supplier-admin
+member: uid=demo-pepsi,ou=people,dc=arcanium,dc=local
+member: uid=demo-cocacola,ou=people,dc=arcanium,dc=local
+
+# Tenant-scope groups — which tenant, independent of role.
+dn: cn=arcanium-tenant-pepsi,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-tenant-pepsi
+member: uid=demo-pepsi,ou=people,dc=arcanium,dc=local
+
+dn: cn=arcanium-tenant-cocacola,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-tenant-cocacola
+member: uid=demo-cocacola,ou=people,dc=arcanium,dc=local

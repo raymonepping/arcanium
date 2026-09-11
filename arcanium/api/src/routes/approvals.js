@@ -9,6 +9,7 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { tenantScope } from "../auth/index.js";
+import { authorize } from "../auth/authorize.js";
 
 export const approvalsRouter = Router();
 
@@ -125,6 +126,13 @@ approvalsRouter.post("/", async (req, res, next) => {
 approvalsRouter.post("/:id/approve", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
+    const decision = authorize({ identity: req.identity, action: "approve" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "approve",
+        reason: decision.reason,
+      });
 
     // Fetch the pending approval
     const { rows } = await query(
@@ -164,6 +172,13 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
 approvalsRouter.post("/:id/deny", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
+    const decision = authorize({ identity: req.identity, action: "approve" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "approve",
+        reason: decision.reason,
+      });
     const { reason } = req.body ?? {};
 
     const { rows } = await query(

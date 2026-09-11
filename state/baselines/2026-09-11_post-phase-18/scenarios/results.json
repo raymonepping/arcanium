@@ -1,0 +1,39 @@
+{
+  "results": [
+    {
+      "check": "supplier_isolation",
+      "result": "PASS",
+      "method": "live API check, non-mutating"
+    },
+    {
+      "check": "onboarding",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "transit",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "pki",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "kmip",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "managed_key",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "sentinel_negative",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    }
+  ]
+}

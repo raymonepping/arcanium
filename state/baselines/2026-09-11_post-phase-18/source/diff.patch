@@ -1,0 +1,1275 @@
+diff --git a/.env.example b/.env.example
+index 11e1ad4..5624e7e 100644
+--- a/.env.example
++++ b/.env.example
+@@ -61,3 +61,30 @@ APPROVER_VAULT_SECRET_ID=<secret-id-generated-by-provision>
+ VAULT_HSM_ADDR=https://vault-hsm:8200
+ # ARCANIUM_HSM_ROLE_ID=<arcanium-hsm-read role_id>
+ # ARCANIUM_HSM_SECRET_ID=<arcanium-hsm-read secret_id>
++
++# ==============================================================================
++# Identity stack (Prompt 18) — OpenLDAP (identity store) + Keycloak (OIDC
++# broker). Arcanium's Express API is the confidential OIDC client; the
++# browser never sees an OIDC token, a Vault token, or an LDAP credential.
++# ==============================================================================
++LDAP_ADMIN_PASSWORD=change-me-before-use
++KEYCLOAK_ADMIN=arcanium-admin
++KEYCLOAK_ADMIN_PASSWORD=change-me-before-use
++# Keycloak's browser-facing hostname:port (the published port from
++# compose/identity/compose.yaml) — stamped into `iss` and every browser-facing URL.
++KC_HOSTNAME=localhost:8083
++
++# The browser-visible origin the Nuxt gateway serves from.
++ARCANIUM_BASE_URL=http://localhost:3000
++# Must equal http://<KC_HOSTNAME>/realms/arcanium — used for issuer validation.
++ARCANIUM_OIDC_ISSUER=http://localhost:8083/realms/arcanium
++# Container-network address — Express uses this for every server-to-server
++# call (token exchange, JWKS, userinfo, end-session). Never used by the browser.
++ARCANIUM_OIDC_INTERNAL_URL=http://keycloak:8080
++# Only used to build the browser-facing authorization-endpoint redirect.
++ARCANIUM_OIDC_PUBLIC_URL=http://localhost:8083
++ARCANIUM_OIDC_CLIENT_ID=arcanium-api
++# Must exactly match the redirect URI registered on the Keycloak client.
++ARCANIUM_API_CALLBACK_URL=http://localhost:3000/gateway/api/v1/auth/callback
++# Printed once by compose/identity/keycloak/setup_keycloak.sh — paste it here.
++ARCANIUM_OIDC_CLIENT_SECRET=<client-secret-from-setup_keycloak.sh-output>
+diff --git a/Makefile b/Makefile
+index bbcc576..3b524f3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2,7 +2,7 @@ SHELL := /bin/sh
+ 
+ .DEFAULT_GOAL := help
+ 
+-STACKS     := vault infra hsm arcanium observability workloads kms-sim
++STACKS     := vault infra hsm arcanium observability workloads kms-sim identity
+ PROJECT_ROOT := $(shell pwd)
+ 
+ .PHONY: help check status storage ps images volumes compose-config \
+@@ -11,7 +11,8 @@ PROJECT_ROOT := $(shell pwd)
+ 	tf-kmip kmip-provision \
+ 	tf-suppliers supplier-provision supplier-test \
+ 	docsign-build cli-install \
+-	approval-provision external-supplier-build
++	approval-provision external-supplier-build \
++	identity-bootstrap scenario-security-foundation
+ 
+ help: ## Show available commands
+ 	@awk 'BEGIN {FS = ":.*## "; printf "Arcanium (Podman)\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+@@ -329,3 +330,16 @@ maturity-report: ## Open the Arcanium maturity report in the browser
+ scenario-automation-depth: ## Prompt 17 — Prove rotation-from-automation EGP blocks human tokens
+ 	@chmod +x scenarios/09_sentinel/test_automation_depth.sh
+ 	@./scenarios/09_sentinel/test_automation_depth.sh
++
++# ── Prompt 18 — Security Foundation (OpenLDAP + Keycloak OIDC) ─────────────
++.PHONY: identity-bootstrap scenario-security-foundation
++
++identity-bootstrap: identity-up ## Load the LDAP fixture and configure the Keycloak realm (one-shot, idempotent)
++	@./scripts/compose.sh identity --profile init run --rm ldap-bootstrap
++	@./scripts/compose.sh identity --profile init run --rm keycloak-bootstrap
++	@chmod +x compose/identity/keycloak/verify_keycloak.sh
++	@./compose/identity/keycloak/verify_keycloak.sh
++
++scenario-security-foundation: ## Prompt 18 — hostile negative-auth suite (401/403/forged-session/OIDC-callback checks)
++	@chmod +x scenarios/11_security_foundation/test_negative_auth.sh
++	@./scenarios/11_security_foundation/test_negative_auth.sh
+diff --git a/arcanium/api/package-lock.json b/arcanium/api/package-lock.json
+index 287e924..ea762fb 100644
+--- a/arcanium/api/package-lock.json
++++ b/arcanium/api/package-lock.json
+@@ -9,6 +9,7 @@
+       "version": "1.0.0",
+       "dependencies": {
+         "express": "^5.0.1",
++        "openid-client": "^6.8.8",
+         "pg": "^8.13.3"
+       }
+     },
+@@ -461,6 +462,15 @@
+       "integrity": "sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==",
+       "license": "MIT"
+     },
++    "node_modules/jose": {
++      "version": "6.2.12",
++      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.12.tgz",
++      "integrity": "sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/panva"
++      }
++    },
+     "node_modules/math-intrinsics": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
+@@ -555,6 +565,15 @@
+         "url": "https://opencollective.com/express"
+       }
+     },
++    "node_modules/oauth4webapi": {
++      "version": "3.8.8",
++      "resolved": "https://registry.npmjs.org/oauth4webapi/-/oauth4webapi-3.8.8.tgz",
++      "integrity": "sha512-8N28E+a/oxfXWBgOMt+ZP/JUf/XR+IFbvkAEPP3gznXOMv9BpAAwiIj0TFNz3tGTPc0ZQ8zmWBNgN1nAys0gng==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/panva"
++      }
++    },
+     "node_modules/object-inspect": {
+       "version": "1.13.4",
+       "resolved": "https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz",
+@@ -588,6 +607,19 @@
+         "wrappy": "1"
+       }
+     },
++    "node_modules/openid-client": {
++      "version": "6.8.8",
++      "resolved": "https://registry.npmjs.org/openid-client/-/openid-client-6.8.8.tgz",
++      "integrity": "sha512-ZsucJA5Ad04Uv7YN4ql+s4GXNmb9uAYQwyJTsJx7CH/MX3JZioLE2pVKi1SC+YrbSLA4Px3Gi30dMjgOZtb6pA==",
++      "license": "MIT",
++      "dependencies": {
++        "jose": "^6.2.12",
++        "oauth4webapi": "^3.8.8"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/panva"
++      }
++    },
+     "node_modules/parseurl": {
+       "version": "1.3.3",
+       "resolved": "https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz",
+diff --git a/arcanium/api/package.json b/arcanium/api/package.json
+index d9333e6..b8d64b8 100644
+--- a/arcanium/api/package.json
++++ b/arcanium/api/package.json
+@@ -11,6 +11,7 @@
+   },
+   "dependencies": {
+     "express": "^5.0.1",
++    "openid-client": "^6.8.8",
+     "pg": "^8.13.3"
+   }
+ }
+diff --git a/arcanium/api/src/auth/index.js b/arcanium/api/src/auth/index.js
+index 7f5f67c..393f30d 100644
+--- a/arcanium/api/src/auth/index.js
++++ b/arcanium/api/src/auth/index.js
+@@ -1,18 +1,33 @@
+-// auth/index.js — Prompt 14.5 — human authentication (Vault userpass → session).
+-// Disabled unless ARCANIUM_AUTH_ENABLED=true.
++// auth/index.js — Prompt 18 — OIDC (Keycloak, LDAP-federated) human
++// authentication → server-side session. Replaces Prompt 14.5's Vault
++// userpass login entirely (input/35/36: OpenLDAP is an identity store, never
++// a direct AuthN target for Arcanium; Vault's own userpass/AppRole AuthN for
++// workloads is untouched — this only changes how HUMANS sign in).
++//
++// Express is the confidential OIDC client end-to-end (input/36) — the
++// browser only ever receives an opaque Arcanium session cookie. No OIDC
++// token, Vault token, or LDAP credential ever reaches it.
+ 
+ import { Router } from "express";
+ import { randomBytes } from "node:crypto";
+ import config from "../config.js";
+ import { query } from "../db.js";
+-import { vaultRequest } from "../vault.js";
++import {
++  buildAuthorizationRedirect,
++  setPendingCookie,
++  clearPendingCookie,
++  exchangeCode,
++  buildLogoutUrl,
++} from "./oidc.js";
++import { groupsToIdentity } from "./authorize.js";
+ 
+ export const authRouter = Router();
+ 
+ const COOKIE = "arc_session";
+-const TTL_S = 3600; // 1h
++const TTL_S = 3600; // 1h absolute
++const IDLE_TIMEOUT_S = 1800; // 30m idle
+ 
+-// No cookie-parser dependency — parse/set the one cookie we use by hand.
++// No cookie-parser dependency — parse/set the cookies we use by hand.
+ function readCookie(req) {
+   const raw = req.headers.cookie || "";
+   for (const part of raw.split(";")) {
+@@ -21,60 +36,93 @@ function readCookie(req) {
+   }
+   return null;
+ }
++// Secure is safe here even over plain HTTP: this stack is exclusively
++// accessed via http://localhost / http://127.0.0.1, both of which browsers
++// treat as "potentially trustworthy" secure-context origins for cookie
++// purposes regardless of scheme (W3C Secure Contexts). SameSite=Lax (not
++// Strict) is required for the callback cookie's round trip; kept the same
++// here for consistency and because it does not weaken anything on a
++// same-origin-only frontend.
+ function setCookie(res, id) {
+   res.setHeader(
+     "Set-Cookie",
+-    `${COOKIE}=${encodeURIComponent(id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${TTL_S}`,
++    `${COOKIE}=${encodeURIComponent(id)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${TTL_S}`,
+   );
+ }
+ function clearCookie(res) {
+   res.setHeader(
+     "Set-Cookie",
+-    `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
++    `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`,
+   );
+ }
+ 
+-// POST /api/v1/auth/login  { username, password }
+-authRouter.post("/login", async (req, res, next) => {
++// GET /api/v1/auth/login — the browser navigates here directly (not fetch).
++// Builds the Keycloak authorization URL (state/nonce/PKCE all freshly
++// random per input/35's checklist) and redirects.
++authRouter.get("/login", async (req, res, next) => {
+   try {
+-    if (!config.auth.enabled)
++    if (!config.auth.enabled) {
+       return res
+         .status(400)
+         .json({ error: "authentication is disabled on this deployment" });
+-    const { username, password } = req.body ?? {};
+-    if (!username || !password)
+-      return res.status(400).json({ error: "username and password required" });
+-
+-    // Vault is authoritative for the credential.
+-    try {
+-      await vaultRequest(
+-        "POST",
+-        `auth/userpass/login/${encodeURIComponent(username)}`,
+-        {
+-          password,
+-        },
+-      );
+-    } catch {
+-      return res.status(401).json({ error: "invalid credentials" });
+     }
++    const returnTo =
++      typeof req.query.next === "string" && req.query.next.startsWith("/")
++        ? req.query.next
++        : "/";
++    const { url, pending } = await buildAuthorizationRedirect(returnTo);
++    setPendingCookie(res, pending);
++    res.redirect(302, url);
++  } catch (err) {
++    next(err);
++  }
++});
+ 
+-    const persona = config.auth.personaByUser[username] ?? "operator";
+-    // supplier-admin personas are scoped to their tenant namespace.
+-    const namespaces =
+-      persona === "supplier-admin"
+-        ? [`suppliers/${username.replace(/-admin$/, "")}`]
+-        : [];
++// GET /api/v1/auth/callback — Keycloak redirects the browser's top-level
++// navigation here. Validates issuer, state, nonce, PKCE, signature,
++// audience and expiry (all enforced inside oidc.exchangeCode via
++// openid-client — this handler does not re-implement any of that), then
++// creates the Arcanium session and clears the pending-flow cookie.
++authRouter.get("/callback", async (req, res, next) => {
++  clearPendingCookie(res);
++  if (!config.auth.enabled) {
++    return res
++      .status(400)
++      .json({ error: "authentication is disabled on this deployment" });
++  }
++  try {
++    const { claims, returnTo } = await exchangeCode(req);
++    const groups = Array.isArray(claims.groups) ? claims.groups : [];
++    const { roles, tenantScopes, primaryRole } = groupsToIdentity(groups);
+ 
++    if (!primaryRole) {
++      // A real, authenticated Keycloak identity with no recognised Arcanium
++      // group is rejected, not silently defaulted to some role — deny by
++      // default applies at the identity-mapping boundary too.
++      return res.status(403).json({
++        error: "authenticated but not authorized: no Arcanium role group",
++      });
++    }
++
++    const username = claims.preferred_username || claims.sub;
+     const id = randomBytes(32).toString("hex");
+     await query(
+-      `INSERT INTO sessions (id, username, persona, namespaces, expires_at)
+-       VALUES ($1,$2,$3,$4, now() + interval '1 hour')`,
+-      [id, username, persona, namespaces],
++      `INSERT INTO sessions (id, username, persona, namespaces, groups, expires_at, last_seen_at)
++       VALUES ($1,$2,$3,$4,$5, now() + interval '1 hour', now())`,
++      [id, username, primaryRole, tenantScopes, groups],
+     );
+     setCookie(res, id);
+-    res.json({ user: username, persona, namespaces });
++    res.redirect(302, returnTo);
+   } catch (err) {
+-    next(err);
++    // Every rejection path (invalid state, wrong issuer, wrong audience,
++    // expired/missing pending flow, signature failure) lands here as a
++    // real, non-200 response — "rejected" per input/35's exit criteria,
++    // not a silently-created session.
++    const reason =
++      err?.code === "NO_PENDING"
++        ? "no pending sign-in (cookie missing or expired) — start again"
++        : err?.message || "OIDC callback validation failed";
++    res.status(401).json({ error: "sign-in rejected", reason });
+   }
+ });
+ 
+@@ -94,8 +142,8 @@ authRouter.get("/me", async (req, res, next) => {
+         .status(401)
+         .json({ enabled: true, error: "not authenticated" });
+     const { rows } = await query(
+-      `SELECT username, persona, namespaces FROM sessions
+-       WHERE id = $1 AND expires_at > now()`,
++      `SELECT username, persona, namespaces, groups FROM sessions
++       WHERE id = $1 AND expires_at > now() AND last_seen_at > now() - interval '${IDLE_TIMEOUT_S} seconds'`,
+       [id],
+     );
+     if (!rows.length)
+@@ -105,6 +153,7 @@ authRouter.get("/me", async (req, res, next) => {
+       user: rows[0].username,
+       persona: rows[0].persona,
+       namespaces: rows[0].namespaces ?? [],
++      groups: rows[0].groups ?? [],
+       demoSwitch: config.auth.demoSwitch,
+     });
+   } catch (err) {
+@@ -112,20 +161,27 @@ authRouter.get("/me", async (req, res, next) => {
+   }
+ });
+ 
+-// POST /api/v1/auth/logout
++// POST /api/v1/auth/logout — destroys the Arcanium session and hands the UI
++// a Keycloak RP-initiated-logout URL to complete (client-side full-page
++// navigation) so the Keycloak-side SSO session ends too, not just Arcanium's.
+ authRouter.post("/logout", async (req, res, next) => {
+   try {
+     const id = readCookie(req);
+     if (id)
+       await query("DELETE FROM sessions WHERE id = $1", [id]).catch(() => {});
+     clearCookie(res);
+-    res.json({ ok: true });
++    const logoutUrl = config.oidc.enabled ? buildLogoutUrl() : null;
++    res.json({ ok: true, logoutUrl });
+   } catch (err) {
+     next(err);
+   }
+ });
+ 
+-// POST /api/v1/auth/demo-persona  { persona }  — presentation-only switch
++// POST /api/v1/auth/demo-persona  { persona }  — presentation-only switch.
++// Overrides the DISPLAY/effective role for this session only; it does not
++// touch the underlying OIDC identity or group membership, and is entirely
++// gated off by default (ARCANIUM_DEMO_PERSONA_SWITCH). docs/personas.md
++// already documents this as presentation theater, not a security control.
+ authRouter.post("/demo-persona", async (req, res, next) => {
+   try {
+     if (!config.auth.enabled || !config.auth.demoSwitch)
+@@ -145,9 +201,12 @@ authRouter.post("/demo-persona", async (req, res, next) => {
+   }
+ });
+ 
+-// Prompt 15.2 — supplier-admin tenant scoping.
++// Prompt 15.2 / 18 — supplier-admin tenant scoping.
+ // Returns { scoped: bool, supplierIds: string[], namespaces: string[] }.
+-// A non-scoped persona (or auth disabled) sees everything.
++// A non-scoped identity (or auth disabled) sees everything. tenantScopes
++// now derive from OIDC groups (stored on the session row at callback time
++// as `namespaces`) rather than a username-based lookup — the shape this
++// function returns is unchanged, so every existing caller keeps working.
+ export async function tenantScope(req) {
+   const id = req.identity;
+   if (!id || id.persona !== "supplier-admin" || !id.namespaces?.length) {
+@@ -165,9 +224,18 @@ export async function tenantScope(req) {
+ }
+ 
+ // Middleware: enforce a session on /api/v1/** (except auth/*) when enabled.
++// Builds req.identity with `roles`/`tenantScopes` for auth/authorize.js, in
++// addition to the legacy `persona`/`namespaces` shape existing routes read.
+ export function requireSession(req, res, next) {
+   if (!config.auth.enabled) {
+-    req.identity = { user: "demo", persona: "operator", namespaces: [] };
++    req.identity = {
++      user: "demo",
++      persona: "operator",
++      namespaces: [],
++      roles: ["operator"],
++      tenantScopes: [],
++      groups: [],
++    };
+     return next();
+   }
+   const openPaths = [/^\/health/, /^\/api\/v1\/auth\//];
+@@ -176,7 +244,8 @@ export function requireSession(req, res, next) {
+   const id = readCookie(req);
+   if (!id) return res.status(401).json({ error: "authentication required" });
+   query(
+-    `SELECT username, persona, namespaces FROM sessions WHERE id = $1 AND expires_at > now()`,
++    `SELECT username, persona, namespaces, groups FROM sessions
++     WHERE id = $1 AND expires_at > now() AND last_seen_at > now() - interval '${IDLE_TIMEOUT_S} seconds'`,
+     [id],
+   )
+     .then(({ rows }) => {
+@@ -186,7 +255,14 @@ export function requireSession(req, res, next) {
+         user: rows[0].username,
+         persona: rows[0].persona,
+         namespaces: rows[0].namespaces ?? [],
++        roles: [rows[0].persona],
++        tenantScopes: rows[0].namespaces ?? [],
++        groups: rows[0].groups ?? [],
+       };
++      // Idle-timeout sliding window — fire-and-forget, never blocks the request.
++      query("UPDATE sessions SET last_seen_at = now() WHERE id = $1", [id]).catch(
++        () => {},
++      );
+       next();
+     })
+     .catch(next);
+diff --git a/arcanium/api/src/config.js b/arcanium/api/src/config.js
+index cbf664e..d54d409 100644
+--- a/arcanium/api/src/config.js
++++ b/arcanium/api/src/config.js
+@@ -51,21 +51,42 @@ const config = {
+     db: required("POSTGRES_DB"),
+   },
+ 
+-  // Prompt 14.5 — human authentication. Default OFF: the stack stays open until
+-  // ARCANIUM_AUTH_ENABLED=true. Identity is authoritative in Vault (userpass);
+-  // persona scoping in Arcanium is defense-in-depth, not the security boundary.
++  // Prompt 18 — human authentication. Default OFF: the stack stays open until
++  // ARCANIUM_AUTH_ENABLED=true. Identity is authoritative in Keycloak (OIDC,
++  // LDAP-federated); persona/tenant scope derive from OIDC `groups` claims
++  // (auth/authorize.js groupsToIdentity()), never from a username lookup —
++  // the Prompt 14.5 personaByUser map is retired (input/35/36).
+   auth: {
+     enabled: optional("ARCANIUM_AUTH_ENABLED", "false") === "true",
+     // demo persona switch for presentations
+     demoSwitch: optional("ARCANIUM_DEMO_PERSONA_SWITCH", "false") === "true",
+-    // username -> persona (POC map; production derives this from Vault identity groups)
+-    personaByUser: {
+-      ciso: "ciso",
+-      architect: "architect",
+-      operator: "operator",
+-      auditor: "auditor",
+-      "pepsi-admin": "supplier-admin",
+-      "cocacola-admin": "supplier-admin",
++  },
++
++  // Prompt 18 — OIDC (Keycloak, LDAP-federated). Express is the confidential
++  // client end-to-end; the browser never sees an OIDC or Vault token.
++  // Deliberately dual-hostname (input/36): `internalUrl` is what THIS
++  // process uses for every server-to-server call (token exchange, JWKS,
++  // userinfo, end-session) over the container network; `publicUrl` is only
++  // used to build the browser-facing authorization-endpoint redirect.
++  // `issuer` must equal what Keycloak actually stamps into tokens
++  // (KC_HOSTNAME) — see compose/identity/compose.yaml.
++  oidc: {
++    issuer: optional("ARCANIUM_OIDC_ISSUER", ""),
++    internalUrl: optional("ARCANIUM_OIDC_INTERNAL_URL", "").replace(/\/$/, ""),
++    publicUrl: optional("ARCANIUM_OIDC_PUBLIC_URL", "").replace(/\/$/, ""),
++    clientId: optional("ARCANIUM_OIDC_CLIENT_ID", "arcanium-api"),
++    clientSecret: optional("ARCANIUM_OIDC_CLIENT_SECRET", ""),
++    // Must exactly match the redirect URI registered on the Keycloak client.
++    callbackUrl: optional("ARCANIUM_API_CALLBACK_URL", ""),
++    baseUrl: optional("ARCANIUM_BASE_URL", "http://localhost:3000"),
++    get enabled() {
++      return Boolean(
++        this.issuer &&
++          this.internalUrl &&
++          this.publicUrl &&
++          this.clientSecret &&
++          this.callbackUrl,
++      );
+     },
+   },
+ };
+diff --git a/arcanium/api/src/index.js b/arcanium/api/src/index.js
+index a02b87f..a946b43 100644
+--- a/arcanium/api/src/index.js
++++ b/arcanium/api/src/index.js
+@@ -11,6 +11,7 @@ import { runMigrations } from "./migrations.js";
+ 
+ import { requestLogger } from "./middleware/requestLogger.js";
+ import { errorHandler } from "./middleware/errorHandler.js";
++import { securityHeaders } from "./middleware/securityHeaders.js";
+ import { healthRouter } from "./routes/health.js";
+ import { applicationsRouter } from "./routes/applications.js";
+ import { keysRouter } from "./routes/keys.js";
+@@ -47,6 +48,7 @@ async function main() {
+   app.set("trust proxy", false);
+   app.disable("x-powered-by");
+ 
++  app.use(securityHeaders);
+   app.use(express.json({ limit: "100kb" }));
+   app.use(metricsMiddleware);
+   app.use(requestLogger);
+diff --git a/arcanium/api/src/routes/applications.js b/arcanium/api/src/routes/applications.js
+index 5e4b42d..61de45a 100644
+--- a/arcanium/api/src/routes/applications.js
++++ b/arcanium/api/src/routes/applications.js
+@@ -5,6 +5,7 @@ import { query } from "../db.js";
+ import { createJob, runOrQueue } from "../provisioner/steps.js";
+ import { provisionApplication } from "../provisioner/application.js";
+ import { tenantScope } from "../auth/index.js";
++import { authorize } from "../auth/authorize.js";
+ 
+ export const applicationsRouter = Router();
+ 
+@@ -47,6 +48,9 @@ applicationsRouter.get("/", async (req, res, next) => {
+ // POST /api/v1/applications
+ applicationsRouter.post("/", async (req, res, next) => {
+   try {
++    const decision = authorize({ identity: req.identity, action: "provision" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "provision", reason: decision.reason });
+     const { name, description, supplier_id } = req.body ?? {};
+     if (!name)
+       return res.status(400).json({ error: "name is required", field: "name" });
+@@ -90,6 +94,14 @@ applicationsRouter.get("/:id", async (req, res, next) => {
+     );
+     if (!apps.length) return next(notFound());
+ 
++    // Prompt 18 — this route had no tenant-scope check at all: any
++    // authenticated supplier-admin could read any application by id,
++    // cross-tenant. GET / already scoped correctly; this did not.
++    const scope = await tenantScope(req);
++    if (scope.scoped && !scope.supplierIds.includes(apps[0].supplier_id)) {
++      return next(notFound());
++    }
++
+     const { rows: profiles } = await query(
+       "SELECT id, type, vault_path, created_at FROM crypto_profiles WHERE application_id = $1 ORDER BY created_at",
+       [req.params.id],
+@@ -156,6 +168,12 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
+     if (scope.scoped && !scope.supplierIds.includes(app.supplier_id)) {
+       return res.status(403).json({ error: "not your tenant's application" });
+     }
++    // Role check (Prompt 18) — the tenantScope check above only enforces the
++    // TENANT boundary for supplier-admins; it says nothing about whether the
++    // caller's ROLE may provision at all (ciso/auditor previously could).
++    const decision = authorize({ identity: req.identity, action: "provision" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "provision", reason: decision.reason });
+ 
+     const body = req.body ?? {};
+     const params = {
+diff --git a/arcanium/api/src/routes/approvals.js b/arcanium/api/src/routes/approvals.js
+index e792638..52ee11a 100644
+--- a/arcanium/api/src/routes/approvals.js
++++ b/arcanium/api/src/routes/approvals.js
+@@ -9,6 +9,7 @@
+ import { Router } from "express";
+ import { query } from "../db.js";
+ import { tenantScope } from "../auth/index.js";
++import { authorize } from "../auth/authorize.js";
+ 
+ export const approvalsRouter = Router();
+ 
+@@ -125,6 +126,9 @@ approvalsRouter.post("/", async (req, res, next) => {
+ approvalsRouter.post("/:id/approve", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
++    const decision = authorize({ identity: req.identity, action: "approve" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "approve", reason: decision.reason });
+ 
+     // Fetch the pending approval
+     const { rows } = await query(
+@@ -164,6 +168,9 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
+ approvalsRouter.post("/:id/deny", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
++    const decision = authorize({ identity: req.identity, action: "approve" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "approve", reason: decision.reason });
+     const { reason } = req.body ?? {};
+ 
+     const { rows } = await query(
+diff --git a/arcanium/api/src/routes/keymgmt.js b/arcanium/api/src/routes/keymgmt.js
+index 3388f3b..7d705c3 100644
+--- a/arcanium/api/src/routes/keymgmt.js
++++ b/arcanium/api/src/routes/keymgmt.js
+@@ -15,6 +15,7 @@ import { Router } from "express";
+ import { vaultRequest, getProvisionerToken } from "../vault.js";
+ import { readFeatures } from "./platform.js";
+ import { cryptoOp } from "../telemetry/metrics.js";
++import { authorize } from "../auth/authorize.js";
+ 
+ export const keymgmtRouter = Router();
+ 
+@@ -187,14 +188,13 @@ keymgmtRouter.get("/", async (_req, res, next) => {
+   }
+ });
+ 
++// Prompt 18 — routed through the central authorize() matrix. Both call
++// sites below are 'rotate' actions (key distribution rotate/sync) —
++// architect and operator, not ciso/auditor/supplier-admin.
+ function requireOperator(req, res) {
+-  if (
+-    req.identity &&
+-    !["operator", "architect"].includes(req.identity.persona)
+-  ) {
+-    res
+-      .status(403)
+-      .json({ error: "this action requires the operator persona" });
++  const decision = authorize({ identity: req.identity, action: "rotate" });
++  if (decision.decision !== "ALLOW") {
++    res.status(403).json({ error: "forbidden", action: "rotate", reason: decision.reason });
+     return false;
+   }
+   return true;
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index 4be7472..5fa5d96 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -14,6 +14,7 @@ import {
+   rewrapCiphertext,
+   requestKeyDestroy,
+ } from "../provisioner/key.js";
++import { authorize } from "../auth/authorize.js";
+ 
+ export const keysRouter = Router();
+ 
+@@ -147,6 +148,9 @@ keysRouter.post("/:name/rotate", async (req, res, next) => {
+     const { name } = req.params;
+     if (!KEY_NAME_RE.test(name))
+       return res.status(400).json({ error: "invalid key name" });
++    const decision = authorize({ identity: req.identity, action: "rotate" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "rotate", reason: decision.reason });
+     const job = await createJob({
+       target_type: "key",
+       target_id: name,
+@@ -171,14 +175,13 @@ keysRouter.post("/:name/rewrap", async (req, res, next) => {
+     const { name } = req.params;
+     if (!KEY_NAME_RE.test(name))
+       return res.status(400).json({ error: "invalid key name" });
+-    if (
+-      req.identity &&
+-      !["operator", "architect"].includes(req.identity.persona)
+-    ) {
+-      return res
+-        .status(403)
+-        .json({ error: "rewrap requires the operator persona" });
+-    }
++    // Rewrap is operator-only per the Phase 18 authorization matrix — NOT
++    // architect (the previous inline check incorrectly allowed both; that
++    // was a real gap, not a stylistic difference — see
++    // scenarios/11_security_foundation/test_negative_auth.sh).
++    const decision = authorize({ identity: req.identity, action: "rewrap" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "rewrap", reason: decision.reason });
+     const ciphertext = (req.body ?? {}).ciphertext;
+     const rewrapped = await rewrapCiphertext(name, ciphertext);
+     res.json({ ciphertext: rewrapped });
+@@ -194,6 +197,9 @@ keysRouter.post("/:name/destroy", async (req, res, next) => {
+     const { name } = req.params;
+     if (!KEY_NAME_RE.test(name))
+       return res.status(400).json({ error: "invalid key name" });
++    const decision = authorize({ identity: req.identity, action: "destroy_request" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "destroy_request", reason: decision.reason });
+     const approval = await requestKeyDestroy(
+       name,
+       req.identity?.user ?? "arcanium-operator",
+diff --git a/arcanium/api/src/routes/suppliers.js b/arcanium/api/src/routes/suppliers.js
+index fa0a0bc..9e7f77c 100644
+--- a/arcanium/api/src/routes/suppliers.js
++++ b/arcanium/api/src/routes/suppliers.js
+@@ -11,6 +11,7 @@ import {
+ } from "../provisioner/supplier.js";
+ import { tenantScope } from "../auth/index.js";
+ import { checkIsolation } from "../suppliers/isolation.js";
++import { authorize } from "../auth/authorize.js";
+ 
+ export const suppliersRouter = Router();
+ 
+@@ -70,6 +71,11 @@ suppliersRouter.post("/", async (req, res, next) => {
+       return res
+         .status(403)
+         .json({ error: "supplier-admins cannot create tenants" });
++    // Role check (Prompt 18) — the tenantScope check above only ever blocked
++    // supplier-admins; ciso/auditor could previously create tenants too.
++    const decision = authorize({ identity: req.identity, action: "provision" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({ error: "forbidden", action: "provision", reason: decision.reason });
+     const { name, vault_namespace, sla_tier } = supplierFields(req.body);
+     const { rows } = await query(
+       `INSERT INTO suppliers (name, vault_namespace, sla_tier)
+diff --git a/arcanium/ui/app/composables/useArcaniumApi.ts b/arcanium/ui/app/composables/useArcaniumApi.ts
+index 6d33e9e..d51dc81 100644
+--- a/arcanium/ui/app/composables/useArcaniumApi.ts
++++ b/arcanium/ui/app/composables/useArcaniumApi.ts
+@@ -42,10 +42,12 @@ export function useArcaniumApi() {
+     destroyKey: (name: string) =>
+       $post<{ approval: ApprovalRecord; message: string }>(`/api/v1/keys/${encodeURIComponent(name)}/destroy`),
+ 
+-    // ── Auth (Prompt 14.5) ────────────────────────────────
+-    me: () => $get<{ enabled: boolean; user: string; persona: string; namespaces: string[]; demoSwitch?: boolean }>('/api/v1/auth/me'),
+-    login: (username: string, password: string) => $post<{ user: string; persona: string }>('/api/v1/auth/login', { username, password }),
+-    logout: () => $post<{ ok: boolean }>('/api/v1/auth/logout'),
++    // ── Auth (Prompt 18 — OIDC) ────────────────────────────
++    // Sign-in is a full-page navigation to /gateway/api/v1/auth/login, not a
++    // fetch call — see app/pages/login.vue. There is no username/password
++    // API call any more; Express is the OIDC client end-to-end.
++    me: () => $get<{ enabled: boolean; user: string; persona: string; namespaces: string[]; groups?: string[]; demoSwitch?: boolean }>('/api/v1/auth/me'),
++    logout: () => $post<{ ok: boolean; logoutUrl: string | null }>('/api/v1/auth/logout'),
+     setDemoPersona: (persona: string) => $post<{ persona: string }>('/api/v1/auth/demo-persona', { persona }),
+ 
+     // ── Platform / distribution (Prompt 14.3–14.4) ────────
+diff --git a/arcanium/ui/app/layouts/default.vue b/arcanium/ui/app/layouts/default.vue
+index 797547e..1c6cde9 100644
+--- a/arcanium/ui/app/layouts/default.vue
++++ b/arcanium/ui/app/layouts/default.vue
+@@ -202,7 +202,13 @@ onMounted(async () => {
+   } catch { /* not signed in — global middleware handles the redirect */ }
+ })
+ async function signOut() {
+-  try { await logout() } catch { /* ignore */ }
++  try {
++    const { logoutUrl } = await logout()
++    // Prompt 18 — complete RP-initiated logout at Keycloak too (not just the
++    // Arcanium session) via a real full-page navigation, same reasoning as
++    // the sign-in redirect in app/pages/login.vue.
++    if (logoutUrl) { window.location.href = logoutUrl; return }
++  } catch { /* ignore */ }
+   navigateTo('/login')
+ }
+ 
+diff --git a/arcanium/ui/app/pages/login.vue b/arcanium/ui/app/pages/login.vue
+index 6d57088..365921e 100644
+--- a/arcanium/ui/app/pages/login.vue
++++ b/arcanium/ui/app/pages/login.vue
+@@ -9,68 +9,57 @@
+         </svg>
+         <span>Arcanium</span>
+       </div>
+-      <p class="login-sub">Cryptographic control plane · sign in</p>
++      <p class="login-sub">Enterprise Cryptographic Control Plane</p>
+ 
+-      <form @submit.prevent="submit">
+-        <label class="form-field">Username
+-          <input v-model.trim="username" autocomplete="username" required autofocus />
+-        </label>
+-        <label class="form-field">Password
+-          <input v-model="password" type="password" autocomplete="current-password" required />
+-        </label>
+-        <p v-if="error" class="inline-notice error">{{ error }}</p>
+-        <button class="primary-button" :disabled="busy" style="width:100%;justify-content:center">
+-          {{ busy ? 'Signing in…' : 'Sign in' }}
+-        </button>
+-      </form>
++      <p v-if="error" class="inline-notice error">{{ error }}</p>
++
++      <button class="primary-button" :disabled="busy" style="width:100%;justify-content:center" @click="signIn">
++        {{ busy ? 'Redirecting…' : 'Sign in' }}
++      </button>
+ 
+-      <p class="login-hint">
+-        Demo personas: <code>ciso</code> · <code>architect</code> · <code>operator</code> · <code>auditor</code>
+-      </p>
+       <p class="login-note">
+-        Arcanium sign-in gates the management experience. Cross-tenant isolation is
+-        enforced by Vault Enterprise namespaces, not by this view.
++        Sign-in is handled by your organisation's identity provider (OIDC, LDAP-backed).
++        Arcanium never sees your password — only a signed session once your identity
++        provider confirms who you are. Cross-tenant isolation is enforced by Vault
++        Enterprise namespaces, not by this view.
+       </p>
+     </div>
+   </div>
+ </template>
+ 
+ <script setup lang="ts">
+-import { ref } from 'vue'
+ import { useRoute, useRouter } from 'vue-router'
+ import { useArcaniumApi } from '~/composables/useArcaniumApi'
+-import { apiErrorMessage, apiErrorStatus } from '~/utils/apiError'
+ 
+ definePageMeta({ layout: false })
+ useHead({ title: 'Sign in' })
+ 
+ const route = useRoute()
+ const router = useRouter()
+-const { login, me } = useArcaniumApi()
++const { me } = useArcaniumApi()
+ 
+-const username = ref('')
+-const password = ref('')
+ const busy = ref(false)
+ const error = ref('')
+ 
+ onMounted(async () => {
++  if (route.query.error) {
++    error.value = 'Sign-in was rejected. Please try again.'
++  }
+   try {
+     const m = await me()
+     if (m.enabled === false || m.user) router.replace(String(route.query.next || '/'))
+   } catch { /* not signed in */ }
+ })
+ 
+-async function submit() {
+-  if (busy.value) return
+-  busy.value = true; error.value = ''
+-  try {
+-    await login(username.value, password.value)
+-    router.replace(String(route.query.next || '/'))
+-  } catch (e: unknown) {
+-    error.value = apiErrorStatus(e) === 401 ? 'Invalid credentials.' : apiErrorMessage(e, 'Sign-in failed.')
+-  } finally {
+-    busy.value = false
+-  }
++// Prompt 18 — this is a full-page navigation, not a fetch/XHR call. The
++// browser needs to actually leave localhost:3000 and land on Keycloak's
++// authorization endpoint; a fetch() would just have Nuxt's server follow
++// the redirect itself and hand back Keycloak's login-page HTML as if it
++// were API data. See ui/server/routes/gateway/api/v1/auth/login.get.ts.
++function signIn() {
++  busy.value = true
++  const next = typeof route.query.next === 'string' ? route.query.next : '/'
++  window.location.href = `/gateway/api/v1/auth/login?next=${encodeURIComponent(next)}`
+ }
+ </script>
+ 
+@@ -90,9 +79,6 @@ async function submit() {
+ .login-brand { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 750; color: var(--arc-text-primary); }
+ .brand-icon { width: 26px; height: 26px; }
+ .login-sub { font-size: 12px; color: var(--arc-text-muted); margin: 6px 0 22px; text-transform: uppercase; letter-spacing: 0.08em; }
+-form { display: flex; flex-direction: column; gap: 4px; }
+-.form-field input { width: 100%; }
+-.login-hint { font-size: 11px; color: var(--arc-text-muted); margin: 18px 0 0; }
+-.login-hint code { color: var(--arc-action-bright); }
+-.login-note { font-size: 10.5px; color: var(--arc-text-dim); line-height: 1.5; margin: 12px 0 0; }
++.login-note { font-size: 10.5px; color: var(--arc-text-dim); line-height: 1.5; margin: 16px 0 0; }
++.inline-notice.error { margin-bottom: 12px; }
+ </style>
+diff --git a/arcanium/ui/nuxt.config.ts b/arcanium/ui/nuxt.config.ts
+index c398927..0d15370 100644
+--- a/arcanium/ui/nuxt.config.ts
++++ b/arcanium/ui/nuxt.config.ts
+@@ -29,6 +29,26 @@ export default defineNuxtConfig({
+     // Inline the API base URL into the server bundle
+   },
+ 
++  // Prompt 18 Deliverable 6 — security headers on every UI response. The
++  // browser only ever talks to this same origin (apiBase: '/gateway' above)
++  // — connect-src 'self' makes that enforced client-side, not just true by
++  // convention. style-src keeps 'unsafe-inline' for Vue's scoped-style
++  // injection; script-src does not — Nuxt SSR ships hydration state as
++  // non-executable JSON, not inline script.
++  routeRules: {
++    "/**": {
++      headers: {
++        "Content-Security-Policy":
++          "default-src 'self'; connect-src 'self'; img-src 'self' data:; " +
++          "style-src 'self' 'unsafe-inline'; script-src 'self'; " +
++          "frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
++        "X-Frame-Options": "DENY",
++        "X-Content-Type-Options": "nosniff",
++        "Referrer-Policy": "no-referrer",
++      },
++    },
++  },
++
+   app: {
+     head: {
+       title: 'Arcanium',
+diff --git a/arcanium/ui/server/routes/gateway/[...path].ts b/arcanium/ui/server/routes/gateway/[...path].ts
+index c484b60..b1b9da1 100644
+--- a/arcanium/ui/server/routes/gateway/[...path].ts
++++ b/arcanium/ui/server/routes/gateway/[...path].ts
+@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
+       || /^api\/v1\/applications\/[a-f0-9-]+\/(provision|classify)$/.test(path)
+       || /^api\/v1\/keys\/[a-zA-Z0-9_-]+\/(rotate|rewrap|destroy)$/.test(path)
+       || /^api\/v1\/keymgmt\/[a-zA-Z0-9_.-]+\/(rotate|sync)$/.test(path)
+-      || /^api\/v1\/auth\/(login|logout|demo-persona)$/.test(path)
++      || /^api\/v1\/auth\/(logout|demo-persona)$/.test(path)
+     ))
+     || (['PATCH', 'DELETE'].includes(event.method) && /^api\/v1\/(suppliers|applications)\/[a-f0-9-]+$/.test(path))
+   if (!(event.method === 'GET' && read) && !write) {
+diff --git a/docs/index.md b/docs/index.md
+index 439c749..aabcb52 100644
+--- a/docs/index.md
++++ b/docs/index.md
+@@ -28,6 +28,7 @@ guides by task. All documentation lives in `docs/`; only `README.md`,
+ - [Contributing](../CONTRIBUTING.md)
+ - [Runtime orchestration](orchestration.md): how intent becomes Vault configuration.
+ - [Authentication and personas](personas.md)
++- [Security](security.md): OIDC trust model, deny-by-default authorization matrix, session/CSRF/header hardening (Prompt 18).
+ 
+ ## Cryptography and assurance
+ 
+diff --git a/docs/personas.md b/docs/personas.md
+index 7842e84..0d58b54 100644
+--- a/docs/personas.md
++++ b/docs/personas.md
+@@ -1,51 +1,89 @@
+-# Authentication & personas (Prompt 14.5)
++# Authentication & personas (Prompt 18)
+ 
+ ## Default: OFF
+ 
+ The Arcanium UI and API are open until `ARCANIUM_AUTH_ENABLED=true`. Flip that in
+ `.env` (and `ARCANIUM_DEMO_PERSONA_SWITCH=true` for presentations), then
+-`make arcanium-up`.
++`make identity-up && make identity-bootstrap && make arcanium-up`.
+ 
+-## Identity is authoritative in Vault
++## Identity is authoritative in Keycloak, federated from OpenLDAP
+ 
+-Login goes to **Vault `auth/userpass/login/<user>`** — Vault validates the
+-credential. Arcanium mints a server-side session (opaque cookie, `sessions`
+-table, 1h TTL). No password or Vault token is stored in Arcanium.
++Login is OIDC Authorization Code + PKCE against Keycloak
++(`compose/identity/`), which authenticates against OpenLDAP as its identity
++store. **OpenLDAP is never a direct authentication target for Arcanium**
++(input/35) — Arcanium only ever talks to Keycloak, and only server-side.
+ 
+-Production note: swap `userpass` for **Vault OIDC** when an IdP is available. The
+-persona would then derive from Vault identity-group membership instead of the
+-POC username map.
++```text
++OpenLDAP (identity store)
++   │ users / groups
++   ▼
++Keycloak (OIDC broker)
++   │ Authorization Code + PKCE
++   ▼
++Express (arcanium-api) — confidential OIDC client + session authority
++   │ session cookie only
++   ▼
++Nuxt gateway → Browser
++```
++
++Express mints a server-side session (opaque cookie, `sessions` table, 1h
++absolute / 30m idle TTL). No password, OIDC token, or Vault token is ever
++stored in the browser. See [security.md](security.md) for the full trust
++model and the reasoning behind it.
++
++## Personas derive from OIDC groups, not usernames
++
++The Prompt 14.5 `config.js: auth.personaByUser` hardcoded username map is
++retired. Roles and tenant scope now come from the OIDC `groups` claim
++(`auth/authorize.js: groupsToIdentity()`):
++
++| LDAP / Keycloak group | Role | Tenant scope |
++|---|---|---|
++| `arcanium-ciso` | ciso | estate |
++| `arcanium-architect` | architect | estate |
++| `arcanium-operator` | operator | estate |
++| `arcanium-auditor` | auditor | estate |
++| `arcanium-supplier-admin` + `arcanium-tenant-pepsi` | supplier-admin | `suppliers/pepsi` |
++| `arcanium-supplier-admin` + `arcanium-tenant-cocacola` | supplier-admin | `suppliers/cocacola` |
+ 
+-## Personas
++`arcanium-supplier-admin` is its own explicit group — role and tenant scope
++are two independent axes, not inferred from each other.
+ 
+-| User | Persona | UI emphasis | Can |
+-|---|---|---|---|
+-| `ciso` | ciso | posture · approvals · maturity | resolve approvals |
+-| `architect` | architect | suppliers · keys · topology | provision, rotate |
+-| `operator` | operator | jobs · approvals · cluster | provision, rotate, **rewrap** |
+-| `auditor` | auditor | evidence · maturity (read-only) | — |
+-| `pepsi-admin` / `cocacola-admin` | supplier-admin | scoped to their tenant | view own tenant only |
++| UI emphasis | Can |
++|---|---|
++| ciso — posture · approvals · maturity | resolve approvals |
++| architect — suppliers · keys · topology | provision, rotate |
++| operator — jobs · approvals · cluster | provision, rotate, **rewrap** |
++| auditor — evidence · maturity (read-only) | — |
++| supplier-admin — scoped to their tenant | view own tenant only |
+ 
+-Mutation gates (API): only `operator`/`architect` may `provision`/`rotate`; only
+-`operator` may `rewrap`; `destroy` may be *requested* by anyone but *resolved*
+-only by `ciso`.
++Mutation gates are now enforced centrally by `auth/authorize.js`, not
++inline per-route (Prompt 18) — see [security.md](security.md) for the full
++matrix and the two pre-existing gaps closing this actually found.
+ 
+ ## Persona ≠ security boundary
+ 
+-Persona scoping in Arcanium is **defense in depth and UX**. A `pepsi-admin` who
+-bypasses Arcanium and calls Vault directly for a Coca-Cola path is still stopped
+-by the Vault namespace boundary (`input/16`). The login page says so.
++Persona scoping in Arcanium is **defense in depth and UX**. A `pepsi-admin`
++who bypasses Arcanium and calls Vault directly for a Coca-Cola path is still
++stopped by the Vault namespace boundary (`input/16`). The login page says so.
+ 
+ ## Demo persona switch
+ 
+ With `ARCANIUM_DEMO_PERSONA_SWITCH=true`, a signed-in user can `POST
+ /api/v1/auth/demo-persona {persona}` to move between CISO / Architect / Operator
+-views without re-login — for presentations only.
++views without re-login — for presentations only. This overrides the display
++role for that session only; it does not touch the underlying OIDC identity
++or group membership.
+ 
+ ## Seed
+ 
+ ```bash
+-./scripts/vault-seed-users.sh    # enables userpass + seeds the 6 demo users
++./compose/identity/ldap/setup_ldap.sh   # loads the demo fixture into OpenLDAP
++./compose/identity/keycloak/setup_keycloak.sh  # realm + federation + client
++# or, together:
++make identity-bootstrap
+ ```
+ 
+-Passwords are POC-only and printed in that script.
++Demo accounts (POC passwords, printed by `setup_ldap.sh`, local lab only):
++`demo-ciso`, `demo-architect`, `demo-operator`, `demo-auditor`,
++`demo-pepsi`, `demo-cocacola`.
+diff --git a/docs/security.md b/docs/security.md
+index df478ab..7df3ae9 100644
+--- a/docs/security.md
++++ b/docs/security.md
+@@ -1,39 +1,185 @@
+-# Security model
+-
+-Arcanium is a local demonstration of cryptographic lifecycle management. The implemented controls illustrate an architecture; they are not a blanket production-security or compliance claim.
+-
+-## Trust boundaries
+-
+-Vault enforces key custody and workload policy. Namespace isolation must be tested with the relevant identities. A supplier card, application category or UI persona is not an isolation boundary.
+-
+-The UI talks to Arcanium API through same-origin transport and must not receive Vault tokens or join the Vault-internal network. The API and optional worker hold the service identities needed for their operations. PostgreSQL stores metadata, evidence and sessions, not private key custody.
+-
+-## Identities
+-
+-- Workloads use their configured AppRole, certificate or other Vault identities.
+-- The API authenticates with AppRole and obtains dynamic database credentials.
+-- Optional human login validates credentials against Vault userpass and establishes an Arcanium session.
+-- Optional runtime provisioner credentials can be highly privileged. Restrict their scope and treat local root-token use as a lab shortcut.
+-- Presentation persona switching must remain explicitly controlled; it is not production role assignment.
+-
+-Human auth is disabled by default. When enabling it, verify authorization for every mutation and every tenant-scoped read, including nested supplier routes. Do not equate a successful login with complete route-level enforcement.
+-
+-## Governance and evidence
+-
+-An approval record can express a human decision without executing a cryptographic operation or authorizing a Vault Control Group. Keep those states distinct in the UI, documentation and demos.
+-
+-Audit ingestion stores normalized metadata instead of full crypto request/response bodies. Source classification may be derived from policy/role names or caller-provided fields. It is not cryptographic attestation of origin. Record retention, ingest completeness and tamper resistance need separate verification.
+-
+-Maturity scores use selected implementation signals. They are not proof of regulatory compliance or comprehensive policy effectiveness.
+-
+-## Local secret material
+-
+-Keep `.env`, `.env.workloads`, `.secrets/`, Terraform state, Vault initialization files, private TLS keys, HSM PINs, proxy PSKs and licenses out of version control and shared logs. Protect backup copies independently from the VM.
+-
+-Bootstrap uses simplified recovery settings for a lab. SoftHSM uses software-backed tokens. Neither should be presented as production multi-person recovery custody or certified hardware assurance.
+-
+-## Safe development and demonstrations
+-
+-Use read-only health checks for routine diagnosis. Provisioning, deletion, key rotation, rewrap, approval resolution, full verification and failure scenarios change state. Review target namespace, key, tenant and job before running them.
+-
+-TLS validation remains enabled for application-to-Vault communication. A failing certificate should be repaired through trust/certificate configuration, not hidden behind an insecure UI probe.
++# Security (Prompt 18 — Arcanium Security Foundation)
++
++This document covers Arcanium's *own* application-security posture: how a
++human authenticates, how mutations are authorized, and how the session is
++protected. It does not cover Vault's cryptographic enforcement (namespaces,
++policies, Sentinel, Control Groups) — see
++[architecture.md](architecture.md) and [policy-as-code.md](policy-as-code.md)
++for that; those boundaries are unchanged by this prompt.
++
++## Trust model
++
++```text
++Human
++   │ OIDC Authorization Code + PKCE
++   ▼
++Keycloak (OIDC broker, LDAP-federated)
++   │ users / groups
++   ▼
++OpenLDAP (identity store — never a direct AuthN target for Arcanium)
++```
++
++```text
++Browser
++   │ session cookie only — no OIDC token, no Vault token
++   ▼
++Nuxt (same-origin gateway/BFF — relays two OIDC hops, proxies everything else)
++   │
++   ▼
++Express (arcanium-api) — the confidential OIDC client AND session authority
++   │
++   ▼
++Vault Enterprise — cryptographic enforcement (namespaces, policies, Sentinel, Control Groups)
++```
++
++**Express, not Nuxt, is the OIDC client.** An earlier draft of this design
++put the OIDC exchange on the Nuxt server; that was corrected before
++implementation (input/36) — Express already owns the `sessions` table and
++`auth/index.js`, so the OIDC code exchange belongs there too, not split
++across two processes. Nuxt's job stays exactly what it already was: a
++same-origin relay that forwards a cookie and never touches credentials.
++
++## What the browser never receives
++
++- No OIDC access, ID, or refresh token.
++- No Vault token.
++- No LDAP credential.
++
++Only an opaque, `HttpOnly` Arcanium session cookie. Verified by inspecting
++actual network responses during testing (see
++[scenarios/11_security_foundation/test_negative_auth.sh](../scenarios/11_security_foundation/test_negative_auth.sh)
++and the Prompt 18 execution log in
++[prompts/18_security_foundation.md](../prompts/18_security_foundation.md)),
++not assumed from code review alone.
++
++## Dual-hostname OIDC (why it's not `host.docker.internal`)
++
++Keycloak needs to be reachable from two different places that cannot use the
++same address:
++
++- **The browser** (running on the host) reaches Keycloak at its published
++  port — `KC_HOSTNAME` (e.g. `localhost:8083`).
++- **Express** (running inside `arcanium-api`) reaches Keycloak over the
++  container network — `http://keycloak:8080`.
++
++The two reference projects this stack's identity layer was adapted from
++(`workshop/zero_trust`, `Personal/vault_reference`) used
++`host.docker.internal` for this — a Docker-Desktop-specific mechanism not
++assumed to behave identically under this Podman machine. Arcanium instead
++hand-configures both endpoint sets explicitly
++(`ARCANIUM_OIDC_INTERNAL_URL` / `ARCANIUM_OIDC_PUBLIC_URL` /
++`ARCANIUM_OIDC_ISSUER` in `.env`, consumed by `arcanium/api/src/auth/oidc.js`)
++rather than relying on a single hostname resolving correctly from both
++places. `KC_HOSTNAME` controls what Keycloak *stamps into tokens and
++discovery documents* regardless of which network path was used to reach
++it — that's what makes an internal-network fetch still validate against the
++public issuer string.
++
++## Authorization — deny-by-default
++
++`arcanium/api/src/auth/authorize.js` is the **one** place mutation
++permissions are decided. Every mutating route calls it; nothing else in the
++API inline-checks `req.identity.persona` against a literal string.
++
++> The UI may hide functionality. The API must forbid it.
++> Button hidden ≠ authorization. API 403 = authorization.
++
++| Persona        | Read | Provision | Rotate | Rewrap | Destroy request | Approve | Tenant   |
++| -------------- | ---: | --------: | -----: | -----: | ---------------: | ------: | -------- |
++| CISO           |    ✓ |         ✗ |      ✗ |      ✗ |                 ✓ |       ✓ | estate   |
++| Architect      |    ✓ |         ✓ |      ✓ |      ✗ |                 ✓ |       ✗ | estate   |
++| Operator       |    ✓ |         ✓ |      ✓ |      ✓ |                 ✓ |       ✗ | estate   |
++| Auditor        |    ✓ |         ✗ |      ✗ |      ✗ |                 ✗ |       ✗ | estate   |
++| Supplier Admin |    ✓ |   limited |limited |      ✗ |           limited |       ✗ | own only |
++
++Wiring this in found and fixed two pre-existing gaps, not just formalised
++existing behavior:
++- `POST /api/v1/keys/:name/rewrap` previously allowed **both** `operator`
++  and `architect` — the matrix says Architect is `✗` for rewrap. Now
++  operator-only.
++- `POST /api/v1/applications/:id/provision`, `POST /api/v1/applications`,
++  and `POST /api/v1/suppliers` had no role check at all beyond the
++  supplier-admin tenant boundary — a `ciso` or `auditor` session could
++  previously provision. Now gated.
++
++## Groups, not usernames
++
++`config.js: auth.personaByUser` (a 6-entry hardcoded username→persona map)
++is retired. Roles and tenant scope now derive from the OIDC `groups` claim
++at session-creation time (`auth/authorize.js: groupsToIdentity()`):
++
++```text
++groups: ["arcanium-operator", "arcanium-tenant-pepsi"]
++  → roles: ["operator"]
++  → tenantScopes: ["suppliers/pepsi"]
++```
++
++`arcanium-supplier-admin` is its own explicit LDAP/Keycloak group — never
++inferred from "has a tenant group and nothing else" (input/36), so a future
++tenant-scoped role that isn't a supplier admin stays expressible.
++
++## Session security
++
++- Cookie: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`.
++  - `Secure` is safe over the plain-HTTP local stack: browsers treat
++    `http://localhost` and `http://127.0.0.1` as "potentially trustworthy"
++    secure-context origins regardless of scheme (W3C Secure Contexts), which
++    is the exclusive way this stack is accessed.
++  - `SameSite=Lax`, not `Strict` — verified, not assumed: `Strict` cookies
++    are not sent on the cross-site top-level navigation the browser makes
++    when Keycloak redirects it back to the callback URL, which would break
++    the round trip. The OIDC pending-flow cookie (state/nonce/PKCE verifier,
++    10-minute TTL) uses the same reasoning.
++- Absolute TTL: 1 hour. **Idle timeout: 30 minutes**, checked independently
++  (`sessions.last_seen_at`, updated on every authenticated request) — a
++  session left untouched is rejected before its absolute TTL elapses, not
++  just at it.
++- A forged or tampered session cookie fails outright: the cookie is an
++  opaque random ID with no client-decodable structure, so there is nothing
++  to tamper with usefully — any modification simply fails the `sessions`
++  lookup and returns 401.
++
++## CSRF
++
++The gateway (`ui/server/routes/gateway/[...path].ts`) already validates the
++`Origin` header against `Host` on every state-changing request and rejects a
++mismatch with 403. Combined with `SameSite=Lax` cookies (which are not
++attached to cross-site POST/PATCH/DELETE requests at all) and the fact that
++the API is never reachable except through this one same-origin gateway (no
++CORS headers are set anywhere — see `middleware/securityHeaders.js`), this
++is the chosen CSRF defense: **Origin verification**, which OWASP lists as a
++primary, sufficient CSRF mitigation for exactly this kind of same-origin
++application — deliberately chosen over a double-submit or synchronizer
++token, which would add a second mechanism without covering a gap the first
++one leaves open.
++
++## Security headers
++
++Present on every response, both API (`middleware/securityHeaders.js`) and UI
++(`nuxt.config.ts` `routeRules`):
++
++- `Content-Security-Policy` — `default-src 'none'` on the API (it serves no
++  content), `default-src 'self'; connect-src 'self'` on the UI.
++- `X-Frame-Options: DENY`
++- `X-Content-Type-Options: nosniff`
++- `Referrer-Policy: no-referrer`
++- No `Access-Control-Allow-Origin` anywhere in the stack.
++
++## Negative tests — the exit criterion
++
++This prompt does not finish because OIDC login works. It finishes when
++[scenarios/11_security_foundation/test_negative_auth.sh](../scenarios/11_security_foundation/test_negative_auth.sh)
++proves all 13 hostile assertions from `input/35` — anonymous access,
++role-mismatched mutations, cross-tenant reads, forged/expired sessions, and
++a rejected OIDC callback under a wrong state/issuer/audience. See the
++Prompt 18 execution log for the actual, current result of that run — this
++document describes the design, the log records what was proven.
++
++## What this prompt does not change
++
++- Vault's own AppRole/userpass AuthN for **workloads** (payments-api,
++  document-signing, etc.) — untouched, already correct
++  ([input/16], `docs/architecture.md`).
++- The Vault namespace boundary as the real cryptographic tenant isolation —
++  persona scoping in Arcanium remains defense-in-depth on top of it, not a
++  replacement for it (`docs/personas.md`).
+diff --git a/scripts/compose.sh b/scripts/compose.sh
+index 82dd400..c0ac86b 100755
+--- a/scripts/compose.sh
++++ b/scripts/compose.sh
+@@ -2,7 +2,7 @@
+ set -eu
+ 
+ if [ "$#" -lt 2 ]; then
+-  echo "Usage: $0 <vault|infra|hsm|arcanium|observability|workloads|kms-sim> <compose arguments...>" >&2
++  echo "Usage: $0 <vault|infra|hsm|arcanium|observability|workloads|kms-sim|identity> <compose arguments...>" >&2
+   exit 64
+ fi
+ 
+@@ -10,7 +10,7 @@ stack=$1
+ shift
+ 
+ case "$stack" in
+-vault | infra | hsm | arcanium | observability | workloads | kms-sim) ;;
++vault | infra | hsm | arcanium | observability | workloads | kms-sim | identity) ;;
+ *)
+   echo "Unknown stack: $stack" >&2
+   exit 64

@@ -11,6 +11,7 @@ import { runMigrations } from "./migrations.js";
 
 import { requestLogger } from "./middleware/requestLogger.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { securityHeaders } from "./middleware/securityHeaders.js";
 import { healthRouter } from "./routes/health.js";
 import { applicationsRouter } from "./routes/applications.js";
 import { keysRouter } from "./routes/keys.js";
@@ -47,6 +48,7 @@ async function main() {
   app.set("trust proxy", false);
   app.disable("x-powered-by");
 
+  app.use(securityHeaders);
   app.use(express.json({ limit: "100kb" }));
   app.use(metricsMiddleware);
   app.use(requestLogger);

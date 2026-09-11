@@ -1,0 +1,52 @@
+baseline:
+  id: 2026-09-11_all-healthy
+  purpose: "Prompt 18 verified (13/13) + HSM crash-loop fixed (softhsm-server TOKEN_USER_PIN self-test bug) — full stack healthy"
+  captured_at: 2026-09-11T08:40:54Z
+  git:
+    commit: "a786043b525dd1380343634f4dcaf1055fa61c33"
+    branch: "main"
+    tag: "none"
+    dirty: true
+
+runtime:
+  engine: podman
+  architecture: "arm64"
+
+components:
+  arcanium:
+    capture_status: CAPTURED
+  vault:
+    capture_status: UNKNOWN
+  hsm:
+    capture_status: CAPTURED
+  infra:
+    capture_status: CAPTURED
+  kms:
+    capture_status: CAPTURED
+  observability:
+    capture_status: CAPTURED
+  workloads:
+    capture_status: CAPTURED
+
+verification:
+  supplier_isolation: UNKNOWN
+  onboarding: UNKNOWN
+  transit: UNKNOWN
+  pki: UNKNOWN
+  kmip: UNKNOWN
+  managed_key: UNKNOWN
+  sentinel_negative: UNKNOWN
+
+capture:
+  overall: PARTIAL
+  checks:
+    source: CAPTURED
+    runtime: CAPTURED
+    arcanium: CAPTURED
+    vault: UNKNOWN
+    hsm: CAPTURED
+    infra: CAPTURED
+    kms: CAPTURED
+    observability: CAPTURED
+    workloads: CAPTURED
+    scenarios: CAPTURED

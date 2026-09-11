@@ -28,6 +28,7 @@ guides by task. All documentation lives in `docs/`; only `README.md`,
 - [Contributing](../CONTRIBUTING.md)
 - [Runtime orchestration](orchestration.md): how intent becomes Vault configuration.
 - [Authentication and personas](personas.md)
+- [Security](security.md): OIDC trust model, deny-by-default authorization matrix, session/CSRF/header hardening (Prompt 18).
 
 ## Cryptography and assurance
 

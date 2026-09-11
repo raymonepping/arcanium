@@ -6,4 +6,11 @@ description = "global allowlist"
 paths = [
   "CHANGELOG.md",
   ".gitleaks.toml",
+  # Prompt 18 demo-persona LDAP fixture: userPassword values (e.g.
+  # Arcanium-ciso-2026) are synthetic, POC-only, local-Podman-network-only
+  # credentials, printed openly by the same convention
+  # scripts/vault-seed-users.sh already uses for these demo personas — not
+  # a real secret. Scoped to this one file, not a broad allowlist
+  # (feedback_gitleaks_test_fixtures.md).
+  "compose/identity/ldap/bootstrap.ldif",
 ]

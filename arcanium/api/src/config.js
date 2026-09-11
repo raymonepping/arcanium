@@ -51,21 +51,42 @@ const config = {
     db: required("POSTGRES_DB"),
   },
 
-  // Prompt 14.5 — human authentication. Default OFF: the stack stays open until
-  // ARCANIUM_AUTH_ENABLED=true. Identity is authoritative in Vault (userpass);
-  // persona scoping in Arcanium is defense-in-depth, not the security boundary.
+  // Prompt 18 — human authentication. Default OFF: the stack stays open until
+  // ARCANIUM_AUTH_ENABLED=true. Identity is authoritative in Keycloak (OIDC,
+  // LDAP-federated); persona/tenant scope derive from OIDC `groups` claims
+  // (auth/authorize.js groupsToIdentity()), never from a username lookup —
+  // the Prompt 14.5 personaByUser map is retired (input/35/36).
   auth: {
     enabled: optional("ARCANIUM_AUTH_ENABLED", "false") === "true",
     // demo persona switch for presentations
     demoSwitch: optional("ARCANIUM_DEMO_PERSONA_SWITCH", "false") === "true",
-    // username -> persona (POC map; production derives this from Vault identity groups)
-    personaByUser: {
-      ciso: "ciso",
-      architect: "architect",
-      operator: "operator",
-      auditor: "auditor",
-      "pepsi-admin": "supplier-admin",
-      "cocacola-admin": "supplier-admin",
+  },
+
+  // Prompt 18 — OIDC (Keycloak, LDAP-federated). Express is the confidential
+  // client end-to-end; the browser never sees an OIDC or Vault token.
+  // Deliberately dual-hostname (input/36): `internalUrl` is what THIS
+  // process uses for every server-to-server call (token exchange, JWKS,
+  // userinfo, end-session) over the container network; `publicUrl` is only
+  // used to build the browser-facing authorization-endpoint redirect.
+  // `issuer` must equal what Keycloak actually stamps into tokens
+  // (KC_HOSTNAME) — see compose/identity/compose.yaml.
+  oidc: {
+    issuer: optional("ARCANIUM_OIDC_ISSUER", ""),
+    internalUrl: optional("ARCANIUM_OIDC_INTERNAL_URL", "").replace(/\/$/, ""),
+    publicUrl: optional("ARCANIUM_OIDC_PUBLIC_URL", "").replace(/\/$/, ""),
+    clientId: optional("ARCANIUM_OIDC_CLIENT_ID", "arcanium-api"),
+    clientSecret: optional("ARCANIUM_OIDC_CLIENT_SECRET", ""),
+    // Must exactly match the redirect URI registered on the Keycloak client.
+    callbackUrl: optional("ARCANIUM_API_CALLBACK_URL", ""),
+    baseUrl: optional("ARCANIUM_BASE_URL", "http://localhost:3000"),
+    get enabled() {
+      return Boolean(
+        this.issuer &&
+          this.internalUrl &&
+          this.publicUrl &&
+          this.clientSecret &&
+          this.callbackUrl,
+      );
     },
   },
 };

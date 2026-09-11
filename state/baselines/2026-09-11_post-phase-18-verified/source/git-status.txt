@@ -1,0 +1,33 @@
+ M .env.example
+ M Makefile
+ M arcanium/api/package-lock.json
+ M arcanium/api/package.json
+ M arcanium/api/src/auth/index.js
+ M arcanium/api/src/config.js
+ M arcanium/api/src/index.js
+ M arcanium/api/src/routes/applications.js
+ M arcanium/api/src/routes/approvals.js
+ M arcanium/api/src/routes/keymgmt.js
+ M arcanium/api/src/routes/keys.js
+ M arcanium/api/src/routes/suppliers.js
+ M arcanium/ui/app/composables/useArcaniumApi.ts
+ M arcanium/ui/app/layouts/default.vue
+ M arcanium/ui/app/pages/login.vue
+ M arcanium/ui/nuxt.config.ts
+ M arcanium/ui/server/routes/gateway/[...path].ts
+ M compose/arcanium/compose.yaml
+ M docs/index.md
+ M docs/personas.md
+ M docs/security.md
+ M scripts/compose.sh
+ M state/CURRENT
+?? arcanium/api/src/auth/authorize.js
+?? arcanium/api/src/auth/oidc.js
+?? arcanium/api/src/middleware/securityHeaders.js
+?? arcanium/api/src/migrations/011_session_groups.sql
+?? arcanium/ui/server/routes/gateway/api/
+?? arcanium/ui/server/utils/
+?? compose/identity/
+?? scenarios/11_security_foundation/
+?? state/baselines/2026-09-11_post-phase-18-verified/
+?? state/baselines/2026-09-11_post-phase-18/

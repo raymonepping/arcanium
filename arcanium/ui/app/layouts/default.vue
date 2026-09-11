@@ -97,9 +97,34 @@
             <span>Vault UI</span>
           </a>
 
-          <span class="persona" :title="authEnabled ? 'Signed in — click to sign out' : 'Active viewpoint'" @click="authEnabled && signOut()">
-            <span class="persona-dot" />{{ personaLabel }}
-          </span>
+          <div class="user-menu" ref="userMenuRef">
+            <button
+              type="button"
+              class="persona"
+              :title="authEnabled ? 'Signed in — account details' : 'Active viewpoint'"
+              @click="userMenuOpen = !userMenuOpen"
+            >
+              <span class="persona-dot" :class="{ 'persona-dot--auth': authEnabled }" />{{ personaLabel }}
+            </button>
+
+            <div v-if="userMenuOpen" class="user-menu-panel" role="menu">
+              <template v-if="authEnabled">
+                <div class="umf-row umf-user">{{ username || 'signed in' }}</div>
+                <div class="umf-row umf-meta">{{ personaLabel }} · signed in via OIDC</div>
+                <div v-if="authGroups.length" class="umf-row umf-groups">
+                  <span v-for="g in authGroups" :key="g" class="umf-chip">{{ g }}</span>
+                </div>
+                <div v-if="tenantScopeNs.length" class="umf-row umf-meta">
+                  Scoped to {{ tenantScopeNs.join(', ') }}
+                </div>
+                <button type="button" class="umf-signout" @click="signOut">Sign out</button>
+              </template>
+              <template v-else>
+                <div class="umf-row umf-meta">Authentication is disabled on this deployment.</div>
+                <div class="umf-row umf-meta">Viewing as {{ personaLabel }} (demo viewpoint).</div>
+              </template>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -186,9 +211,14 @@ const config = useRuntimeConfig()
 const vaultUiUrl = (config.public.vaultUiUrl as string) || 'http://localhost:18200'
 
 // Prompt 14.5 — persona from the session (or "Operator" when auth is disabled).
+// Prompt 18 — also surfaces who is actually signed in (username + OIDC groups),
+// not just the role label, so "authenticated" is visibly provable in the UI
+// itself, not just true in the network tab.
 const { me, logout } = useArcaniumApi()
 const authEnabled = ref(false)
 const persona = ref('operator')
+const username = ref('')
+const authGroups = ref<string[]>([])
 const tenantScopeNs = ref<string[]>([])
 const personaLabel = computed(() =>
   persona.value ? persona.value.charAt(0).toUpperCase() + persona.value.slice(1).replace('-', ' ') : 'Operator',
@@ -198,13 +228,32 @@ onMounted(async () => {
     const m = await me()
     authEnabled.value = m.enabled !== false
     persona.value = m.persona || 'operator'
+    username.value = m.user || ''
+    authGroups.value = m.groups || []
     tenantScopeNs.value = m.namespaces || []
   } catch { /* not signed in — global middleware handles the redirect */ }
 })
 async function signOut() {
-  try { await logout() } catch { /* ignore */ }
+  try {
+    const { logoutUrl } = await logout()
+    // Prompt 18 — complete RP-initiated logout at Keycloak too (not just the
+    // Arcanium session) via a real full-page navigation, same reasoning as
+    // the sign-in redirect in app/pages/login.vue.
+    if (logoutUrl) { window.location.href = logoutUrl; return }
+  } catch { /* ignore */ }
   navigateTo('/login')
 }
+
+// ── Account details popover ────────────────────────────────
+const userMenuOpen = ref(false)
+const userMenuRef = ref<HTMLElement | null>(null)
+function onClickOutsideUserMenu(e: MouseEvent) {
+  if (userMenuOpen.value && userMenuRef.value && !userMenuRef.value.contains(e.target as Node)) {
+    userMenuOpen.value = false
+  }
+}
+onMounted(() => document.addEventListener('click', onClickOutsideUserMenu))
+onUnmounted(() => document.removeEventListener('click', onClickOutsideUserMenu))
 
 // ── Sidebar state ──────────────────────────────────────────
 const sidebarCollapsed = ref(false)
@@ -574,6 +623,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .vault-link:hover { color: var(--arc-action-bright); border-color: rgba(0, 180, 216, 0.35); }
 .vault-link svg { width: 13px; height: 13px; }
 
+.user-menu { position: relative; }
+
 .persona {
   display: flex;
   align-items: center;
@@ -583,9 +634,53 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   padding: 4px 10px 4px 8px;
   border: 1px solid var(--arc-glass-border);
   border-radius: 100px;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
 }
-.persona-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--arc-action-bright); }
-.persona { cursor: default; }
+.persona:hover { color: var(--arc-text-primary); border-color: rgba(0, 180, 216, 0.35); }
+.persona-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--arc-text-dim); }
+.persona-dot--auth { background: var(--arc-action-bright); box-shadow: 0 0 0 2px rgba(0, 180, 216, 0.18); }
+
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: var(--arc-glass);
+  border: 1px solid var(--arc-glass-border);
+  border-radius: 10px;
+  box-shadow: var(--arc-shadow-lg);
+  backdrop-filter: blur(14px);
+  padding: 10px 12px;
+  z-index: 40;
+}
+.umf-row { font-size: 12px; line-height: 1.5; }
+.umf-row + .umf-row { margin-top: 4px; }
+.umf-user { font-weight: 650; color: var(--arc-text-primary); font-size: 13px; }
+.umf-meta { color: var(--arc-text-muted); }
+.umf-groups { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.umf-chip {
+  font-size: 10.5px;
+  color: var(--arc-text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--arc-glass-border);
+  border-radius: 100px;
+  padding: 1px 8px;
+}
+.umf-signout {
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--arc-text-secondary);
+  background: none;
+  border: 1px solid var(--arc-glass-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.umf-signout:hover { color: var(--arc-text-primary); border-color: rgba(220, 90, 90, 0.4); }
 
 @media (max-width: 1180px) {
   .env-badge, .vault-link span, .persona { display: none; }

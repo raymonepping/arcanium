@@ -48,9 +48,16 @@ services:
       VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
       # Prompt 14.2 — provisioner token for cross-namespace writes
       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
-      # Prompt 14.5 — human auth (default off)
+      # Prompt 18 — human auth via OIDC (default off)
       ARCANIUM_AUTH_ENABLED: "${ARCANIUM_AUTH_ENABLED:-false}"
       ARCANIUM_DEMO_PERSONA_SWITCH: "${ARCANIUM_DEMO_PERSONA_SWITCH:-false}"
+      ARCANIUM_OIDC_ISSUER: "${ARCANIUM_OIDC_ISSUER:-}"
+      ARCANIUM_OIDC_INTERNAL_URL: "${ARCANIUM_OIDC_INTERNAL_URL:-}"
+      ARCANIUM_OIDC_PUBLIC_URL: "${ARCANIUM_OIDC_PUBLIC_URL:-}"
+      ARCANIUM_OIDC_CLIENT_ID: "${ARCANIUM_OIDC_CLIENT_ID:-arcanium-api}"
+      ARCANIUM_OIDC_CLIENT_SECRET: "${ARCANIUM_OIDC_CLIENT_SECRET:-}"
+      ARCANIUM_API_CALLBACK_URL: "${ARCANIUM_API_CALLBACK_URL:-}"
+      ARCANIUM_BASE_URL: "${ARCANIUM_BASE_URL:-http://localhost:3000}"
       # Prompt 15.6 — sync (run in request) | queue (arcanium-worker drains)
       PROVISION_MODE: "${PROVISION_MODE:-sync}"
       # Prompt 14.1 — read-only peek at vault-hsm to surface Managed Key custody

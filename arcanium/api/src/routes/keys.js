@@ -14,6 +14,7 @@ import {
   rewrapCiphertext,
   requestKeyDestroy,
 } from "../provisioner/key.js";
+import { authorize } from "../auth/authorize.js";
 
 export const keysRouter = Router();
 
@@ -147,6 +148,13 @@ keysRouter.post("/:name/rotate", async (req, res, next) => {
     const { name } = req.params;
     if (!KEY_NAME_RE.test(name))
       return res.status(400).json({ error: "invalid key name" });
+    const decision = authorize({ identity: req.identity, action: "rotate" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "rotate",
+        reason: decision.reason,
+      });
     const job = await createJob({
       target_type: "key",
       target_id: name,
@@ -171,14 +179,17 @@ keysRouter.post("/:name/rewrap", async (req, res, next) => {
     const { name } = req.params;
     if (!KEY_NAME_RE.test(name))
       return res.status(400).json({ error: "invalid key name" });
-    if (
-      req.identity &&
-      !["operator", "architect"].includes(req.identity.persona)
-    ) {
-      return res
-        .status(403)
-        .json({ error: "rewrap requires the operator persona" });
-    }
+    // Rewrap is operator-only per the Phase 18 authorization matrix — NOT
+    // architect (the previous inline check incorrectly allowed both; that
+    // was a real gap, not a stylistic difference — see
+    // scenarios/11_security_foundation/test_negative_auth.sh).
+    const decision = authorize({ identity: req.identity, action: "rewrap" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "rewrap",
+        reason: decision.reason,
+      });
     const ciphertext = (req.body ?? {}).ciphertext;
     const rewrapped = await rewrapCiphertext(name, ciphertext);
     res.json({ ciphertext: rewrapped });
@@ -194,6 +205,16 @@ keysRouter.post("/:name/destroy", async (req, res, next) => {
     const { name } = req.params;
     if (!KEY_NAME_RE.test(name))
       return res.status(400).json({ error: "invalid key name" });
+    const decision = authorize({
+      identity: req.identity,
+      action: "destroy_request",
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "destroy_request",
+        reason: decision.reason,
+      });
     const approval = await requestKeyDestroy(
       name,
       req.identity?.user ?? "arcanium-operator",

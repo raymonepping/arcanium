@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
       || /^api\/v1\/applications\/[a-f0-9-]+\/(provision|classify)$/.test(path)
       || /^api\/v1\/keys\/[a-zA-Z0-9_-]+\/(rotate|rewrap|destroy)$/.test(path)
       || /^api\/v1\/keymgmt\/[a-zA-Z0-9_.-]+\/(rotate|sync)$/.test(path)
-      || /^api\/v1\/auth\/(login|logout|demo-persona)$/.test(path)
+      || /^api\/v1\/auth\/(logout|demo-persona)$/.test(path)
     ))
     || (['PATCH', 'DELETE'].includes(event.method) && /^api\/v1\/(suppliers|applications)\/[a-f0-9-]+$/.test(path))
   if (!(event.method === 'GET' && read) && !write) {

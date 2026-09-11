@@ -15,6 +15,7 @@ import { Router } from "express";
 import { vaultRequest, getProvisionerToken } from "../vault.js";
 import { readFeatures } from "./platform.js";
 import { cryptoOp } from "../telemetry/metrics.js";
+import { authorize } from "../auth/authorize.js";
 
 export const keymgmtRouter = Router();
 
@@ -187,14 +188,15 @@ keymgmtRouter.get("/", async (_req, res, next) => {
   }
 });
 
+// Prompt 18 — routed through the central authorize() matrix. Both call
+// sites below are 'rotate' actions (key distribution rotate/sync) —
+// architect and operator, not ciso/auditor/supplier-admin.
 function requireOperator(req, res) {
-  if (
-    req.identity &&
-    !["operator", "architect"].includes(req.identity.persona)
-  ) {
+  const decision = authorize({ identity: req.identity, action: "rotate" });
+  if (decision.decision !== "ALLOW") {
     res
       .status(403)
-      .json({ error: "this action requires the operator persona" });
+      .json({ error: "forbidden", action: "rotate", reason: decision.reason });
     return false;
   }
   return true;

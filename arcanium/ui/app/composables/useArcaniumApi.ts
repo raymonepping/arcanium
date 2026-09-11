@@ -42,10 +42,12 @@ export function useArcaniumApi() {
     destroyKey: (name: string) =>
       $post<{ approval: ApprovalRecord; message: string }>(`/api/v1/keys/${encodeURIComponent(name)}/destroy`),
 
-    // ── Auth (Prompt 14.5) ────────────────────────────────
-    me: () => $get<{ enabled: boolean; user: string; persona: string; namespaces: string[]; demoSwitch?: boolean }>('/api/v1/auth/me'),
-    login: (username: string, password: string) => $post<{ user: string; persona: string }>('/api/v1/auth/login', { username, password }),
-    logout: () => $post<{ ok: boolean }>('/api/v1/auth/logout'),
+    // ── Auth (Prompt 18 — OIDC) ────────────────────────────
+    // Sign-in is a full-page navigation to /gateway/api/v1/auth/login, not a
+    // fetch call — see app/pages/login.vue. There is no username/password
+    // API call any more; Express is the OIDC client end-to-end.
+    me: () => $get<{ enabled: boolean; user: string; persona: string; namespaces: string[]; groups?: string[]; demoSwitch?: boolean }>('/api/v1/auth/me'),
+    logout: () => $post<{ ok: boolean; logoutUrl: string | null }>('/api/v1/auth/logout'),
     setDemoPersona: (persona: string) => $post<{ persona: string }>('/api/v1/auth/demo-persona', { persona }),
 
     // ── Platform / distribution (Prompt 14.3–14.4) ────────

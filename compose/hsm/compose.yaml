@@ -24,7 +24,26 @@ services:
     platform: linux/amd64
     environment:
       TOKEN_LABEL: "${SOFTHSM_TOKEN_LABEL}"
-      TOKEN_USER_PIN: "${SOFTHSM_USER_PIN}"
+      # TOKEN_USER_PIN deliberately set to empty (found by actually running
+      # this — the image bakes in its own default of "1234" when the var is
+      # merely omitted, which is not the real token's pin and fails the
+      # self-test even harder; an explicit empty string is what actually
+      # makes /opt/init-token.sh's `[[ -n ${TOKEN_USER_PIN:-} ]]` skip it):
+      # when the token already exists, /opt/init-token.sh runs
+      # `pkcs11-tool --test --pin $TOKEN_USER_PIN` as a self-check, which
+      # exercises a full decrypt-mechanism enumeration against every key
+      # already in the token — including docsign-hsm-rsa (a real, persisted
+      # signing-only key from Prompt 14.1). One mechanism in that sweep
+      # (RSA-PKCS-OAEP) fails with CKR_ARGUMENTS_BAD against this key, which
+      # this image's entrypoint treats as fatal, crash-looping the whole
+      # container (observed: 2800+ restarts, softhsm-server never stable
+      # long enough for vault-hsm's PKCS#11 proxy connection to land on a
+      # live IP). This env var only feeds that self-test — it plays no part
+      # in real PKCS#11 request handling (the client, vault-hsm, presents
+      # its own pin at C_Login time via SOFTHSM_USER_PIN, unaffected by
+      # this). TOKEN_SO_PIN is kept: its own admin-pin self-test passes
+      # cleanly and doesn't touch existing keys the same way.
+      TOKEN_USER_PIN: ""
       TOKEN_SO_PIN: "${SOFTHSM_SO_PIN}"
       TOKEN_AUTO_CREATE: "1"
       TOKEN_IMPORT_TEST_DATA: "0"
