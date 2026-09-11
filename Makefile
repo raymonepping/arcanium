@@ -392,3 +392,55 @@ openapi-explorer: ## Prompt 23 — open the Scalar API explorer (requires arcani
 scenario-fitness: ## Prompt 22 — architecture invariant checks (no Vault import in ui/, authorize() coverage, tenant-scope coverage, EXCEPTION_ACCEPTED regression guard, OpenAPI route coverage)
 	@chmod +x scenarios/13_fitness/test_architecture_invariants.sh
 	@./scenarios/13_fitness/test_architecture_invariants.sh
+
+# ── Pre-24 — Persistence, Rehydration & Deterministic Stack Recovery ───────
+# up/down/restart retain all persistent volumes — never call `down -v`,
+# `volume prune`, or any equivalent here. rehydrate runs the same
+# deterministic sequence as up (scripts/rehydrate-stack.sh is idempotent
+# end to end) but is the explicit name to reach for after anything that
+# might have left config or workload credentials stale: a container
+# recreation, a lost .env, or the "Missing required env var: VAULT_ROLE_ID"
+# failure class docs/persistence.md documents. See docs/bootstrap.md for
+# the full first-run/restart/recreate/reset decision tree.
+.PHONY: up down restart rehydrate workload-credentials-issue workload-credentials-verify \
+	reset-demo scenario-persistence-restart
+
+up: ## Bring the full stack up from existing persistent state (idempotent — safe to rerun)
+	@./scripts/rehydrate-stack.sh --core
+	@echo
+	@echo "Core stack is up. Run 'make workloads-up', 'make observability-up', 'make kms-sim-up' for the optional stacks, or 'make rehydrate' for the full sequence."
+
+down: ## Stop every stack WITHOUT deleting persistent volumes/data (never -v)
+	@./scripts/compose.sh workloads down 2>/dev/null || true
+	@./scripts/compose.sh kms-sim down 2>/dev/null || true
+	@./scripts/compose.sh observability down 2>/dev/null || true
+	@./scripts/compose.sh arcanium stop arcanium-ui arcanium-api arcanium-worker arcanium-api-dev 2>/dev/null || true
+	@./scripts/compose.sh identity down 2>/dev/null || true
+	@./scripts/compose.sh hsm down 2>/dev/null || true
+	@./scripts/compose.sh infra down 2>/dev/null || true
+	@./scripts/compose.sh vault down 2>/dev/null || true
+	@echo "All stacks stopped. Named volumes retained — 'make up' or 'make rehydrate' to bring the estate back."
+
+restart: down up ## Safe down + up, retaining all persistent data
+
+rehydrate: ## Run the full deterministic platform/config/credential reconstruction (all stacks, including optional ones)
+	@./scripts/rehydrate-stack.sh
+
+workload-credentials-issue: ## Reissue arcanium-api/arcanium-hsm-read/document-signing AppRole credentials (fixes "Missing required env var: VAULT_ROLE_ID")
+	@./scripts/workload-credentials.sh issue-all
+
+workload-credentials-verify: ## Verify every known workload's RoleID/SecretID pair actually logs in
+	@./scripts/workload-credentials.sh verify-all
+
+scenario-persistence-restart: ## Pre-24 — hostile restart/recreate/credential-loss persistence proof
+	@chmod +x scenarios/pre_24_persistence/test_restart_persistence.sh
+	@./scenarios/pre_24_persistence/test_restart_persistence.sh
+
+reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent volumes. Requires typing the project name to confirm.
+	@echo "This deletes ALL persistent volumes: PostgreSQL, every Vault instance, SoftHSM, LDAP, Keycloak, and the observability metric history."
+	@echo "This is NOT disaster recovery testing — Prompt 24 owns that. This is a full local reset."
+	@read -p "Type 'arcanium' to confirm: " confirm; [ "$$confirm" = "arcanium" ] || { echo "Aborted."; exit 1; }
+	@for s in workloads kms-sim observability arcanium identity hsm infra vault; do \
+		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+	done
+	@echo "All stacks and volumes removed."
