@@ -1,0 +1,10 @@
+ M Makefile
+ M arcanium/api/package-lock.json
+ M arcanium/api/package.json
+ M arcanium/api/src/config.js
+ M arcanium/api/src/index.js
+ M compose/arcanium/compose.yaml
+ M docs/api.md
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M state/CURRENT
+?? state/baselines/2026-09-11_pre-prompt-23/

@@ -15,5 +15,8 @@
     "js-yaml": "^5.4.1",
     "openid-client": "^6.8.8",
     "pg": "^8.13.3"
+  },
+  "devDependencies": {
+    "@scalar/express-api-reference": "^0.10.18"
   }
 }

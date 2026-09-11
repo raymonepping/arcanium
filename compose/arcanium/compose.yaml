@@ -51,6 +51,8 @@ services:
       # Prompt 18 — human auth via OIDC (default off)
       ARCANIUM_AUTH_ENABLED: "${ARCANIUM_AUTH_ENABLED:-false}"
       ARCANIUM_DEMO_PERSONA_SWITCH: "${ARCANIUM_DEMO_PERSONA_SWITCH:-false}"
+      # Prompt 23 — interactive API explorer at /api-docs (default off; NODE_ENV=production is an additional hard block)
+      ARCANIUM_API_EXPLORER_ENABLED: "${ARCANIUM_API_EXPLORER_ENABLED:-false}"
       ARCANIUM_OIDC_ISSUER: "${ARCANIUM_OIDC_ISSUER:-}"
       ARCANIUM_OIDC_INTERNAL_URL: "${ARCANIUM_OIDC_INTERNAL_URL:-}"
       ARCANIUM_OIDC_PUBLIC_URL: "${ARCANIUM_OIDC_PUBLIC_URL:-}"

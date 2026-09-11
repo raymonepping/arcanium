@@ -62,6 +62,15 @@ const config = {
     demoSwitch: optional("ARCANIUM_DEMO_PERSONA_SWITCH", "false") === "true",
   },
 
+  // Prompt 23 — interactive API explorer via Scalar. Default OFF.
+  // Two independent conditions are required to mount it (index.js): this flag
+  // must be true AND NODE_ENV must not be 'production'. compose/arcanium/
+  // compose.yaml hardcodes NODE_ENV=production unconditionally, so the flag
+  // is the real opt-in gate locally; NODE_ENV is a hard safety net for real
+  // deployments. Same pattern as ARCANIUM_AUTH_ENABLED/ARCANIUM_DEMO_PERSONA_SWITCH.
+  apiExplorerEnabled:
+    optional("ARCANIUM_API_EXPLORER_ENABLED", "false") === "true",
+
   // Prompt 18 — OIDC (Keycloak, LDAP-federated). Express is the confidential
   // client end-to-end; the browser never sees an OIDC or Vault token.
   // Deliberately dual-hostname (input/36): `internalUrl` is what THIS

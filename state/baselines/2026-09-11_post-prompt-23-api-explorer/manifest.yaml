@@ -1,0 +1,60 @@
+baseline:
+  id: 2026-09-11_post-prompt-23-api-explorer
+  purpose: "post Prompt 23 — Scalar API explorer implemented"
+  captured_at: 2026-09-11T13:55:25Z
+  project: "arcanium"
+  previous_baseline: "2026-09-11_pre-prompt-23"
+  git:
+    commit: "88ef943e7c22c4a2f7290c2811df46c180e6bc68"
+    branch: "main"
+    tag: "none"
+    dirty: true
+
+runtime:
+  type: podman
+  architecture: "arm64"
+
+components:
+  arcanium:
+    capture_status: CAPTURED
+  vault:
+    capture_status: UNKNOWN
+  hsm:
+    capture_status: CAPTURED
+  identity:
+    capture_status: CAPTURED
+  infra:
+    capture_status: UNKNOWN
+  kms:
+    capture_status: CAPTURED
+  observability:
+    capture_status: CAPTURED
+  workloads:
+    capture_status: CAPTURED
+
+verification:
+  supplier_isolation: UNKNOWN
+  oidc_discovery: PASS
+  reconciliation: UNKNOWN
+  maturity: UNKNOWN
+  onboarding: UNKNOWN
+  transit: UNKNOWN
+  pki: UNKNOWN
+  kmip: UNKNOWN
+  managed_key: UNKNOWN
+  sentinel_negative: UNKNOWN
+
+capture:
+  overall: PARTIAL
+  checks:
+    source: CAPTURED
+    runtime: CAPTURED
+    arcanium: CAPTURED
+    vault: UNKNOWN
+    hsm: CAPTURED
+    identity: CAPTURED
+    infra: UNKNOWN
+    kms: CAPTURED
+    observability: CAPTURED
+    workloads: CAPTURED
+    verification: CAPTURED

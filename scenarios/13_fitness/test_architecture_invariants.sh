@@ -156,6 +156,22 @@ else
   unk "EXCEPTION_ACCEPTED regression guard — identity stack/API/jq not reachable"
 fi
 
+# ── Prompt 23 — API explorer default-off guard ───────────────────────────
+# The explorer must not be reachable with default compose-file settings
+# (NODE_ENV=production AND ARCANIUM_API_EXPLORER_ENABLED unset/false).
+# This checks the real running container — if HTTP 200 comes back something
+# has accidentally enabled the explorer in a default deployment.
+EXPLORER_STATUS=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+  http://localhost:3001/api-docs 2>/dev/null || echo "000")
+if [ "$EXPLORER_STATUS" = "000" ]; then
+  unk "API explorer default-off guard — arcanium-api not reachable"
+elif [ "$EXPLORER_STATUS" = "200" ]; then
+  bad "API explorer is reachable without ARCANIUM_API_EXPLORER_ENABLED=true — the default-off gate has been bypassed"
+else
+  # 401 = route does not exist (requireSession fires before 404); 404 = also fine
+  ok "API explorer not reachable by default (HTTP $EXPLORER_STATUS) — default-off gate intact"
+fi
+
 echo
 TOTAL=$((PASS + FAIL + UNKNOWN))
 echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="

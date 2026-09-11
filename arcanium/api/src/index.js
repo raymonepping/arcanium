@@ -76,6 +76,46 @@ async function main() {
   app.use("/api/v1/observability", observabilityRouter);
   app.use("/api/v1/maturity", maturityRouter);
 
+  // Prompt 23 — API explorer (Scalar). Two conditions both required:
+  //   1. ARCANIUM_API_EXPLORER_ENABLED=true  — explicit opt-in, default off
+  //   2. NODE_ENV !== 'production'            — hard safety net
+  // compose/arcanium/compose.yaml sets NODE_ENV=production unconditionally for
+  // this container, so condition 2 is what keeps it off in the running stack by
+  // default; condition 1 is what turns it on locally when the operator sets the
+  // flag. Both must hold — neither alone is sufficient.
+  // The Scalar UI bundle loads from cdn.jsdelivr.net in the developer's browser
+  // at runtime (not a local bundle — see prompts/23_api_explorer.md Option A).
+  if (config.apiExplorerEnabled && config.nodeEnv !== "production") {
+    const { readFileSync } = await import("node:fs");
+    const { resolve, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const { apiReference } = await import("@scalar/express-api-reference");
+
+    const specPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../openapi/arcanium.yaml",
+    );
+    const spec = readFileSync(specPath, "utf8");
+
+    app.use(
+      "/api-docs",
+      apiReference({
+        spec: { content: spec },
+        // Use the direct API server (servers[0] in openapi/arcanium.yaml),
+        // not the Nuxt gateway — /api-docs is a backend-developer tool.
+        servers: [{ url: "http://localhost:3001", description: "Direct API" }],
+        // Do not inject a default auth value — the operator's browser cookie
+        // (arc_session) is already in play when they open this in the same
+        // browser profile they used to log into the Arcanium UI.
+        authentication: { preferredSecurityScheme: "sessionCookie" },
+      }),
+    );
+
+    console.log(
+      "[startup] API explorer: http://localhost:3001/api-docs (ARCANIUM_API_EXPLORER_ENABLED=true)",
+    );
+  }
+
   // 404 for unknown routes
   app.use((_req, res) => res.status(404).json({ error: "not found" }));
 

@@ -365,7 +365,7 @@ scenario-evidence-v2: ## Prompt 21 — hostile gated-maturity proof (forced FAIL
 	@./scenarios/14_evidence_v2/test_gated_maturity.sh
 
 # ── Prompt 22 — OpenAPI / State Machines / CI Fitness Tests ────────────────
-.PHONY: openapi-generate openapi-lint scenario-fitness
+.PHONY: openapi-generate openapi-lint openapi-explorer scenario-fitness
 
 openapi-generate: ## Prompt 22 — regenerate arcanium/ui/app/types/api.generated.ts + the arcanium/api build-context mirror from openapi/arcanium.yaml
 	cd arcanium/ui && npm run generate:api-types
@@ -375,6 +375,12 @@ openapi-generate: ## Prompt 22 — regenerate arcanium/ui/app/types/api.generate
 
 openapi-lint: ## Prompt 22 — validate openapi/arcanium.yaml itself
 	npx --yes @redocly/cli@latest lint openapi/arcanium.yaml
+
+openapi-explorer: ## Prompt 23 — open the Scalar API explorer (requires arcanium-api running with ARCANIUM_API_EXPLORER_ENABLED=true and NODE_ENV!=production)
+	@echo "API explorer: http://localhost:3001/api-docs"
+	@echo "Requires: ARCANIUM_API_EXPLORER_ENABLED=true in .env and arcanium-api restarted"
+	@open http://localhost:3001/api-docs 2>/dev/null || \
+	  echo "(Could not open browser automatically — visit http://localhost:3001/api-docs)"
 
 scenario-fitness: ## Prompt 22 — architecture invariant checks (no Vault import in ui/, authorize() coverage, tenant-scope coverage, EXCEPTION_ACCEPTED regression guard, OpenAPI route coverage)
 	@chmod +x scenarios/13_fitness/test_architecture_invariants.sh

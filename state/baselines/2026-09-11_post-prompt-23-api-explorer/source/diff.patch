@@ -1,0 +1,363 @@
+diff --git a/Makefile b/Makefile
+index 7e54684..7f60b67 100644
+--- a/Makefile
++++ b/Makefile
+@@ -365,7 +365,7 @@ scenario-evidence-v2: ## Prompt 21 — hostile gated-maturity proof (forced FAIL
+ 	@./scenarios/14_evidence_v2/test_gated_maturity.sh
+ 
+ # ── Prompt 22 — OpenAPI / State Machines / CI Fitness Tests ────────────────
+-.PHONY: openapi-generate openapi-lint scenario-fitness
++.PHONY: openapi-generate openapi-lint openapi-explorer scenario-fitness
+ 
+ openapi-generate: ## Prompt 22 — regenerate arcanium/ui/app/types/api.generated.ts + the arcanium/api build-context mirror from openapi/arcanium.yaml
+ 	cd arcanium/ui && npm run generate:api-types
+@@ -376,6 +376,12 @@ openapi-generate: ## Prompt 22 — regenerate arcanium/ui/app/types/api.generate
+ openapi-lint: ## Prompt 22 — validate openapi/arcanium.yaml itself
+ 	npx --yes @redocly/cli@latest lint openapi/arcanium.yaml
+ 
++openapi-explorer: ## Prompt 23 — open the Scalar API explorer (requires arcanium-api running with ARCANIUM_API_EXPLORER_ENABLED=true and NODE_ENV!=production)
++	@echo "API explorer: http://localhost:3001/api-docs"
++	@echo "Requires: ARCANIUM_API_EXPLORER_ENABLED=true in .env and arcanium-api restarted"
++	@open http://localhost:3001/api-docs 2>/dev/null || \
++	  echo "(Could not open browser automatically — visit http://localhost:3001/api-docs)"
++
+ scenario-fitness: ## Prompt 22 — architecture invariant checks (no Vault import in ui/, authorize() coverage, tenant-scope coverage, EXCEPTION_ACCEPTED regression guard, OpenAPI route coverage)
+ 	@chmod +x scenarios/13_fitness/test_architecture_invariants.sh
+ 	@./scenarios/13_fitness/test_architecture_invariants.sh
+diff --git a/arcanium/api/package-lock.json b/arcanium/api/package-lock.json
+index f5b68ae..ac5a803 100644
+--- a/arcanium/api/package-lock.json
++++ b/arcanium/api/package-lock.json
+@@ -13,6 +13,87 @@
+         "js-yaml": "^5.4.1",
+         "openid-client": "^6.8.8",
+         "pg": "^8.13.3"
++      },
++      "devDependencies": {
++        "@scalar/express-api-reference": "^0.10.18"
++      }
++    },
++    "node_modules/@scalar/client-side-rendering": {
++      "version": "0.4.0",
++      "resolved": "https://registry.npmjs.org/@scalar/client-side-rendering/-/client-side-rendering-0.4.0.tgz",
++      "integrity": "sha512-a8OUod1LZbNqkPv73ijRPL3MH2/3E92I5Awa9mGXtCaIVavY3JcF7+qZW4GOtffihTfuD/CxhZ+CnQhCZds2oQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@scalar/schemas": "0.9.0",
++        "@scalar/types": "0.19.0",
++        "@scalar/validation": "0.6.3"
++      },
++      "engines": {
++        "node": ">=22"
++      }
++    },
++    "node_modules/@scalar/express-api-reference": {
++      "version": "0.10.18",
++      "resolved": "https://registry.npmjs.org/@scalar/express-api-reference/-/express-api-reference-0.10.18.tgz",
++      "integrity": "sha512-PvDEMUNwfMnn0ak7L+rfbN6YwSY4UtM6SaOZPVjvGvHqxt7GrMV8rdax/Vu9sOLK1pL5F92K/UVmu0K9eMEcdQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@scalar/client-side-rendering": "0.4.0"
++      },
++      "engines": {
++        "node": ">=22"
++      }
++    },
++    "node_modules/@scalar/helpers": {
++      "version": "0.11.3",
++      "resolved": "https://registry.npmjs.org/@scalar/helpers/-/helpers-0.11.3.tgz",
++      "integrity": "sha512-4zPzuNTXObDUtZS93xzAoK83ddHDgBGifv/vKFe6bHqEl5i+IMLTTtEHOaaOZK4dusPEXcXsU5TBSaY/I6Mi+A==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=22"
++      }
++    },
++    "node_modules/@scalar/schemas": {
++      "version": "0.9.0",
++      "resolved": "https://registry.npmjs.org/@scalar/schemas/-/schemas-0.9.0.tgz",
++      "integrity": "sha512-yYRlIWzw+7HuIX4z7rk7tg4y1nERwvvWKbolZOm7LveSTrppllGKyjtnIqS5uXsmJddERxuurSgDW224gGJlFQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@scalar/helpers": "0.11.3",
++        "@scalar/validation": "0.6.3"
++      },
++      "engines": {
++        "node": ">=22"
++      }
++    },
++    "node_modules/@scalar/types": {
++      "version": "0.19.0",
++      "resolved": "https://registry.npmjs.org/@scalar/types/-/types-0.19.0.tgz",
++      "integrity": "sha512-EKeoWgUlP+uepbM/zEHKbsdpBNyOmSrw6DdU/WC0p53gz5uRzI7d/IEecIP9SQMUkResPR9DmWeWfFQftG7vqg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@scalar/helpers": "0.11.3",
++        "nanoid": "^5.1.6",
++        "type-fest": "^5.8.0",
++        "zod": "^4.4.3"
++      },
++      "engines": {
++        "node": ">=22"
++      }
++    },
++    "node_modules/@scalar/validation": {
++      "version": "0.6.3",
++      "resolved": "https://registry.npmjs.org/@scalar/validation/-/validation-0.6.3.tgz",
++      "integrity": "sha512-j3s9XPv8Wo1EG5/naBi4XGF0uXYQ2A3QZNI0NKWgCMxRHVrDJGlZEYymcHDHY7fquRm73P8U3c8xqJqB5yad6w==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=20"
+       }
+     },
+     "node_modules/accepts": {
+@@ -610,6 +691,25 @@
+       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+       "license": "MIT"
+     },
++    "node_modules/nanoid": {
++      "version": "5.1.16",
++      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-5.1.16.tgz",
++      "integrity": "sha512-kVrnsrJqMR8+oLJnGEmSWw9BivK5mt7H3FZatVRjrc5wGqFYuBxX1yG7+A7Gi5AefkX6t/oCkizcQgpu0cY1dQ==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "bin": {
++        "nanoid": "bin/nanoid.js"
++      },
++      "engines": {
++        "node": "^18 || >=20"
++      }
++    },
+     "node_modules/negotiator": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/negotiator/-/negotiator-1.1.0.tgz",
+@@ -1071,6 +1171,19 @@
+         "node": ">= 0.8"
+       }
+     },
++    "node_modules/tagged-tag": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/tagged-tag/-/tagged-tag-1.0.0.tgz",
++      "integrity": "sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=20"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/toidentifier": {
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz",
+@@ -1080,6 +1193,22 @@
+         "node": ">=0.6"
+       }
+     },
++    "node_modules/type-fest": {
++      "version": "5.9.0",
++      "resolved": "https://registry.npmjs.org/type-fest/-/type-fest-5.9.0.tgz",
++      "integrity": "sha512-yANm3Jr3GiJ1qgJlxGAVxTOIcEOk1rhQHamlXtnrCK7EHP4HeM9OGxtMg/W7HFdrVzw/ZWJKGVIJusVH85sLtw==",
++      "dev": true,
++      "license": "(MIT OR CC0-1.0)",
++      "dependencies": {
++        "tagged-tag": "^1.0.0"
++      },
++      "engines": {
++        "node": ">=20"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/type-is": {
+       "version": "2.1.0",
+       "resolved": "https://registry.npmjs.org/type-is/-/type-is-2.1.0.tgz",
+@@ -1143,6 +1272,16 @@
+       "engines": {
+         "node": ">=0.4"
+       }
++    },
++    "node_modules/zod": {
++      "version": "4.6.2",
++      "resolved": "https://registry.npmjs.org/zod/-/zod-4.6.2.tgz",
++      "integrity": "sha512-lh5RCAGFa1Cm2hjtNwLQhSs/AsqdWnTQaBER9fEwN/88pSh7KOtJavtBx/0VlkN/uFd61SwYmljLMDAsHlvzBQ==",
++      "dev": true,
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/colinhacks"
++      }
+     }
+   }
+ }
+diff --git a/arcanium/api/package.json b/arcanium/api/package.json
+index dd79f99..e0b3dc5 100644
+--- a/arcanium/api/package.json
++++ b/arcanium/api/package.json
+@@ -15,5 +15,8 @@
+     "js-yaml": "^5.4.1",
+     "openid-client": "^6.8.8",
+     "pg": "^8.13.3"
++  },
++  "devDependencies": {
++    "@scalar/express-api-reference": "^0.10.18"
+   }
+ }
+diff --git a/arcanium/api/src/config.js b/arcanium/api/src/config.js
+index d54d409..fd287dc 100644
+--- a/arcanium/api/src/config.js
++++ b/arcanium/api/src/config.js
+@@ -62,6 +62,14 @@ const config = {
+     demoSwitch: optional("ARCANIUM_DEMO_PERSONA_SWITCH", "false") === "true",
+   },
+ 
++  // Prompt 23 — interactive API explorer via Scalar. Default OFF.
++  // Two independent conditions are required to mount it (index.js): this flag
++  // must be true AND NODE_ENV must not be 'production'. compose/arcanium/
++  // compose.yaml hardcodes NODE_ENV=production unconditionally, so the flag
++  // is the real opt-in gate locally; NODE_ENV is a hard safety net for real
++  // deployments. Same pattern as ARCANIUM_AUTH_ENABLED/ARCANIUM_DEMO_PERSONA_SWITCH.
++  apiExplorerEnabled: optional("ARCANIUM_API_EXPLORER_ENABLED", "false") === "true",
++
+   // Prompt 18 — OIDC (Keycloak, LDAP-federated). Express is the confidential
+   // client end-to-end; the browser never sees an OIDC or Vault token.
+   // Deliberately dual-hostname (input/36): `internalUrl` is what THIS
+diff --git a/arcanium/api/src/index.js b/arcanium/api/src/index.js
+index 5db1fe4..20ee430 100644
+--- a/arcanium/api/src/index.js
++++ b/arcanium/api/src/index.js
+@@ -76,6 +76,46 @@ async function main() {
+   app.use("/api/v1/observability", observabilityRouter);
+   app.use("/api/v1/maturity", maturityRouter);
+ 
++  // Prompt 23 — API explorer (Scalar). Two conditions both required:
++  //   1. ARCANIUM_API_EXPLORER_ENABLED=true  — explicit opt-in, default off
++  //   2. NODE_ENV !== 'production'            — hard safety net
++  // compose/arcanium/compose.yaml sets NODE_ENV=production unconditionally for
++  // this container, so condition 2 is what keeps it off in the running stack by
++  // default; condition 1 is what turns it on locally when the operator sets the
++  // flag. Both must hold — neither alone is sufficient.
++  // The Scalar UI bundle loads from cdn.jsdelivr.net in the developer's browser
++  // at runtime (not a local bundle — see prompts/23_api_explorer.md Option A).
++  if (config.apiExplorerEnabled && config.nodeEnv !== "production") {
++    const { readFileSync } = await import("node:fs");
++    const { resolve, dirname } = await import("node:path");
++    const { fileURLToPath } = await import("node:url");
++    const { apiReference } = await import("@scalar/express-api-reference");
++
++    const specPath = resolve(
++      dirname(fileURLToPath(import.meta.url)),
++      "../openapi/arcanium.yaml",
++    );
++    const spec = readFileSync(specPath, "utf8");
++
++    app.use(
++      "/api-docs",
++      apiReference({
++        spec: { content: spec },
++        // Use the direct API server (servers[0] in openapi/arcanium.yaml),
++        // not the Nuxt gateway — /api-docs is a backend-developer tool.
++        servers: [{ url: "http://localhost:3001", description: "Direct API" }],
++        // Do not inject a default auth value — the operator's browser cookie
++        // (arc_session) is already in play when they open this in the same
++        // browser profile they used to log into the Arcanium UI.
++        authentication: { preferredSecurityScheme: "sessionCookie" },
++      }),
++    );
++
++    console.log(
++      "[startup] API explorer: http://localhost:3001/api-docs (ARCANIUM_API_EXPLORER_ENABLED=true)",
++    );
++  }
++
+   // 404 for unknown routes
+   app.use((_req, res) => res.status(404).json({ error: "not found" }));
+ 
+diff --git a/compose/arcanium/compose.yaml b/compose/arcanium/compose.yaml
+index 319807d..fb71481 100644
+--- a/compose/arcanium/compose.yaml
++++ b/compose/arcanium/compose.yaml
+@@ -51,6 +51,8 @@ services:
+       # Prompt 18 — human auth via OIDC (default off)
+       ARCANIUM_AUTH_ENABLED: "${ARCANIUM_AUTH_ENABLED:-false}"
+       ARCANIUM_DEMO_PERSONA_SWITCH: "${ARCANIUM_DEMO_PERSONA_SWITCH:-false}"
++      # Prompt 23 — interactive API explorer at /api-docs (default off; NODE_ENV=production is an additional hard block)
++      ARCANIUM_API_EXPLORER_ENABLED: "${ARCANIUM_API_EXPLORER_ENABLED:-false}"
+       ARCANIUM_OIDC_ISSUER: "${ARCANIUM_OIDC_ISSUER:-}"
+       ARCANIUM_OIDC_INTERNAL_URL: "${ARCANIUM_OIDC_INTERNAL_URL:-}"
+       ARCANIUM_OIDC_PUBLIC_URL: "${ARCANIUM_OIDC_PUBLIC_URL:-}"
+diff --git a/docs/api.md b/docs/api.md
+index 0fac47b..304ea4c 100644
+--- a/docs/api.md
++++ b/docs/api.md
+@@ -1,5 +1,24 @@
+ # API reference
+ 
++## Interactive explorer
++
++Set `ARCANIUM_API_EXPLORER_ENABLED=true` in `.env` and restart `arcanium-api`
++to serve an interactive [Scalar](https://scalar.com) explorer at:
++
++    http://localhost:3001/api-docs
++
++Off by default — same pattern as `ARCANIUM_AUTH_ENABLED`. Hard-blocked in the
++production container regardless of the flag (`NODE_ENV=production` in
++`compose/arcanium/compose.yaml`). Both conditions must hold to mount it.
++
++The explorer's UI bundle loads from `cdn.jsdelivr.net` in your browser at
++runtime; the API spec itself is always served locally from
++`openapi/arcanium.yaml`. Sign in to the Arcanium UI first — the explorer uses
++your existing `arc_session` cookie. Run `make openapi-generate` after editing
++the spec to keep the types and this explorer in sync.
++
++---
++
+ The Express API listens on port 3001 by default. Browser calls normally use the UI's same-origin gateway. The API is authoritative for business operations; the gateway must preserve required session context and expose only intended routes.
+ 
+ This reference describes implemented source routes. Optional routes can return unavailable/permission errors when dependencies, migrations, credentials or licenses are absent. Inspect the response and deployed version instead of assuming every route is active.
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index cda58ec..f6f8588 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -156,6 +156,22 @@ else
+   unk "EXCEPTION_ACCEPTED regression guard — identity stack/API/jq not reachable"
+ fi
+ 
++# ── Prompt 23 — API explorer default-off guard ───────────────────────────
++# The explorer must not be reachable with default compose-file settings
++# (NODE_ENV=production AND ARCANIUM_API_EXPLORER_ENABLED unset/false).
++# This checks the real running container — if HTTP 200 comes back something
++# has accidentally enabled the explorer in a default deployment.
++EXPLORER_STATUS=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
++  http://localhost:3001/api-docs 2>/dev/null || echo "000")
++if [ "$EXPLORER_STATUS" = "000" ]; then
++  unk "API explorer default-off guard — arcanium-api not reachable"
++elif [ "$EXPLORER_STATUS" = "200" ]; then
++  bad "API explorer is reachable without ARCANIUM_API_EXPLORER_ENABLED=true — the default-off gate has been bypassed"
++else
++  # 401 = route does not exist (requireSession fires before 404); 404 = also fine
++  ok "API explorer not reachable by default (HTTP $EXPLORER_STATUS) — default-off gate intact"
++fi
++
+ echo
+ TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+diff --git a/state/CURRENT b/state/CURRENT
+index 8913bce..35a9ee2 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-11_post-phase-22-complete
++state/baselines/2026-09-11_pre-prompt-23

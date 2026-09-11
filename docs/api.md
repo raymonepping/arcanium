@@ -1,5 +1,24 @@
 # API reference
 
+## Interactive explorer
+
+Set `ARCANIUM_API_EXPLORER_ENABLED=true` in `.env` and restart `arcanium-api`
+to serve an interactive [Scalar](https://scalar.com) explorer at:
+
+    http://localhost:3001/api-docs
+
+Off by default — same pattern as `ARCANIUM_AUTH_ENABLED`. Hard-blocked in the
+production container regardless of the flag (`NODE_ENV=production` in
+`compose/arcanium/compose.yaml`). Both conditions must hold to mount it.
+
+The explorer's UI bundle loads from `cdn.jsdelivr.net` in your browser at
+runtime; the API spec itself is always served locally from
+`openapi/arcanium.yaml`. Sign in to the Arcanium UI first — the explorer uses
+your existing `arc_session` cookie. Run `make openapi-generate` after editing
+the spec to keep the types and this explorer in sync.
+
+---
+
 The Express API listens on port 3001 by default. Browser calls normally use the UI's same-origin gateway. The API is authoritative for business operations; the gateway must preserve required session context and expose only intended routes.
 
 This reference describes implemented source routes. Optional routes can return unavailable/permission errors when dependencies, migrations, credentials or licenses are absent. Inspect the response and deployed version instead of assuming every route is active.
