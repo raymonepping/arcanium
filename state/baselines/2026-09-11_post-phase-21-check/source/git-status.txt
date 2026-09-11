@@ -1,0 +1,21 @@
+ M Makefile
+ M arcanium/api/src/index.js
+ M arcanium/api/src/maturity/scorer.js
+ M arcanium/api/src/provisioner/application.js
+ M arcanium/api/src/vault.js
+ M arcanium/cli/src/index.js
+ M arcanium/ui/app/composables/useArcaniumApi.ts
+ M arcanium/ui/app/pages/maturity.vue
+ M arcanium/ui/app/types/arcanium.ts
+ M arcanium/ui/server/routes/gateway/[...path].ts
+ M docs/maturity-model.md
+ M scenarios/11_security_foundation/test_negative_auth.sh
+ M state/CURRENT
+ M state/scripts/capture-state.sh
+?? arcanium/api/src/maturity/controls.js
+?? arcanium/api/src/migrations/013_controls.sql
+?? arcanium/api/src/migrations/014_scenario_runs.sql
+?? arcanium/api/src/routes/controls.js
+?? arcanium/cli/src/commands/controls.js
+?? scenarios/14_evidence_v2/
+?? state/baselines/2026-09-11_pre-phase-21/

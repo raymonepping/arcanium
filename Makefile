@@ -356,3 +356,10 @@ scenario-security-foundation: ## Prompt 18 — hostile negative-auth suite (401/
 scenario-reconciliation: ## Prompt 20 — hostile drift-detection proof (observe/drift/evidence/reconcile, survives a mid-sequence restart)
 	@chmod +x scenarios/12_reconciliation/test_drift_detection.sh
 	@./scenarios/12_reconciliation/test_drift_detection.sh
+
+# ── Prompt 21 — Evidence Model v2 ────────────────────────────────────────────
+.PHONY: scenario-evidence-v2
+
+scenario-evidence-v2: ## Prompt 21 — hostile gated-maturity proof (forced FAIL caps the level, Vault-unreachable yields UNKNOWN, both recover)
+	@chmod +x scenarios/14_evidence_v2/test_gated_maturity.sh
+	@./scenarios/14_evidence_v2/test_gated_maturity.sh

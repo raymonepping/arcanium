@@ -13,6 +13,25 @@ function getCa() {
   return _ca;
 }
 
+// Prompt 21 — found live while proving "Vault briefly unreachable yields
+// UNKNOWN quickly": none of these request helpers set a socket timeout, so
+// a network partition (no RST, no ICMP unreachable — exactly what a
+// disconnected podman network produces) hangs until the OS's own TCP
+// connect timeout, which can be well over a minute. That's not "briefly
+// unreachable, degrades gracefully" — it's an API request that appears to
+// hang. A bounded timeout turns a silent hang into a fast, honest error,
+// which every caller already treats as UNKNOWN (never fabricated as PASS).
+const REQUEST_TIMEOUT_MS = 5000;
+function armTimeout(req, method, path) {
+  req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    req.destroy(
+      new Error(
+        `Vault ${method} ${path} → timed out after ${REQUEST_TIMEOUT_MS}ms`,
+      ),
+    );
+  });
+}
+
 // ── Core HTTP helper ───────────────────────────────────────────────────────
 function vaultRequest(method, path, body, token) {
   return new Promise((resolve, reject) => {
@@ -54,6 +73,7 @@ function vaultRequest(method, path, body, token) {
       },
     );
 
+    armTimeout(req, method, path);
     req.on("error", reject);
     if (data) req.write(data);
     req.end();
@@ -268,6 +288,7 @@ function vaultRequestNs(method, path, body, token, namespace) {
         });
       },
     );
+    armTimeout(req, method, path);
     req.on("error", reject);
     if (data) req.write(data);
     req.end();
@@ -336,6 +357,7 @@ function hsmHttp(method, path, body, token) {
         });
       },
     );
+    armTimeout(req, method, path);
     req.on("error", reject);
     if (data) req.write(data);
     req.end();

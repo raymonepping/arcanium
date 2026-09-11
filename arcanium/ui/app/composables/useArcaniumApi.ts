@@ -76,6 +76,9 @@ export function useArcaniumApi() {
       return $get<ReconciliationRow[]>(`/api/v1/reconciliation${q ? `?${q}` : ''}`)
     },
     reconciliationDetail: (runId: string) => $get<ReconciliationDetail>(`/api/v1/reconciliation/${encodeURIComponent(runId)}`),
+    // ── Controls / Evidence v2 (Prompt 21) ─────────────────
+    controls: () => $get<any[]>('/api/v1/controls'),
+    control: (id: string) => $get<any>(`/api/v1/controls/${encodeURIComponent(id)}`),
     runReconciliation: (desiredStateId?: string) =>
       $post<any[]>('/api/v1/reconciliation/run', desiredStateId ? { desired_state_id: desiredStateId } : {}),
     reconcileRun: (runId: string) => $post<{ action: any; confirmation_run: any }>(`/api/v1/reconciliation/${encodeURIComponent(runId)}/reconcile`),

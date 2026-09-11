@@ -10,6 +10,7 @@ import { registerJobs } from "./commands/jobs.js";
 import { registerOnboard } from "./commands/onboard.js";
 import { registerIntegrations } from "./commands/integrations.js";
 import { registerReconciliation } from "./commands/reconciliation.js";
+import { registerControls, registerMaturity } from "./commands/controls.js";
 
 program
   .name("arcanium")
@@ -27,6 +28,8 @@ registerJobs(program);
 registerOnboard(program);
 registerIntegrations(program);
 registerReconciliation(program);
+registerControls(program);
+registerMaturity(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error("Error:", err.message);

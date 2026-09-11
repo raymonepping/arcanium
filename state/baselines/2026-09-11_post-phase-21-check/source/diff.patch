@@ -1,0 +1,884 @@
+diff --git a/Makefile b/Makefile
+index 9b64bb7..ebbcaa1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -356,3 +356,10 @@ scenario-security-foundation: ## Prompt 18 — hostile negative-auth suite (401/
+ scenario-reconciliation: ## Prompt 20 — hostile drift-detection proof (observe/drift/evidence/reconcile, survives a mid-sequence restart)
+ 	@chmod +x scenarios/12_reconciliation/test_drift_detection.sh
+ 	@./scenarios/12_reconciliation/test_drift_detection.sh
++
++# ── Prompt 21 — Evidence Model v2 ────────────────────────────────────────────
++.PHONY: scenario-evidence-v2
++
++scenario-evidence-v2: ## Prompt 21 — hostile gated-maturity proof (forced FAIL caps the level, Vault-unreachable yields UNKNOWN, both recover)
++	@chmod +x scenarios/14_evidence_v2/test_gated_maturity.sh
++	@./scenarios/14_evidence_v2/test_gated_maturity.sh
+diff --git a/arcanium/api/src/index.js b/arcanium/api/src/index.js
+index 92dbafd..5db1fe4 100644
+--- a/arcanium/api/src/index.js
++++ b/arcanium/api/src/index.js
+@@ -25,6 +25,7 @@ import { keymgmtRouter } from "./routes/keymgmt.js";
+ import { integrationsRouter } from "./routes/integrations.js";
+ import { evidenceRouter } from "./routes/evidence.js";
+ import { reconciliationRouter } from "./routes/reconciliation.js";
++import { controlsRouter } from "./routes/controls.js";
+ import { authRouter, requireSession } from "./auth/index.js";
+ import { observabilityRouter } from "./routes/observability.js";
+ import { metricsMiddleware, metricsHandler } from "./telemetry/metrics.js";
+@@ -71,6 +72,7 @@ async function main() {
+   app.use("/api/v1/integrations", integrationsRouter);
+   app.use("/api/v1/evidence", evidenceRouter);
+   app.use("/api/v1/reconciliation", reconciliationRouter);
++  app.use("/api/v1/controls", controlsRouter);
+   app.use("/api/v1/observability", observabilityRouter);
+   app.use("/api/v1/maturity", maturityRouter);
+ 
+diff --git a/arcanium/api/src/maturity/scorer.js b/arcanium/api/src/maturity/scorer.js
+index 18a8402..42e72f6 100644
+--- a/arcanium/api/src/maturity/scorer.js
++++ b/arcanium/api/src/maturity/scorer.js
+@@ -1,6 +1,15 @@
+-// maturity/scorer.js — assembles the five maturity dimensions + the level ladder
+-// into a single server-computed report. This is the authoritative maturity score;
+-// the UI renders it and does no scoring of its own.
++// maturity/scorer.js — Prompt 21: Evidence Model v2.
++//
++// Replaces the flat 5-dimension average with a gated level derived from
++// real control evidence (maturity/controls.js) — see that file's header
++// for the full rationale. This is the authoritative maturity report; the
++// UI renders it and does no scoring of its own.
++//
++// The 5 dimension scores (checks.js, Prompt 17) are kept as supplementary,
++// non-gating context per this phase's own Non-goals ("not replacing
++// Prompt 17's existing 5-dimension categories outright... does not
++// redesign what the dimensions measure") — they inform `dimensions[]`
++// only; they no longer determine `level`/`maturity`.
+ 
+ import {
+   dimKeyLifecycle,
+@@ -8,8 +17,17 @@ import {
+   dimGovernance,
+   dimAuditTrail,
+   dimAutomation,
+-  ladderChecks,
+ } from "./checks.js";
++import {
++  runControlAssessment,
++  rollupByControl,
++  gatedLevel,
++  levelCapReason,
++  computeCoverage,
++  computeConfidence,
++  MANDATORY_CONTROLS_PER_LEVEL,
++} from "./controls.js";
++import { query } from "../db.js";
+ 
+ // Level names from docs/maturity-model.md / Prompt 12.
+ const LEVEL_NAMES = {
+@@ -21,10 +39,6 @@ const LEVEL_NAMES = {
+   5: "Governed",
+ };
+ 
+-function levelFrom(overall) {
+-  return Math.max(0, Math.min(5, Math.floor(overall / 18)));
+-}
+-
+ function cls(score) {
+   if (score === 0) return "none";
+   if (score < 45) return "low";
+@@ -40,24 +54,52 @@ export async function computeMaturity() {
+     dimAuditTrail(),
+     dimAutomation(),
+   ]);
+-  const checks = await ladderChecks().catch(() => []);
+-
+   const dimensions = dims.map((d) => ({ ...d, cls: cls(d.score) }));
+-  const overall = Math.round(
+-    dimensions.reduce((a, d) => a + d.score, 0) / dimensions.length,
++
++  const assessments = await runControlAssessment();
++  const rollup = rollupByControl(assessments);
++  const level = gatedLevel(rollup);
++  const coverage = computeCoverage(assessments);
++  const confidence = computeConfidence(assessments);
++  const capReason = levelCapReason(rollup, level);
++
++  const { rows: catalogue } = await query(
++    "SELECT id, requirement, mandatory, dimension FROM controls ORDER BY id",
+   );
+-  const level = levelFrom(overall);
++  const controls = catalogue.map((c) => ({
++    ...c,
++    status: rollup[c.id] ?? "UNKNOWN",
++  }));
++
++  // Backward-compat shape for scenarios/08_evidence/collect.sh, which reads
++  // .level/.levelName/.score/.percentage/.checks[]. Real values now, not a
++  // separately-averaged number — a client that only ever read these fields
++  // keeps working and now sees the actual gate.
++  const checks = controls.map((c) => ({
++    id: c.id,
++    name: c.requirement,
++    level:
++      Object.entries(MANDATORY_CONTROLS_PER_LEVEL).find(([, ids]) =>
++        ids.includes(c.id),
++      )?.[0] ?? null,
++    passed: c.status === "PASS",
++    evidence: `${c.status} — ${c.dimension}`,
++  }));
+ 
+   return {
+-    overall,
+-    level,
++    maturity: level,
++    level, // alias — see backward-compat note above
+     levelName: LEVEL_NAMES[level],
++    levelCapReason: capReason,
++    coverage,
++    confidence,
++    controls,
+     dimensions,
+     checks,
+     // Kept for backward compatibility with scenarios/08_evidence/collect.sh.
+-    score: checks.filter((c) => c.passed).length,
+-    maxScore: checks.length,
+-    percentage: overall,
++    score: controls.filter((c) => c.status === "PASS").length,
++    maxScore: controls.length,
++    percentage: coverage,
+     generatedAt: new Date().toISOString(),
+     evaluatedAt: new Date().toISOString(),
+   };
+diff --git a/arcanium/api/src/provisioner/application.js b/arcanium/api/src/provisioner/application.js
+index d94bf02..acf4388 100644
+--- a/arcanium/api/src/provisioner/application.js
++++ b/arcanium/api/src/provisioner/application.js
+@@ -73,6 +73,18 @@ export async function provisionApplication(job, app, opts = {}) {
+         const body = { type: keyType };
+         if (rotationDays) body.auto_rotate_period = `${rotationDays * 24}h`;
+         await req("POST", `transit/keys/${keyName}`, body);
++        // Prompt 21 — found live via reconciliation evidence: Vault's key
++        // CREATE endpoint only applies auto_rotate_period on a brand-new
++        // key; re-provisioning an EXISTING key (e.g. to change rotation
++        // policy) silently no-ops on that field, leaving Vault's actual
++        // config out of sync with the desired_state Prompt 20 just seeded —
++        // real, correctly-detected drift, not a false positive. Always also
++        // write /config explicitly so re-provisioning actually converges.
++        if (rotationDays) {
++          await req("POST", `transit/keys/${keyName}/config`, {
++            auto_rotate_period: `${rotationDays * 24}h`,
++          });
++        }
+         return keyName;
+       },
+       undo: async () => {
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index 3edf107..1cbc567 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -13,6 +13,21 @@ function getCa() {
+   return _ca;
+ }
+ 
++// Prompt 21 — found live while proving "Vault briefly unreachable yields
++// UNKNOWN quickly": none of these request helpers set a socket timeout, so
++// a network partition (no RST, no ICMP unreachable — exactly what a
++// disconnected podman network produces) hangs until the OS's own TCP
++// connect timeout, which can be well over a minute. That's not "briefly
++// unreachable, degrades gracefully" — it's an API request that appears to
++// hang. A bounded timeout turns a silent hang into a fast, honest error,
++// which every caller already treats as UNKNOWN (never fabricated as PASS).
++const REQUEST_TIMEOUT_MS = 5000;
++function armTimeout(req, method, path) {
++  req.setTimeout(REQUEST_TIMEOUT_MS, () => {
++    req.destroy(new Error(`Vault ${method} ${path} → timed out after ${REQUEST_TIMEOUT_MS}ms`));
++  });
++}
++
+ // ── Core HTTP helper ───────────────────────────────────────────────────────
+ function vaultRequest(method, path, body, token) {
+   return new Promise((resolve, reject) => {
+@@ -54,6 +69,7 @@ function vaultRequest(method, path, body, token) {
+       },
+     );
+ 
++    armTimeout(req, method, path);
+     req.on("error", reject);
+     if (data) req.write(data);
+     req.end();
+@@ -268,6 +284,7 @@ function vaultRequestNs(method, path, body, token, namespace) {
+         });
+       },
+     );
++    armTimeout(req, method, path);
+     req.on("error", reject);
+     if (data) req.write(data);
+     req.end();
+@@ -336,6 +353,7 @@ function hsmHttp(method, path, body, token) {
+         });
+       },
+     );
++    armTimeout(req, method, path);
+     req.on("error", reject);
+     if (data) req.write(data);
+     req.end();
+diff --git a/arcanium/cli/src/index.js b/arcanium/cli/src/index.js
+index cf3b2dc..dd07c1b 100755
+--- a/arcanium/cli/src/index.js
++++ b/arcanium/cli/src/index.js
+@@ -10,6 +10,7 @@ import { registerJobs } from "./commands/jobs.js";
+ import { registerOnboard } from "./commands/onboard.js";
+ import { registerIntegrations } from "./commands/integrations.js";
+ import { registerReconciliation } from "./commands/reconciliation.js";
++import { registerControls, registerMaturity } from "./commands/controls.js";
+ 
+ program
+   .name("arcanium")
+@@ -27,6 +28,8 @@ registerJobs(program);
+ registerOnboard(program);
+ registerIntegrations(program);
+ registerReconciliation(program);
++registerControls(program);
++registerMaturity(program);
+ 
+ program.parseAsync(process.argv).catch((err) => {
+   console.error("Error:", err.message);
+diff --git a/arcanium/ui/app/composables/useArcaniumApi.ts b/arcanium/ui/app/composables/useArcaniumApi.ts
+index 06e033f..a111c18 100644
+--- a/arcanium/ui/app/composables/useArcaniumApi.ts
++++ b/arcanium/ui/app/composables/useArcaniumApi.ts
+@@ -76,6 +76,9 @@ export function useArcaniumApi() {
+       return $get<ReconciliationRow[]>(`/api/v1/reconciliation${q ? `?${q}` : ''}`)
+     },
+     reconciliationDetail: (runId: string) => $get<ReconciliationDetail>(`/api/v1/reconciliation/${encodeURIComponent(runId)}`),
++    // ── Controls / Evidence v2 (Prompt 21) ─────────────────
++    controls: () => $get<any[]>('/api/v1/controls'),
++    control: (id: string) => $get<any>(`/api/v1/controls/${encodeURIComponent(id)}`),
+     runReconciliation: (desiredStateId?: string) =>
+       $post<any[]>('/api/v1/reconciliation/run', desiredStateId ? { desired_state_id: desiredStateId } : {}),
+     reconcileRun: (runId: string) => $post<{ action: any; confirmation_run: any }>(`/api/v1/reconciliation/${encodeURIComponent(runId)}/reconcile`),
+diff --git a/arcanium/ui/app/pages/maturity.vue b/arcanium/ui/app/pages/maturity.vue
+index ff2b176..3ef7a17 100644
+--- a/arcanium/ui/app/pages/maturity.vue
++++ b/arcanium/ui/app/pages/maturity.vue
+@@ -2,18 +2,28 @@
+   <div class="mat">
+     <section class="arc-hero mat-hero">
+       <div>
+-        <p class="hero-eyebrow">Cryptographic maturity</p>
++        <p class="hero-eyebrow">Evidence-gated assessment</p>
+         <h2 class="hero-title">Where the estate stands today</h2>
+         <p class="hero-sub">
+-          Scored server-side by the Arcanium API across five dimensions, live from
+-          database and Vault signals plus workload crypto operations ingested from
+-          the Vault audit log. Each dimension shows the exact evidence it was
+-          derived from.
++          Maturity is gated, not averaged — a single mandatory control at
++          FAIL or UNKNOWN caps the level regardless of everything else.
++          Coverage and Confidence are separate numbers: how much of the
++          estate has evidence, and how strong that evidence is.
+         </p>
+       </div>
+-      <div v-if="report" class="mat-overall" :class="overallClass">
+-        <div class="mat-overall-num">{{ report.overall }}<span>%</span></div>
+-        <div class="mat-overall-lab">Level {{ report.level }} · {{ report.levelName }}</div>
++      <div v-if="report" class="mat-metrics">
++        <div class="metric" :class="levelClass">
++          <div class="metric-num">{{ report.maturity }}</div>
++          <div class="metric-lab">{{ report.levelName }}</div>
++        </div>
++        <div class="metric" :class="coverageClass">
++          <div class="metric-num">{{ report.coverage }}<span>%</span></div>
++          <div class="metric-lab">Coverage</div>
++        </div>
++        <div class="metric" :class="confidenceClass">
++          <div class="metric-num conf">{{ report.confidence }}</div>
++          <div class="metric-lab">Confidence</div>
++        </div>
+       </div>
+     </section>
+ 
+@@ -29,46 +39,90 @@
+           v-for="l in ladder"
+           :key="l.n"
+           class="rung"
+-          :class="{ current: l.n === report.level, reached: l.n <= report.level }"
++          :class="{ current: l.n === report.maturity, reached: l.n <= report.maturity }"
+         >
+           <span class="rung-n">{{ l.n }}</span>
+           <span class="rung-name">{{ l.name }}</span>
+         </div>
+       </div>
++      <p v-if="report.levelCapReason" class="cap-reason">
++        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.2"/><line x1="8" y1="4.5" x2="8" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.5" r="0.8" fill="currentColor"/></svg>
++        {{ report.levelCapReason }}
++      </p>
+ 
+-      <div class="dims">
+-        <div v-for="dim in report.dimensions" :key="dim.id" class="dim">
+-          <div class="dim-top">
+-            <span class="dim-name">{{ dim.name }}</span>
+-            <span class="dim-score" :class="dim.cls">{{ dim.score > 0 ? dim.score + '%' : 'No signal' }}</span>
+-          </div>
+-          <div class="dim-track">
+-            <div class="dim-fill" :class="dim.cls" :style="{ width: dim.score + '%' }" />
+-          </div>
+-          <div class="dim-basis">{{ dim.basis }}</div>
+-          <div v-if="dim.nextStep" class="dim-next">
+-            <svg viewBox="0 0 12 12" fill="none"><path d="M2 6h8M6 2l4 4-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+-            {{ dim.nextStep }}
+-          </div>
+-        </div>
++      <!-- Per-control evidence table — four distinct states, never a binary palette -->
++      <div class="section-header">
++        <h3 class="section-title">Controls <span class="card-title-sub">· {{ controlRows.length }} assessed</span></h3>
++      </div>
++      <div v-if="controlsLoading" class="row-loading">Loading control evidence…</div>
++      <div v-else-if="!controlRows.length" class="row-empty">
++        No control evidence visible to this session yet.
++      </div>
++      <div v-else class="table-wrap">
++        <table class="arc-table">
++          <thead>
++            <tr>
++              <th>Control</th><th>Scope</th><th>Status</th><th>Desired</th>
++              <th>Observed</th><th>Freshness</th><th>Confidence</th><th>Evidence</th>
++            </tr>
++          </thead>
++          <tbody>
++            <tr v-for="a in controlRows" :key="a.id">
++              <td>
++                <span class="control-id mono">{{ a.control_id }}</span>
++                <span v-if="a.mandatory" class="mandatory-tag">mandatory</span>
++              </td>
++              <td class="muted">{{ a.scope }}</td>
++              <td><span class="status-pill" :class="pillClass(a.status)">{{ a.status }}</span></td>
++              <td class="mono">{{ short(a.desired_value) }}</td>
++              <td class="mono">{{ short(a.observed_value) }}</td>
++              <td class="muted">{{ a.freshness_seconds != null ? rel(a.freshness_seconds) : '—' }}</td>
++              <td><span class="conf-pill" :class="a.confidence">{{ a.confidence }}</span></td>
++              <td>
++                <NuxtLink
++                  v-if="a.evidence_refs?.reconciliation_run_id"
++                  :to="`/reconciliation/${a.evidence_refs.reconciliation_run_id}`"
++                  class="ev-link"
++                >reconciliation run →</NuxtLink>
++                <span v-else class="muted ev-detail">{{ evidenceSummary(a.evidence_refs) }}</span>
++              </td>
++            </tr>
++          </tbody>
++        </table>
+       </div>
+ 
+-      <div v-if="report.checks?.length" class="checks">
+-        <div class="checks-title">Level ladder — discrete checks</div>
+-        <div v-for="c in report.checks" :key="c.id" class="check" :class="{ pass: c.passed }">
+-          <span class="check-ico">{{ c.passed ? '✓' : '·' }}</span>
+-          <span class="check-name">{{ c.name }}</span>
+-          <span class="check-lvl">L{{ c.level }}</span>
+-          <span class="check-ev">{{ c.evidence }}</span>
+-        </div>
++      <!-- Prompt 17 dimensions — supplementary context, non-gating (Non-goals) -->
++      <div class="dims-card">
++        <button class="card-fold" :aria-expanded="showDims" @click="showDims = !showDims">
++          <span class="fold-caret" :class="{ open: showDims }">▸</span>
++          <h3 class="card-title">Signal dimensions <span class="card-title-sub">· supplementary, non-gating</span></h3>
++        </button>
++        <template v-if="showDims">
++          <div class="dims">
++            <div v-for="dim in report.dimensions" :key="dim.id" class="dim">
++              <div class="dim-top">
++                <span class="dim-name">{{ dim.name }}</span>
++                <span class="dim-score" :class="dim.cls">{{ dim.score > 0 ? dim.score + '%' : 'No signal' }}</span>
++              </div>
++              <div class="dim-track">
++                <div class="dim-fill" :class="dim.cls" :style="{ width: dim.score + '%' }" />
++              </div>
++              <div class="dim-basis">{{ dim.basis }}</div>
++              <div v-if="dim.nextStep" class="dim-next">
++                <svg viewBox="0 0 12 12" fill="none"><path d="M2 6h8M6 2l4 4-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
++                {{ dim.nextStep }}
++              </div>
++            </div>
++          </div>
++        </template>
+       </div>
+ 
+       <div class="coming-notice">
+         <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.2"/><line x1="8" y1="4.5" x2="8" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.5" r="0.8" fill="currentColor"/></svg>
+-        Scores are computed from live platform state — Vault key metadata, tenant namespaces, approval
+-        records, Sentinel policy, and audit-log evidence. Prometheus / OTel / Grafana are deployed and
+-        collecting; time-series signals (operation-rate trends, rotation-age SLOs) are not yet folded
+-        into the score.
++        Every control traces to real evidence — a live Vault read, a Prompt 20
++        reconciliation run, a Sentinel policy list, or a recorded hostile-scenario
++        result. UNKNOWN means no usable evidence was gathered this run; it is
++        never softened to FAIL or fabricated as PASS.
+         <span v-if="report.generatedAt" class="gen">Generated {{ new Date(report.generatedAt).toLocaleString('en-GB') }}.</span>
+       </div>
+     </template>
+@@ -78,28 +132,63 @@
+ <script setup lang="ts">
+ import { ref, computed, onMounted } from 'vue'
+ import { useArcaniumApi } from '~/composables/useArcaniumApi'
+-import type { MaturityReport } from '~/types/arcanium'
++import type { MaturityReport, ControlAssessment } from '~/types/arcanium'
+ import { apiErrorMessage, apiErrorStatus } from '~/utils/apiError'
+ 
+ definePageMeta({ layout: 'default' })
+ useHead({ title: 'Maturity' })
+ 
+-const { maturity } = useArcaniumApi()
++const { maturity, controls: fetchControls } = useArcaniumApi()
+ const loading = ref(true)
+ const error = ref('')
+ const report = ref<MaturityReport | null>(null)
++const controlsLoading = ref(true)
++const controlRows = ref<ControlAssessment[]>([])
++const showDims = ref(false)
+ 
+ const ladder = [
+   { n: 0, name: 'Unaware' }, { n: 1, name: 'Reactive' }, { n: 2, name: 'Defined' },
+   { n: 3, name: 'Managed' }, { n: 4, name: 'Optimised' }, { n: 5, name: 'Governed' },
+ ]
+-const overallClass = computed(() => {
+-  const o = report.value?.overall ?? 0
+-  if (o === 0) return 'none'
+-  if (o < 45) return 'low'
+-  if (o < 75) return 'mid'
+-  return 'high'
++const levelClass = computed(() => {
++  const l = report.value?.maturity ?? 0
++  return l >= 4 ? 'high' : l >= 2 ? 'mid' : l >= 1 ? 'low' : 'none'
+ })
++const coverageClass = computed(() => {
++  const c = report.value?.coverage ?? 0
++  return c >= 75 ? 'high' : c >= 45 ? 'mid' : c > 0 ? 'low' : 'none'
++})
++const confidenceClass = computed(() => {
++  const c = report.value?.confidence
++  return c === 'HIGH' ? 'high' : c === 'MEDIUM' ? 'mid' : 'low'
++})
++
++function pillClass(status: string) {
++  return status.replace('/', '-')
++}
++function short(v: unknown) {
++  if (v === null || v === undefined) return '—'
++  if (typeof v === 'object') {
++    const entries = Object.entries(v as Record<string, unknown>)
++    if (!entries.length) return '—'
++    return entries.map(([k, val]) => `${k}: ${val}`).join(', ')
++  }
++  return String(v)
++}
++function evidenceSummary(refs: Record<string, unknown> | undefined) {
++  if (!refs) return '—'
++  if (refs.detail) return String(refs.detail)
++  if (refs.method) return String(refs.method)
++  if (refs.error) return `error: ${refs.error}`
++  return Object.keys(refs).length ? JSON.stringify(refs) : '—'
++}
++function rel(seconds: number) {
++  if (seconds < 60) return `${seconds}s ago`
++  const m = Math.floor(seconds / 60)
++  if (m < 60) return `${m}m ago`
++  const h = Math.floor(m / 60)
++  return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`
++}
+ 
+ onMounted(async () => {
+   try {
+@@ -111,6 +200,11 @@ onMounted(async () => {
+   } finally {
+     loading.value = false
+   }
++  try {
++    controlRows.value = await fetchControls()
++  } catch { /* per-control detail is supplementary — headline already loaded */ } finally {
++    controlsLoading.value = false
++  }
+ })
+ </script>
+ 
+@@ -120,13 +214,17 @@ onMounted(async () => {
+ .hero-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--arc-action-bright); margin: 0 0 6px; }
+ .hero-title { font-size: 22px; font-weight: 750; letter-spacing: -0.02em; color: var(--arc-text-primary); margin: 0 0 8px; }
+ .hero-sub { font-size: 12.5px; color: var(--arc-text-muted); line-height: 1.6; max-width: 520px; margin: 0; }
+-.mat-overall { text-align: center; padding: 16px 24px; border-radius: 14px; border: 1px solid var(--arc-glass-border); background: rgba(0, 8, 24, 0.4); }
+-.mat-overall-num { font-size: 40px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; color: var(--arc-text-primary); }
+-.mat-overall-num span { font-size: 18px; color: var(--arc-text-muted); }
+-.mat-overall.high .mat-overall-num { color: var(--arc-healthy); }
+-.mat-overall.mid .mat-overall-num { color: var(--arc-action-bright); }
+-.mat-overall.low .mat-overall-num { color: var(--arc-warning); }
+-.mat-overall-lab { font-size: 11px; color: var(--arc-text-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-top: 6px; }
++
++.mat-metrics { display: flex; gap: 12px; }
++.metric { text-align: center; padding: 14px 20px; border-radius: 14px; border: 1px solid var(--arc-glass-border); background: rgba(0, 8, 24, 0.4); min-width: 92px; }
++.metric-num { font-size: 30px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; color: var(--arc-text-primary); }
++.metric-num.conf { font-size: 16px; letter-spacing: 0.04em; }
++.metric-num span { font-size: 15px; color: var(--arc-text-muted); }
++.metric.high .metric-num { color: var(--arc-healthy); }
++.metric.mid .metric-num { color: var(--arc-action-bright); }
++.metric.low .metric-num { color: var(--arc-warning); }
++.metric.none .metric-num { color: var(--arc-text-muted); }
++.metric-lab { font-size: 10px; color: var(--arc-text-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-top: 6px; }
+ 
+ .state-loading { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--arc-text-muted); font-size: 13px; }
+ .spinner { width: 24px; height: 24px; border: 2px solid var(--arc-border-strong); border-top-color: var(--arc-action-primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@@ -141,8 +239,44 @@ onMounted(async () => {
+ .rung.current { background: linear-gradient(180deg, rgba(0,119,182,0.2), rgba(0,119,182,0.05)); border-color: var(--arc-action-bright); }
+ .rung.current .rung-n, .rung.current .rung-name { color: var(--arc-text-primary); }
+ 
+-.dims { display: flex; flex-direction: column; gap: 12px; }
+-.dim { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: 12px; padding: 16px 18px; }
++.cap-reason { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--arc-critical); background: var(--arc-critical-bg); border: 1px solid rgba(220,47,2,0.25); border-radius: 8px; padding: 8px 12px; margin: 0; }
++.cap-reason svg { width: 14px; height: 14px; flex-shrink: 0; }
++
++.section-header { display: flex; align-items: center; gap: 10px; }
++.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-primary); margin: 0; }
++.card-title-sub { font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--arc-text-muted); }
++.row-loading, .row-empty { font-size: 12.5px; padding: 12px 0; color: var(--arc-text-muted); }
++
++.table-wrap { border: 1px solid var(--arc-glass-border); border-radius: 12px; overflow: hidden; background: var(--arc-glass); overflow-x: auto; }
++.arc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
++.arc-table th { text-align: left; padding: 9px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-muted); background: rgba(0,8,24,0.4); border-bottom: 1px solid var(--arc-border-subtle); white-space: nowrap; }
++.arc-table td { padding: 9px 12px; border-bottom: 1px solid var(--arc-border-subtle); color: var(--arc-text-secondary); }
++.arc-table tr:last-child td { border-bottom: none; }
++.control-id { font-weight: 700; }
++.mandatory-tag { font-size: 8.5px; margin-left: 6px; padding: 1px 5px; border-radius: 3px; background: rgba(255,170,0,0.14); color: var(--arc-governance); text-transform: uppercase; letter-spacing: 0.04em; }
++.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--arc-action-bright); }
++.muted { color: var(--arc-text-muted) !important; font-size: 11px; }
++.ev-link { font-size: 11px; color: var(--arc-action-bright); text-decoration: none; }
++.ev-link:hover { text-decoration: underline; }
++.ev-detail { font-family: ui-monospace, monospace; }
++
++.status-pill { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 100px; letter-spacing: 0.03em; }
++.status-pill.PASS { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
++.status-pill.FAIL { background: var(--arc-critical-bg); color: var(--arc-critical); }
++.status-pill.UNKNOWN { background: var(--arc-pending-bg); color: var(--arc-governance); }
++.status-pill.N-A { background: rgba(148,163,184,0.14); color: var(--arc-text-dim); }
++.conf-pill { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; letter-spacing: 0.04em; }
++.conf-pill.HIGH { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
++.conf-pill.MEDIUM { background: rgba(72,202,228,0.12); color: var(--arc-info); }
++.conf-pill.LOW { background: rgba(148,163,184,0.14); color: var(--arc-text-muted); }
++
++.dims-card { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: 12px; padding: 14px 18px; }
++.card-fold { display: flex; align-items: center; gap: 8px; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; font: inherit; color: inherit; width: 100%; text-align: left; }
++.card-fold:hover .card-title, .card-fold:hover .fold-caret { color: var(--arc-action-bright); }
++.fold-caret { font-size: 11px; color: var(--arc-text-muted); transition: transform 0.15s, color 0.15s; display: inline-block; }
++.fold-caret.open { transform: rotate(90deg); }
++.dims { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
++.dim { background: rgba(0,8,24,0.3); border: 1px solid var(--arc-border-subtle); border-radius: 10px; padding: 14px 16px; }
+ .dim-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+ .dim-name { font-size: 13px; font-weight: 700; color: var(--arc-text-primary); }
+ .dim-score { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
+@@ -159,17 +293,6 @@ onMounted(async () => {
+ .dim-next { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--arc-action-bright); margin-top: 8px; }
+ .dim-next svg { width: 12px; height: 12px; flex-shrink: 0; }
+ 
+-.checks { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: 12px; padding: 14px 18px; }
+-.checks-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--arc-text-muted); margin-bottom: 10px; }
+-.check { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 12px; color: var(--arc-text-muted); border-bottom: 1px solid var(--arc-border-subtle); }
+-.check:last-child { border-bottom: none; }
+-.check.pass { color: var(--arc-text-secondary); }
+-.check-ico { width: 14px; text-align: center; }
+-.check.pass .check-ico { color: var(--arc-healthy); }
+-.check-name { flex: 1; font-weight: 600; }
+-.check-lvl { font-size: 10px; color: var(--arc-text-dim); }
+-.check-ev { font-size: 10.5px; color: var(--arc-text-dim); font-family: ui-monospace, monospace; }
+-
+ .coming-notice { display: flex; align-items: flex-start; gap: 8px; padding: 14px 18px; background: rgba(255,255,255,0.02); border: 1px solid var(--arc-border-subtle); border-radius: 10px; font-size: 11.5px; color: var(--arc-text-muted); line-height: 1.6; }
+ .coming-notice.err { border-color: rgba(220,47,2,0.3); color: var(--arc-critical); }
+ .coming-notice svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; }
+diff --git a/arcanium/ui/app/types/arcanium.ts b/arcanium/ui/app/types/arcanium.ts
+index 1146f94..d9e26e7 100644
+--- a/arcanium/ui/app/types/arcanium.ts
++++ b/arcanium/ui/app/types/arcanium.ts
+@@ -212,10 +212,45 @@ export interface MaturityCheck {
+   evidence: string
+ }
+ 
++// ── Evidence v2 (Prompt 21) ────────────────────────────────────
++export type ControlStatus = 'PASS' | 'FAIL' | 'UNKNOWN' | 'N/A'
++export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW'
++
++export interface ControlSummary {
++  id: string
++  requirement: string
++  mandatory: boolean
++  dimension: string
++  status: ControlStatus
++}
++
++export interface ControlAssessment {
++  id: string
++  control_id: string
++  scope: string
++  status: ControlStatus
++  desired_value: Record<string, unknown> | null
++  observed_value: Record<string, unknown> | null
++  evidence_refs: Record<string, unknown>
++  freshness_seconds: number | null
++  confidence: ConfidenceLevel
++  assessed_at: string
++  requirement?: string
++  mandatory?: boolean
++  dimension?: string
++}
++
+ export interface MaturityReport {
+-  overall: number
+-  level: number
++  // Prompt 21 — gated, not averaged.
++  maturity: number
++  level: number           // alias of maturity, backward-compat
+   levelName: string
++  levelCapReason: string | null
++  coverage: number        // 0-100
++  confidence: ConfidenceLevel
++  controls: ControlSummary[]
++  // Prompt 17 — kept as supplementary, non-gating context (Non-goals).
++  overall?: number
+   dimensions: MaturityDimension[]
+   checks: MaturityCheck[]
+   generatedAt: string
+diff --git a/arcanium/ui/server/routes/gateway/[...path].ts b/arcanium/ui/server/routes/gateway/[...path].ts
+index d101e86..e585b2f 100644
+--- a/arcanium/ui/server/routes/gateway/[...path].ts
++++ b/arcanium/ui/server/routes/gateway/[...path].ts
+@@ -1,7 +1,7 @@
+ // Transport only: a fixed upstream, allowlisted API paths and no Vault credentials.
+ export default defineEventHandler(async (event) => {
+   const path = getRouterParam(event, 'path') || ''
+-  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
++  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation|controls)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
+   const write =
+     (event.method === 'POST' && (
+       /^api\/v1\/(approvals(\/[a-zA-Z0-9_-]+\/(approve|deny|authorize))?|suppliers|applications|keys)$/.test(path)
+diff --git a/docs/maturity-model.md b/docs/maturity-model.md
+index c4cf7c3..879adb1 100644
+--- a/docs/maturity-model.md
++++ b/docs/maturity-model.md
+@@ -1,72 +1,85 @@
+-# Maturity model
++# Maturity model (Evidence v2 — Prompt 21)
+ 
+-Arcanium exposes a server-side assessment at `GET /api/v1/maturity`. The report combines five weighted dimensions, explanatory basis strings, next steps and diagnostic checks. Treat it as an implementation-specific demonstration score, not a compliance certification.
++Arcanium exposes a server-side, evidence-gated assessment at `GET /api/v1/maturity`. This replaced the earlier flat 5-dimension average (Prompt 17): averaging let `Governance = 0` still reach "Level 4" if the other four dimensions scored high — acceptable for an early demo, not acceptable once authorization (Phase 18) and reconciliation (Phase 20) started producing evidence worth trusting or not trusting precisely.
+ 
+-The authoritative formulas are in [checks.js](../arcanium/api/src/maturity/checks.js) and [scorer.js](../arcanium/api/src/maturity/scorer.js). Historical UI percentages were computed from incomplete list responses and should not be compared as if they used the same model.
++The authoritative logic is in [controls.js](../arcanium/api/src/maturity/controls.js) (the gate, the control assessors, Coverage/Confidence) and [scorer.js](../arcanium/api/src/maturity/scorer.js) (assembles the report). Treat the report as an implementation-specific assessment, not a compliance certification.
+ 
+-## Server dimensions
++## Three separate numbers, never blended
+ 
+-| Dimension | Current weighting | Interpretation |
+-| --- | --- | --- |
+-| Key Lifecycle Hygiene | 45% non-exportable, 30% deletion-protected, 25% minimum decryption version ≥ 1 | Custody/version policy signals. Automatic rotation is reported as a recommendation; minimum version is not an automatic rotation policy. |
+-| Access Control Coverage | 25 points for supplier presence, 50% classified apps, 25% non-platform tenant classification | Platform workloads can intentionally remain in root. Classification and registration are not live ACL verification. |
+-| Governance Adoption | 45% accessor presence, 25% resolved requests, up to 10 points for request count, 20 for any Sentinel EGP | Accessor strings and policy presence are proxy signals, not proof of successful native authorization. |
+-| Audit Trail Completeness | 35% source presence, 25% requester presence, 25% accessor presence, up to 15 points for three ingested operation types | Covers available governance/audit metadata, not an independently verified total history. |
+-| Automation Depth | Namespace registration 20, app registration 15, approval pipeline 15, auto-rotation presence 15, succeeded jobs 15, named automation EGP presence 20 | Measures selected configuration/usage signals. Some are presence checks rather than runtime effectiveness tests. |
++| Metric | What it means |
++| --- | --- |
++| **Maturity** | A gated level, 0–5. A single *mandatory* control at `FAIL` or `UNKNOWN` caps the level regardless of how well everything else scores — see "Gating, not averaging" below. |
++| **Coverage** | How much of the in-scope estate has *evidence* — `PASS` and `FAIL` both count, since a proven `FAIL` is real evidence and `UNKNOWN` (no usable evidence) is what should actually be penalized. `N/A` controls are excluded from the denominator entirely. |
++| **Confidence** | How strong/fresh/direct the underlying evidence is — `HIGH` (a live read this assessment run), `MEDIUM` (reused evidence from a recent prior observation, e.g. a Phase 20 reconciliation run within its freshness window), or `LOW`. Rolled up worst-case across evidenced (`PASS`/`FAIL`) rows, never averaged into a single number. |
+ 
+-Counts and ratios are bounded and rounded by the implementation. Audit ingestion requires `EVIDENCE_INGEST_ENABLED`, readable audit input and a running worker.
++These are computed by [computeCoverage()](../arcanium/api/src/maturity/controls.js) and [computeConfidence()](../arcanium/api/src/maturity/controls.js) respectively.
+ 
+-## Overall and level
++## The four control states
+ 
+-The current server calculates the arithmetic mean of the five dimension scores, rounded to an integer. It derives the level as:
++Every `control_assessments` row is exactly one of:
+ 
+-```text
+-overall = round(mean(dimension scores))
+-level   = clamp(floor(overall / 18), 0, 5)
++- **`PASS`** — the control's evidence was gathered and it holds.
++- **`FAIL`** — the control's evidence was gathered and it does not hold. This is real, valuable evidence, not worse than `UNKNOWN` — see the disposition note below.
++- **`UNKNOWN`** — no usable evidence could be gathered this run (Vault unreachable, evidence gone stale past its TTL, a downstream read error). Never silently treated as `FAIL`, never fabricated as `PASS`.
++- **`N/A`** — the control does not apply to the current scope (e.g. a tenant-isolation control when fewer than two tenants exist yet). Never scored against.
++
++## Gating, not averaging
++
++```js
++function gatedLevel(rollup) {
++  for (let level = 5; level >= 1; level--) {
++    const required = MANDATORY_CONTROLS_PER_LEVEL[level];
++    if (required.every(id => rollup[id] === 'PASS')) return level;
++  }
++  return 0;
++}
+ ```
+ 
+-| Level | Label | Current score band |
+-| --- | --- | --- |
+-| 0 | Unaware | 0–17 |
+-| 1 | Reactive | 18–35 |
+-| 2 | Defined | 36–53 |
+-| 3 | Managed | 54–71 |
+-| 4 | Optimised | 72–89 |
+-| 5 | Governed | 90–100 |
++`rollup` is a worst-case-per-control roll-up: if any per-scope assessment for a control is `FAIL`, the whole control is `FAIL`; else if any is `UNKNOWN`, the whole control is `UNKNOWN`; `N/A` rows are excluded; only if every applicable row is `PASS` does the control roll up to `PASS`. `UNKNOWN` and `N/A` both fail the `=== 'PASS'` check the same as `FAIL` does — a control nobody has exercised yet caps the level exactly like one that's actively broken.
+ 
+-The diagnostic ladder checks currently do **not** gate the level. The older description saying every lower-level check must pass was inaccurate for this implementation.
++When a level is capped, `levelCapReason` names the specific blocking control(s) — e.g. `"Level capped at 3: AUTO-01 is FAIL"` — never a bare lower number with no explanation (both the UI and CLI surface this).
+ 
+-## Response
++## The control catalogue
+ 
+-The report includes `overall`, `level`, `levelName`, `dimensions`, `checks`, `generatedAt` and compatibility fields `score`, `maxScore`, `percentage`, `evaluatedAt`.
++| Control | Requirement | Mandatory from | Evidence source |
++| --- | --- | --- | --- |
++| `KEY-INV-01` | A live cryptographic key inventory exists in Vault | Level 1 | Live `vault LIST transit/keys` |
++| `TEN-ISO-01` | Tenant Vault namespaces enforce a verified cross-tenant boundary | Level 2 | Live cross-tenant AppRole boundary check (Prompt 16.2) |
++| `ROT-POL-01` | Production keys rotate per their declared desired-state policy | Level 3 | Phase 20 `reconciliation_runs` (latest run per key, within a 1h freshness TTL) |
++| `AUD-01` | Governance actions are source- and actor-attributed | Level 3 | `approval_requests.source`/`.requester` |
++| `WLI-01` | Provisioned applications hold a least-privilege workload AppRole | Level 3 | Live `vault LIST auth/approle/role`, per Vault namespace |
++| `NEG-AUTHZ-01` | The hostile negative-authorization test suite last passed | Level 3 | `scenario_runs` (written by `scenarios/11_security_foundation/test_negative_auth.sh` on every run, within a 7-day freshness TTL) |
++| `AUTO-01` | Rotation-from-automation is enforced by a Sentinel EGP | Level 4 | Live `vault LIST sys/policies/egp`; `N/A` if Sentinel isn't in the Vault license |
++| `GOV-01` | Four-eyes governance (Control Group approval) is actively exercised | Level 5 | `approval_requests.status`/`.accessor` |
+ 
+-```sh
+-curl -fsS http://localhost:3001/api/v1/maturity
+-```
++Every assessment is persisted as a new `control_assessments` row (an append-only evidence log, same discipline as `reconciliation_runs`) with `evidence_refs` pointing at what was actually read — a reconciliation run id, a Vault list method, a scenario run timestamp. Nothing is inferred from a database row simply existing.
+ 
+-Inspect each dimension's `basis` and `nextStep`. Avoid publishing a fixed expected level: inventory, evidence, entitlements and policy configuration differ between environments.
++## Reconciliation as evidence (Phase 20 link)
+ 
+-## Data-quality limits
++`ROT-POL-01` maps Phase 20's `reconciliation_runs.observation_status` directly: `COMPLIANT → PASS`, `DRIFTED → FAIL`, `UNKNOWN → UNKNOWN`. **`disposition` is never consulted when deriving this status** — a `DRIFTED` run with `disposition = EXCEPTION_ACCEPTED` still maps to `FAIL`, never softened to `PASS` or a third pseudo-status. The accepted exception (who, why, until when) is carried into `evidence_refs` instead, so the control record reads as "`FAIL`, exception accepted by ... until ..., reason: ..." — honest about the current state, transparent about why it's tolerated.
++
++## Response shape
++
++```sh
++curl -fsS -b "$COOKIE" http://localhost:3001/api/v1/maturity | jq '{maturity, levelName, levelCapReason, coverage, confidence}'
++```
+ 
+-The implementation currently catches some database/Vault read failures and treats them as empty data. A low score can therefore represent unavailable measurement rather than a confirmed missing control.
++The report includes `maturity` (and a `level` alias, kept for `scenarios/08_evidence/collect.sh`'s own compatibility), `levelName`, `levelCapReason`, `coverage`, `confidence`, `controls` (one rolled-up row per catalogue control), `dimensions` (the Prompt 17 5-dimension scores — kept as supplementary, non-gating context; they inform the UI's "signal dimensions" panel but no longer determine the level), and `checks` (a backward-compatible view of `controls` in the old ladder-check shape).
+ 
+-Some ladder checks are weaker than their labels imply:
++`GET /api/v1/controls` returns the latest assessment per `(control_id, scope)` pair — tenant-scoped from its first commit (a supplier-admin session never sees `estate`-scoped rows or another tenant's `ROT-POL-01` rows, verified live, not assumed from review). `GET /api/v1/controls/:id` returns one control's catalogue definition plus its per-scope assessments, same scoping.
+ 
+-- “Key inventory exists” currently tests registered applications.
+-- “Tenant namespaces provisioned” counts supplier records.
+-- “Four-eyes approval exercised” checks for a resolved database request.
+-- The current source-attribution ladder check passes when any approval exists; it does not independently inspect source/actor fields.
++## Proving the gate actually gates
+ 
+-These limitations must remain visible when interpreting a report. The five dimensions and the diagnostic checks should not be advertised as audited control effectiveness.
++`scenarios/14_evidence_v2/test_gated_maturity.sh` (`make scenario-evidence-v2`) is the hostile proof: forces `AUTO-01` to `FAIL` by deleting its Sentinel EGP outside Arcanium and confirms the level visibly drops with a named reason; makes Vault briefly unreachable (a real `podman network disconnect`, not a mock) and confirms the affected controls report `UNKNOWN`, not `FAIL`, not a fabricated `PASS`, and that the endpoint still responds `200`; restores both and confirms the level recovers. This test also forced a real fix in [vault.js](../arcanium/api/src/vault.js): the Vault HTTP client previously had no request timeout at all, so a network partition would hang far longer than "briefly unreachable" should reasonably take — a bounded 5s timeout was added, found necessary by this exact test, not by review.
+ 
+ ## Improving an assessment
+ 
+-1. Repair missing API fields or failed measurement paths before changing scores.
+-2. Classify platform and tenant apps intentionally; do not bind root platform workloads to arbitrary tenants just to increase a percentage.
+-3. Apply required policies and verify their behavior with authorized positive/negative tests.
+-4. Configure rotation and observe an actual rotation where required.
+-5. Resolve intended governance requests through the correct Vault and Arcanium workflows.
+-6. Connect workload audit ingestion and inspect evidence origin, attribution and coverage.
+-7. Keep unknown/unavailable measurements distinct from successful checks.
++1. Provision at least one application through Arcanium so `KEY-INV-01` and `WLI-01` have something to observe.
++2. Register at least two supplier tenants so `TEN-ISO-01` becomes applicable (fewer than two is `N/A`, not a failure).
++3. Set a rotation policy at provisioning time (or via `PATCH /api/v1/reconciliation/desired-state/:id`) and let Phase 20's reconciliation loop observe it — `ROT-POL-01` reads that evidence directly.
++4. Run `scenarios/11_security_foundation/test_negative_auth.sh` — it records its own pass/fail to `scenario_runs`, which `NEG-AUTHZ-01` reads back.
++5. Apply the Sentinel EGP policies (`make tf-sentinel`) for `AUTO-01`.
++6. Resolve at least one approval request through the real Control Group workflow for `GOV-01`.
++7. Keep `UNKNOWN`/`N/A` distinct from `FAIL` when interpreting a report — a low Coverage number most often means "not yet exercised," not "broken."
+ 
+-Observability remains an optional integration workstream. Do not claim a complete telemetry-backed assessment merely because the report endpoint responds.
++Observability (Prometheus/OTel/Grafana) remains a separate, optional integration workstream — it is deployed and collecting, but its time-series signals are not folded into this assessment.
+diff --git a/scenarios/11_security_foundation/test_negative_auth.sh b/scenarios/11_security_foundation/test_negative_auth.sh
+index f588a12..203f3b4 100755
+--- a/scenarios/11_security_foundation/test_negative_auth.sh
++++ b/scenarios/11_security_foundation/test_negative_auth.sh
+@@ -225,6 +225,20 @@ else
+   unk "pepsi-admin cross-tenant reconciliation checks — no session, or no reconciliation_runs fixture"
+ fi
+ 
++# ── Prompt 21 — pepsi-admin GET /controls never leaks another tenant's
++# scope, or any estate-wide control ────────────────────────────────────
++# GET /controls filters rather than 404s (a control's CATALOGUE definition
++# isn't tenant data; only its assessment evidence is) — so the assertion is
++# "no cocacola scope, no estate scope ever appears", not a status code.
++if session_ok "${JAR[pepsi]}"; then
++  LEAKED=$(curl -s -b "${JAR[pepsi]}" "$API/api/v1/controls" |
++    grep -c '"scope":"\(estate\|suppliers/cocacola[^"]*\)"' || true)
++  [ "${LEAKED:-0}" = "0" ] && ok "pepsi-admin GET /controls -> no estate-wide or cocacola-scoped rows" ||
++    bad "pepsi-admin GET /controls leaked $LEAKED estate/cross-tenant row(s)"
++else
++  unk "pepsi-admin GET /controls scoping check — no session"
++fi
++
+ # ── 4 — architect rewrap -> 403 ──────────────────────────────────────────
+ if session_ok "${JAR[architect]}"; then
+   S=$(status_of -X POST -b "${JAR[architect]}" -H 'content-type: application/json' \
+@@ -401,6 +415,15 @@ fi
+ rm -f "${JAR[@]}" 2>/dev/null
+ 
+ TOTAL=$((PASS + FAIL + UNKNOWN))
++
++# Prompt 21 — NEG-AUTHZ-01 evidence: record this run's outcome so the
++# control assessment can read back "did the hostile suite last pass" as
++# real evidence, not assumed. Best-effort — a DB hiccup here must not turn
++# a real PASS/FAIL result of the suite itself into a script failure.
++podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" \
++  -c "INSERT INTO scenario_runs (scenario, passed, failed, unknown) VALUES ('11_security_foundation', $PASS, $FAIL, $UNKNOWN)" \
++  >/dev/null 2>&1 || echo "  (note: could not record this run to scenario_runs — NEG-AUTHZ-01 evidence not updated)"
++
+ echo
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+ [ "$FAIL" -eq 0 ]
+diff --git a/state/CURRENT b/state/CURRENT
+index 5e45bb6..dee7c1a 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-11_post-phase-20-complete
++state/baselines/2026-09-11_pre-phase-21
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index ad0e636..6ef0f34 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -493,6 +493,35 @@ capture_verification() {
+     results=$(jq '. + [{check:"reconciliation", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
+   fi
+ 
++  # Prompt 21 — maturity. GET /api/v1/maturity has always been a live,
++  # request-time computation (Prompt 17 onward — no caching); this script
++  # already probed it anonymously above (capture_arcanium's api-smoke.json).
++  # This adds the real Deliverable 8 verification: the post-Evidence-v2
++  # {maturity, coverage, confidence} shape, not the old single "overall"
++  # percentage — a baseline captured against the new shape without updating
++  # this script would silently record nothing useful (the same gap Phase 20
++  # found and closed for `identity`). Same auth caveat as the checks above.
++  if running arcanium-api; then
++    local mat_code
++    mat_code=$(curl -s -o /tmp/arc-maturity-check.$$ -w '%{http_code}' --max-time 10 \
++      http://localhost:3001/api/v1/maturity 2>/dev/null || echo 000)
++    if [ "$mat_code" = "200" ]; then
++      local mat cov conf
++      mat=$(jq '.maturity // null' /tmp/arc-maturity-check.$$ 2>/dev/null || echo null)
++      cov=$(jq '.coverage // null' /tmp/arc-maturity-check.$$ 2>/dev/null || echo null)
++      conf=$(jq -r '.confidence // "null"' /tmp/arc-maturity-check.$$ 2>/dev/null || echo null)
++      results=$(jq --argjson m "${mat:-null}" --argjson c "${cov:-null}" --arg cf "$conf" \
++        '. + [{check:"maturity", result:"PASS", method:"GET /api/v1/maturity", maturity:$m, coverage:$c, confidence:$cf}]' <<<"$results")
++    elif [ "$mat_code" = "401" ]; then
++      results=$(jq '. + [{check:"maturity", result:"UNKNOWN", detail:"endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"}]' <<<"$results")
++    else
++      results=$(jq --arg c "$mat_code" '. + [{check:"maturity", result:"UNKNOWN", detail:("endpoint did not respond (http " + $c + ")")}]' <<<"$results")
++    fi
++    rm -f /tmp/arc-maturity-check.$$
++  else
++    results=$(jq '. + [{check:"maturity", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
++  fi
++
+   local mutating_checks="onboarding transit pki kmip managed_key sentinel_negative"
+   if $WITH_SCENARIOS; then
+     results=$(jq '. + [{check:"onboarding", result:"UNKNOWN", detail:"scenario runner wiring not implemented yet — run scenarios/01_onboarding manually and record the result"}]' <<<"$results")

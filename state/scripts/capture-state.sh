@@ -493,6 +493,35 @@ capture_verification() {
     results=$(jq '. + [{check:"reconciliation", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
   fi
 
+  # Prompt 21 — maturity. GET /api/v1/maturity has always been a live,
+  # request-time computation (Prompt 17 onward — no caching); this script
+  # already probed it anonymously above (capture_arcanium's api-smoke.json).
+  # This adds the real Deliverable 8 verification: the post-Evidence-v2
+  # {maturity, coverage, confidence} shape, not the old single "overall"
+  # percentage — a baseline captured against the new shape without updating
+  # this script would silently record nothing useful (the same gap Phase 20
+  # found and closed for `identity`). Same auth caveat as the checks above.
+  if running arcanium-api; then
+    local mat_code
+    mat_code=$(curl -s -o /tmp/arc-maturity-check.$$ -w '%{http_code}' --max-time 10 \
+      http://localhost:3001/api/v1/maturity 2>/dev/null || echo 000)
+    if [ "$mat_code" = "200" ]; then
+      local mat cov conf
+      mat=$(jq '.maturity // null' /tmp/arc-maturity-check.$$ 2>/dev/null || echo null)
+      cov=$(jq '.coverage // null' /tmp/arc-maturity-check.$$ 2>/dev/null || echo null)
+      conf=$(jq -r '.confidence // "null"' /tmp/arc-maturity-check.$$ 2>/dev/null || echo null)
+      results=$(jq --argjson m "${mat:-null}" --argjson c "${cov:-null}" --arg cf "$conf" \
+        '. + [{check:"maturity", result:"PASS", method:"GET /api/v1/maturity", maturity:$m, coverage:$c, confidence:$cf}]' <<<"$results")
+    elif [ "$mat_code" = "401" ]; then
+      results=$(jq '. + [{check:"maturity", result:"UNKNOWN", detail:"endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"}]' <<<"$results")
+    else
+      results=$(jq --arg c "$mat_code" '. + [{check:"maturity", result:"UNKNOWN", detail:("endpoint did not respond (http " + $c + ")")}]' <<<"$results")
+    fi
+    rm -f /tmp/arc-maturity-check.$$
+  else
+    results=$(jq '. + [{check:"maturity", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
+  fi
+
   local mutating_checks="onboarding transit pki kmip managed_key sentinel_negative"
   if $WITH_SCENARIOS; then
     results=$(jq '. + [{check:"onboarding", result:"UNKNOWN", detail:"scenario runner wiring not implemented yet — run scenarios/01_onboarding manually and record the result"}]' <<<"$results")

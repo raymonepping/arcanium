@@ -73,6 +73,18 @@ export async function provisionApplication(job, app, opts = {}) {
         const body = { type: keyType };
         if (rotationDays) body.auto_rotate_period = `${rotationDays * 24}h`;
         await req("POST", `transit/keys/${keyName}`, body);
+        // Prompt 21 — found live via reconciliation evidence: Vault's key
+        // CREATE endpoint only applies auto_rotate_period on a brand-new
+        // key; re-provisioning an EXISTING key (e.g. to change rotation
+        // policy) silently no-ops on that field, leaving Vault's actual
+        // config out of sync with the desired_state Prompt 20 just seeded —
+        // real, correctly-detected drift, not a false positive. Always also
+        // write /config explicitly so re-provisioning actually converges.
+        if (rotationDays) {
+          await req("POST", `transit/keys/${keyName}/config`, {
+            auto_rotate_period: `${rotationDays * 24}h`,
+          });
+        }
         return keyName;
       },
       undo: async () => {

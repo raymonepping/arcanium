@@ -25,6 +25,7 @@ import { keymgmtRouter } from "./routes/keymgmt.js";
 import { integrationsRouter } from "./routes/integrations.js";
 import { evidenceRouter } from "./routes/evidence.js";
 import { reconciliationRouter } from "./routes/reconciliation.js";
+import { controlsRouter } from "./routes/controls.js";
 import { authRouter, requireSession } from "./auth/index.js";
 import { observabilityRouter } from "./routes/observability.js";
 import { metricsMiddleware, metricsHandler } from "./telemetry/metrics.js";
@@ -71,6 +72,7 @@ async function main() {
   app.use("/api/v1/integrations", integrationsRouter);
   app.use("/api/v1/evidence", evidenceRouter);
   app.use("/api/v1/reconciliation", reconciliationRouter);
+  app.use("/api/v1/controls", controlsRouter);
   app.use("/api/v1/observability", observabilityRouter);
   app.use("/api/v1/maturity", maturityRouter);
 

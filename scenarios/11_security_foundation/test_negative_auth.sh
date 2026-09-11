@@ -225,6 +225,20 @@ else
   unk "pepsi-admin cross-tenant reconciliation checks — no session, or no reconciliation_runs fixture"
 fi
 
+# ── Prompt 21 — pepsi-admin GET /controls never leaks another tenant's
+# scope, or any estate-wide control ────────────────────────────────────
+# GET /controls filters rather than 404s (a control's CATALOGUE definition
+# isn't tenant data; only its assessment evidence is) — so the assertion is
+# "no cocacola scope, no estate scope ever appears", not a status code.
+if session_ok "${JAR[pepsi]}"; then
+  LEAKED=$(curl -s -b "${JAR[pepsi]}" "$API/api/v1/controls" |
+    grep -c '"scope":"\(estate\|suppliers/cocacola[^"]*\)"' || true)
+  [ "${LEAKED:-0}" = "0" ] && ok "pepsi-admin GET /controls -> no estate-wide or cocacola-scoped rows" ||
+    bad "pepsi-admin GET /controls leaked $LEAKED estate/cross-tenant row(s)"
+else
+  unk "pepsi-admin GET /controls scoping check — no session"
+fi
+
 # ── 4 — architect rewrap -> 403 ──────────────────────────────────────────
 if session_ok "${JAR[architect]}"; then
   S=$(status_of -X POST -b "${JAR[architect]}" -H 'content-type: application/json' \
@@ -401,6 +415,15 @@ fi
 rm -f "${JAR[@]}" 2>/dev/null
 
 TOTAL=$((PASS + FAIL + UNKNOWN))
+
+# Prompt 21 — NEG-AUTHZ-01 evidence: record this run's outcome so the
+# control assessment can read back "did the hostile suite last pass" as
+# real evidence, not assumed. Best-effort — a DB hiccup here must not turn
+# a real PASS/FAIL result of the suite itself into a script failure.
+podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" \
+  -c "INSERT INTO scenario_runs (scenario, passed, failed, unknown) VALUES ('11_security_foundation', $PASS, $FAIL, $UNKNOWN)" \
+  >/dev/null 2>&1 || echo "  (note: could not record this run to scenario_runs — NEG-AUTHZ-01 evidence not updated)"
+
 echo
 echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
 [ "$FAIL" -eq 0 ]

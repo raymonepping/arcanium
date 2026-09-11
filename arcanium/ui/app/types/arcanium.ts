@@ -212,10 +212,45 @@ export interface MaturityCheck {
   evidence: string
 }
 
+// ── Evidence v2 (Prompt 21) ────────────────────────────────────
+export type ControlStatus = 'PASS' | 'FAIL' | 'UNKNOWN' | 'N/A'
+export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW'
+
+export interface ControlSummary {
+  id: string
+  requirement: string
+  mandatory: boolean
+  dimension: string
+  status: ControlStatus
+}
+
+export interface ControlAssessment {
+  id: string
+  control_id: string
+  scope: string
+  status: ControlStatus
+  desired_value: Record<string, unknown> | null
+  observed_value: Record<string, unknown> | null
+  evidence_refs: Record<string, unknown>
+  freshness_seconds: number | null
+  confidence: ConfidenceLevel
+  assessed_at: string
+  requirement?: string
+  mandatory?: boolean
+  dimension?: string
+}
+
 export interface MaturityReport {
-  overall: number
-  level: number
+  // Prompt 21 — gated, not averaged.
+  maturity: number
+  level: number           // alias of maturity, backward-compat
   levelName: string
+  levelCapReason: string | null
+  coverage: number        // 0-100
+  confidence: ConfidenceLevel
+  controls: ControlSummary[]
+  // Prompt 17 — kept as supplementary, non-gating context (Non-goals).
+  overall?: number
   dimensions: MaturityDimension[]
   checks: MaturityCheck[]
   generatedAt: string

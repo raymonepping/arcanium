@@ -1,7 +1,7 @@
 // Transport only: a fixed upstream, allowlisted API paths and no Vault credentials.
 export default defineEventHandler(async (event) => {
   const path = getRouterParam(event, 'path') || ''
-  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
+  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation|controls)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
   const write =
     (event.method === 'POST' && (
       /^api\/v1\/(approvals(\/[a-zA-Z0-9_-]+\/(approve|deny|authorize))?|suppliers|applications|keys)$/.test(path)
