@@ -2,7 +2,7 @@
   <footer class="arc-footer">
     <div class="arc-footer__inner">
       <span class="arc-footer__signature">
-        <span>© {{ year }} Raymon Epping</span>
+        <span>© {{ year }} <span class="arc-footer__sig-name" data-name="Raymon Epping" tabindex="0">Raymon Epping</span></span>
         <span v-for="word in words" :key="word" class="arc-footer__word">
           <i aria-hidden="true">·</i>{{ word }}
         </span>
@@ -79,6 +79,53 @@ const links = [
   font-size: 11px;
   color: var(--arc-text-dim);
   letter-spacing: 0.02em;
+}
+
+/* The name shines on hover / focus — a single crisp light sweep, no blur.
+   The real text stays a solid colour; the sweep is a separate overlay that
+   fades out, so the name is never transparent or missing. */
+.arc-footer__sig-name {
+  position: relative;
+  display: inline-block;
+  cursor: default;
+  border-radius: 3px;
+  transition: color 0.2s ease;
+}
+.arc-footer__sig-name:hover,
+.arc-footer__sig-name:focus-visible {
+  outline: none;
+  color: var(--arc-focus);
+}
+.arc-footer__sig-name::after {
+  content: attr(data-name);
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  background: linear-gradient(
+    100deg,
+    transparent 42%,
+    rgba(255, 255, 255, 0.9) 50%,
+    transparent 58%
+  );
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  opacity: 0;
+  pointer-events: none;
+}
+.arc-footer__sig-name:hover::after,
+.arc-footer__sig-name:focus-visible::after {
+  animation: sigShine 0.9s ease-out;
+}
+@keyframes sigShine {
+  0% { background-position: 130% 0; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { background-position: -30% 0; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arc-footer__sig-name::after { display: none; }
 }
 
 .arc-footer__word {
