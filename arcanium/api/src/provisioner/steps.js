@@ -9,6 +9,16 @@
 
 import { query } from "../db.js";
 import config from "../config.js";
+import { JOB_STATES, assertTransition } from "../domain/state-machines.js";
+
+// A same-state write (e.g. re-persisting "running" mid-loop) is not a
+// transition at all — JOB_STATES has no self-loops (matching the real DB
+// CHECK constraint's states, none of which re-enter themselves), so only
+// check when the status is actually changing.
+function setStatus(job, next) {
+  if (job.status !== next) assertTransition(JOB_STATES, job.status, next);
+  job.status = next;
+}
 
 /**
  * Prompt 15.6 — run the job now (sync mode) or leave it `pending` for
@@ -66,7 +76,7 @@ async function event(resource_type, resource_id, ev, detail) {
  * Returns the final job row.
  */
 export async function runSteps(job, steps) {
-  job.status = "running";
+  setStatus(job, "running");
   job.steps = steps.map((s) => ({ step: s.name, status: "pending" }));
   await persist(job);
 
@@ -116,9 +126,12 @@ export async function runSteps(job, steps) {
           });
         }
       }
-      job.status = done.some((d) => typeof d.undo === "function")
-        ? "rolled_back"
-        : "failed";
+      setStatus(
+        job,
+        done.some((d) => typeof d.undo === "function")
+          ? "rolled_back"
+          : "failed",
+      );
       await persist(job);
       await event(job.target_type, job.target_id, `${job.action}.failed`, {
         error: job.error,
@@ -127,7 +140,7 @@ export async function runSteps(job, steps) {
     }
   }
 
-  job.status = "succeeded";
+  setStatus(job, "succeeded");
   await persist(job);
   await event(job.target_type, job.target_id, `${job.action}.succeeded`, null);
   return job;

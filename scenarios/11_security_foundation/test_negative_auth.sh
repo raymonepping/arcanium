@@ -356,6 +356,26 @@ COKE_SUPPLIER=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium
 ANY_ACCESSOR=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
   -c "SELECT accessor FROM approval_requests WHERE accessor IS NOT NULL AND accessor <> '' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
 
+# ── Prompt 22 — pepsi-admin cross-tenant /suppliers/:id/applications and
+# /suppliers/:id/keys -> 404 ─────────────────────────────────────────────
+# Found live by the architecture fitness test's tenant-scope-coverage
+# check: both routes previously only verified the supplier id EXISTED,
+# never that the caller's own tenant scope included it — the same bug
+# class as Phase 18's original GET /applications/:id gap, just in a
+# different route. A pepsi-admin could read cocacola's full application
+# list and Transit key inventory by supplying cocacola's supplier id.
+if session_ok "${JAR[pepsi]}" && [ -n "$COKE_SUPPLIER" ]; then
+  S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/suppliers/$COKE_SUPPLIER/applications")
+  [ "$S" = "404" ] && ok "pepsi-admin GET cocacola's /suppliers/:id/applications -> 404" ||
+    bad "pepsi-admin GET cocacola's /suppliers/:id/applications (got $S)"
+
+  S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/suppliers/$COKE_SUPPLIER/keys")
+  [ "$S" = "404" ] && ok "pepsi-admin GET cocacola's /suppliers/:id/keys -> 404" ||
+    bad "pepsi-admin GET cocacola's /suppliers/:id/keys (got $S)"
+else
+  unk "pepsi-admin cross-tenant /suppliers/:id/applications+/keys checks — no session or no supplier fixture"
+fi
+
 # ── auditor PATCH/DELETE suppliers/:id -> 403 ───────────────────────────
 if session_ok "${JAR[auditor]}" && [ -n "$COKE_SUPPLIER" ]; then
   S=$(status_of -X PATCH -b "${JAR[auditor]}" -H 'content-type: application/json' \
@@ -410,6 +430,36 @@ if session_ok "${JAR[pepsi]}" && [ -n "$COKE_APP" ]; then
     bad "pepsi-admin DELETE cocacola's application (got $S)"
 else
   unk "pepsi-admin DELETE cocacola's application — no session or no application fixture"
+fi
+
+# ── Prompt 22 — the other 3 authorize()-coverage gaps found live by the
+# fitness test's authorize-coverage check, all previously reachable by ANY
+# authenticated session with no role check at all ─────────────────────────
+if session_ok "${JAR[auditor]}" && [ -n "$COKE_APP" ]; then
+  S=$(status_of -X POST -b "${JAR[auditor]}" -H 'content-type: application/json' \
+    -d '{"category":"platform"}' "$API/api/v1/applications/$COKE_APP/classify")
+  [ "$S" = "403" ] && ok "auditor POST /applications/:id/classify -> 403" ||
+    bad "auditor POST /applications/:id/classify (got $S)"
+else
+  unk "auditor POST /applications/:id/classify — no session or no application fixture"
+fi
+
+if session_ok "${JAR[auditor]}"; then
+  S=$(status_of -X POST -b "${JAR[auditor]}" -H 'content-type: application/json' \
+    -d '{"name":"fitness-test-key"}' "$API/api/v1/keys")
+  [ "$S" = "403" ] && ok "auditor POST /keys (raw key create) -> 403" ||
+    bad "auditor POST /keys (got $S)"
+else
+  unk "auditor POST /keys — no session"
+fi
+
+if session_ok "${JAR[auditor]}"; then
+  S=$(status_of -X POST -b "${JAR[auditor]}" -H 'content-type: application/json' \
+    -d '{"name":"fitness-test-channel","kind":"webhook"}' "$API/api/v1/integrations")
+  [ "$S" = "403" ] && ok "auditor POST /integrations (register channel) -> 403" ||
+    bad "auditor POST /integrations (got $S)"
+else
+  unk "auditor POST /integrations — no session"
 fi
 
 rm -f "${JAR[@]}" 2>/dev/null

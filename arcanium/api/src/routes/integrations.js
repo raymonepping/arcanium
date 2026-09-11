@@ -2,6 +2,8 @@
 
 import { Router } from "express";
 import { query } from "../db.js";
+import { authorize } from "../auth/authorize.js";
+import { tenantScope } from "../auth/index.js";
 
 export const integrationsRouter = Router();
 
@@ -19,14 +21,23 @@ function liveStatus(row) {
 }
 
 // GET /api/v1/integrations
-integrationsRouter.get("/", async (_req, res, next) => {
+// Prompt 22, Deliverable 4 — found live by the architecture fitness test's
+// tenant-scope-coverage check: this route returned every channel
+// regardless of caller, including channels bound to another tenant's
+// supplier_id. Channels with no supplier_id (platform-level, e.g. the
+// document-signing/external-supplier demo channels) stay visible to a
+// scoped session — only another tenant's OWN channels are filtered.
+integrationsRouter.get("/", async (req, res, next) => {
   try {
+    const scope = await tenantScope(req);
     const { rows } = await query(
       `SELECT i.id, i.name, i.kind, i.operation, i.status, i.last_seen,
-              i.created_at, s.name AS supplier, s.vault_namespace
+              i.created_at, s.name AS supplier, s.vault_namespace, i.supplier_id
        FROM integrations i
        LEFT JOIN suppliers s ON s.id = i.supplier_id
+       ${scope.scoped ? "WHERE i.supplier_id IS NULL OR i.supplier_id = ANY($1)" : ""}
        ORDER BY i.name`,
+      scope.scoped ? [scope.supplierIds] : [],
     );
 
     // Open approval requests attributable to each channel (by requester name).
@@ -69,8 +80,20 @@ integrationsRouter.get("/", async (_req, res, next) => {
 });
 
 // POST /api/v1/integrations — register a channel (admin)
+// Prompt 22, Deliverable 4 — found live by the architecture fitness test's
+// authorize()-coverage check: this route had no role check at all despite
+// its own "(admin)" comment. Estate-wide 'provision' — integrations are
+// platform-level declarations, not a tenant resource (GET / already shows
+// every channel regardless of supplier_id, unscoped by design).
 integrationsRouter.post("/", async (req, res, next) => {
   try {
+    const decision = authorize({ identity: req.identity, action: "provision" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
     const { name, kind, operation, supplier_id } = req.body ?? {};
     if (!name || !["approval-gated", "kmip", "webhook"].includes(kind))
       return res
@@ -90,8 +113,33 @@ integrationsRouter.post("/", async (req, res, next) => {
 });
 
 // POST /api/v1/integrations/:name/heartbeat — a channel reports liveness
+// Prompt 22, Deliverable 4 — found live alongside POST / above. Mapped to
+// 'read' rather than 'provision': a liveness ping isn't a governance
+// action (it doesn't declare or change a channel's configuration, only
+// its last-seen timestamp). 'read' is 'limited' for supplier-admin
+// (auth/authorize.js's matrix) and 'limited' only ALLOWs with a resolved
+// tenant (Prompt 19's own missing-tenant-param lesson) — resolved from the
+// channel's own supplier_id below, so a supplier-admin heartbeating their
+// own channel is still allowed, not newly blocked by closing this gap.
 integrationsRouter.post("/:name/heartbeat", async (req, res, next) => {
   try {
+    const { rows: existingChannel } = await query(
+      `SELECT s.vault_namespace FROM integrations i
+         LEFT JOIN suppliers s ON s.id = i.supplier_id
+        WHERE i.name = $1`,
+      [req.params.name],
+    );
+    const decision = authorize({
+      identity: req.identity,
+      action: "read",
+      tenant: existingChannel[0]?.vault_namespace ?? null,
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "read",
+        reason: decision.reason,
+      });
     const { rows } = await query(
       `UPDATE integrations SET last_seen = now(),
          status = CASE WHEN status = 'declared' THEN 'connected' ELSE status END

@@ -22,6 +22,7 @@ import {
   getDesiredState,
   getDesiredStateHistory,
 } from "../reconciliation/desiredState.js";
+import { validateRequestBody } from "../middleware/validateRequest.js";
 
 export const reconciliationRouter = Router();
 
@@ -334,8 +335,17 @@ reconciliationRouter.post("/:run_id/reconcile", async (req, res, next) => {
 // POST /api/v1/reconciliation/:run_id/accept-exception
 // Body: { reason, expires_at } — both required (input/36: no open-ended
 // exceptions). CISO-weight, same matrix row as /approvals/:id/approve.
+// Prompt 22, Deliverable 2 — validated against openapi/arcanium.yaml's own
+// requestBody schema for this path, not a re-typed copy of the same rule
+// acceptException() already enforces below; a genuine proof the generated
+// validation middleware is wired to a real route, not just built and
+// ignored (see middleware/validateRequest.js's own header for scope).
 reconciliationRouter.post(
   "/:run_id/accept-exception",
+  validateRequestBody(
+    "/api/v1/reconciliation/{run_id}/accept-exception",
+    "post",
+  ),
   async (req, res, next) => {
     try {
       validateUuid(req.params.run_id);

@@ -277,9 +277,19 @@ suppliersRouter.delete("/:id", async (req, res, next) => {
 });
 
 // GET /api/v1/suppliers/:id/applications
+// Prompt 22, Deliverable 4 — found live by the architecture fitness test's
+// tenant-scope-coverage check: this route only checked the supplier
+// EXISTED, never whether the caller's own tenant scope included it — the
+// exact same bug class as Phase 18's original GET /applications/:id gap.
+// A pepsi-admin passing cocacola's supplier id could read cocacola's full
+// application list. Closed the same way: tenantScope(req) + 404, not 403,
+// on a cross-tenant id (never confirm existence to the wrong tenant).
 suppliersRouter.get("/:id/applications", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(req.params.id))
+      throw notFound();
     // Verify supplier exists
     const { rows: sup } = await query(
       "SELECT id FROM suppliers WHERE id = $1",
@@ -299,9 +309,16 @@ suppliersRouter.get("/:id/applications", async (req, res, next) => {
 
 // GET /api/v1/suppliers/:id/keys
 // Returns Transit key inventory from the supplier's Vault namespace.
+// Prompt 22, Deliverable 4 — same cross-tenant gap as :id/applications
+// above, found the same way: existence-only check, no tenant-scope check.
+// A pepsi-admin passing cocacola's supplier id could read cocacola's
+// Transit key inventory.
 suppliersRouter.get("/:id/keys", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(req.params.id))
+      throw notFound();
     const { rows } = await query(
       "SELECT vault_namespace FROM suppliers WHERE id = $1",
       [req.params.id],

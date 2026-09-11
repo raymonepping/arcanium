@@ -31,7 +31,12 @@ async function main() {
   console.log(`[worker] polling provisioning_jobs every ${POLL_MS}ms`);
   for (;;) {
     try {
-      // Claim one pending job atomically.
+      // Claim one pending job atomically. This bypasses
+      // provisioner/steps.js's setStatus()/assertTransition() wrapper
+      // deliberately — the SQL WHERE status='pending' clause is itself a
+      // stronger, race-safe guard on the same pending→running edge
+      // JOB_STATES (domain/state-machines.js) already declares legal; two
+      // workers racing on the same job cannot both win this UPDATE.
       const { rows } = await query(
         `UPDATE provisioning_jobs SET status='running', updated_at=now()
          WHERE id = (
@@ -79,6 +84,8 @@ async function main() {
         console.log(`[worker]   → ${done.status}`);
       } catch (err) {
         console.error(`[worker]   → error: ${err.message}`);
+        // running -> failed — legal per JOB_STATES; this job was just
+        // claimed into 'running' above, so no other prior state is reachable.
         await query(
           `UPDATE provisioning_jobs SET status='failed', error=$2, updated_at=now() WHERE id=$1`,
           [job.id, String(err.message).slice(0, 500)],

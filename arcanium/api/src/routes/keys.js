@@ -122,8 +122,22 @@ keysRouter.get("/:name", async (req, res, next) => {
 });
 
 // POST /api/v1/keys
+// Prompt 22, Deliverable 4 — found live by the architecture fitness test's
+// authorize()-coverage check: this route had no role check at all. Creates
+// a bare root-namespace Transit key outside the application/provisioning
+// flow, so it's estate-wide 'provision' with no tenant — a supplier-admin
+// (whose 'provision' is 'limited' and always denies without a tenant) is
+// correctly denied; the tenant-scoped path for a supplier-admin's own
+// application keys is POST /applications/:id/provision, not this route.
 keysRouter.post("/", async (req, res, next) => {
   try {
+    const decision = authorize({ identity: req.identity, action: "provision" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
     const { name, type = "aes256-gcm96" } = req.body ?? {};
     if (!name)
       return res.status(400).json({ error: "name is required", field: "name" });

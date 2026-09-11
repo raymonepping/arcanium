@@ -307,9 +307,31 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
 // Body: { category: "platform" | "tenant" | "unscoped" }
 // Marks the application's governance classification. "platform" = Arcanium-owned
 // root-namespace workload; "tenant" = supplier-scoped; "unscoped" = not yet classified.
+// Prompt 22, Deliverable 4 — found live by the architecture fitness test's
+// authorize()-coverage check: this route had no role or tenant check at
+// all. Closed the same way PATCH /:id was (Prompt 19): tenantScope 404,
+// then authorize('provision', tenant) — same governance weight as editing
+// any other registry metadata field.
 applicationsRouter.post("/:id/classify", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
+    const app = await applicationTenant(req.params.id);
+    if (!app) return next(notFound());
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(app.supplier_id))
+      return next(notFound());
+    const decision = authorize({
+      identity: req.identity,
+      action: "provision",
+      tenant: app.vault_namespace,
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
+
     const { category } = req.body ?? {};
     const VALID = ["platform", "tenant", "unscoped"];
     if (!VALID.includes(category))
@@ -318,14 +340,9 @@ applicationsRouter.post("/:id/classify", async (req, res, next) => {
         field: "category",
       });
 
-    // "tenant" requires a supplier_id on the app.
+    // "tenant" requires a supplier_id on the app (already fetched above).
     if (category === "tenant") {
-      const { rows: check } = await query(
-        "SELECT supplier_id FROM applications WHERE id = $1",
-        [req.params.id],
-      );
-      if (!check.length) return next(notFound());
-      if (!check[0].supplier_id)
+      if (!app.supplier_id)
         return res.status(400).json({
           error:
             "category 'tenant' requires the application to be bound to a supplier first",

@@ -10,6 +10,12 @@ USER node
 COPY --from=deps --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node src/ ./src/
 COPY --chown=node:node package.json ./
+# Prompt 22 — the OpenAPI contract lives at the repo root (openapi/arcanium.yaml)
+# but Containerfile's build context is arcanium/api/, which can't COPY outside
+# it. arcanium/api/openapi/arcanium.yaml is a build-context-local mirror kept
+# in sync by `make openapi-generate`, not a second hand-maintained contract —
+# middleware/validateRequest.js reads this copy at runtime.
+COPY --chown=node:node openapi/ ./openapi/
 
 # Fail the build loudly if the source tree arrived incomplete in the build
 # context. On the macOS Podman machine, newly-created files/directories are not

@@ -1,0 +1,1180 @@
+openapi: 3.1.0
+info:
+  title: Arcanium API
+  version: "1.0.0"
+  description: >
+    Arcanium's cryptographic control-plane API. Authored from the actual
+    Express route handlers (arcanium/api/src/routes/*.js,
+    arcanium/api/src/auth/index.js) as source of truth for current
+    behavior — a capture-then-enforce exercise (Prompt 22), not a redesign.
+    This is the ONE authoritative contract: the Nuxt gateway allowlist
+    (arcanium/ui/server/routes/gateway/[...path].ts), the CLI request
+    shapes, and docs/api.md's narrative must all be checked against this
+    file, not maintained as independent parallel sources of truth.
+servers:
+  - url: http://localhost:3001
+    description: Direct API (dev/scenario scripts)
+  - url: http://localhost:3000/gateway
+    description: Same-origin UI gateway (browser-facing; allowlisted subset only)
+
+security:
+  - sessionCookie: []
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: arc_session
+      description: >
+        Opaque session id issued by GET /api/v1/auth/callback. When
+        ARCANIUM_AUTH_ENABLED is unset, requireSession no-ops and every
+        request is treated as an estate-wide operator — see
+        docs/security.md.
+    serviceAccountBearer:
+      type: http
+      scheme: bearer
+      description: >
+        Reserved for a future machine-to-machine identity source
+        (prompts/26_external_integration_key_lifecycle.md, not yet
+        executed). Not accepted by any route in this version of the API —
+        listed here only so the contract does not need a breaking change
+        once it is.
+
+  responses:
+    Unauthorized:
+      description: No session cookie, or the session is expired/invalid.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: >
+        Authenticated, but authorize() denied the action — wrong role,
+        wrong tenant, or a scoped grant that did not match (Phase 18's
+        deny-by-default matrix, auth/authorize.js).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: >
+        Missing, or deliberately indistinguishable from missing for a
+        cross-tenant read (Phase 18's GET /applications/:id precedent —
+        a supplier-admin gets 404, not 403, for another tenant's resource,
+        so existence itself isn't leaked).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Request failed field validation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    # ── Shared error envelope ────────────────────────────────────────────
+    # The gateway (ui/server/routes/gateway/[...path].ts) never forwards
+    # upstream error payloads verbatim — it re-throws createError({
+    # statusCode, statusMessage }), which Nitro serializes as this shape.
+    # apiErrorMessage() (Prompt 16.0) depends on this being consistent;
+    # this schema makes that consistency an enforceable contract, not a
+    # convention nobody re-checks.
+    Error:
+      type: object
+      properties:
+        error:
+          description: Direct-API responses use a string; gateway responses use boolean true.
+          oneOf:
+            - type: string
+            - type: boolean
+        statusCode: { type: integer }
+        statusMessage: { type: string }
+        message: { type: string }
+        field: { type: string, description: "Direct-API 400 responses name the offending field." }
+        reason: { type: string, description: "authorize() denial reason, on 403 responses." }
+        action: { type: string, description: "The authorize() action that was denied, on 403 responses." }
+      required: [error]
+
+    # ── Suppliers / Applications ─────────────────────────────────────────
+    Supplier:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        vault_namespace: { type: string }
+        sla_tier: { type: string, enum: [standard, premium] }
+        created_at: { type: string, format: date-time }
+      required: [id, name, vault_namespace, sla_tier, created_at]
+
+    CryptoProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        application_id: { type: string, format: uuid }
+        type: { type: string, enum: [transit, pki, kmip, managed_key] }
+        vault_path: { type: string }
+        custody: { type: string }
+        rotation_days: { type: ["integer", "null"] }
+        created_at: { type: string, format: date-time }
+      required: [id, application_id, type, vault_path, created_at]
+
+    Application:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: ["string", "null"] }
+        supplier_id: { type: ["string", "null"], format: uuid }
+        category: { type: string, enum: [platform, tenant, unscoped] }
+        registered_at: { type: string, format: date-time }
+        crypto_profiles:
+          type: array
+          items: { $ref: "#/components/schemas/CryptoProfile" }
+      required: [id, name, registered_at]
+
+    # ── Transit keys ──────────────────────────────────────────────────────
+    TransitKey:
+      type: object
+      properties:
+        name: { type: string }
+        type: { type: string }
+        versions: { type: ["integer", "null"] }
+        latest_version: { type: ["integer", "null"] }
+        exportable: { type: boolean }
+        deletion_allowed: { type: boolean }
+        auto_rotate_period: { type: integer, description: "Vault seconds; 0 = disabled." }
+        supports_encryption: { type: boolean }
+        supports_decryption: { type: boolean }
+        supports_signing: { type: boolean }
+        supports_derivation: { type: boolean }
+        min_decryption_version: { type: integer }
+        min_encryption_version: { type: integer }
+        custody: { type: string, description: "API-derived label — never inferred from the key name." }
+        hsm_backed: { type: boolean }
+        managed_key_name: { type: ["string", "null"] }
+
+    # ── Provisioning jobs ─────────────────────────────────────────────────
+    # Prompt 22, Deliverable 3 — status legally transitions per
+    # domain/state-machines.js's JOB_STATES; the enum below lists every
+    # reachable value, not just the common ones.
+    ProvisioningJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        target_type: { type: string, enum: [supplier, application, key] }
+        target_id: { type: string }
+        target_name: { type: ["string", "null"] }
+        action: { type: string }
+        status:
+          type: string
+          enum: [pending, running, succeeded, rolling_back, rolled_back, rollback_failed, failed]
+        requested_by: { type: string }
+        params: { type: object, additionalProperties: true }
+        steps: { type: array, items: { type: object, additionalProperties: true } }
+        error: { type: ["string", "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, status]
+
+    # ── Approvals ─────────────────────────────────────────────────────────
+    ApprovalRecord:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        key_name: { type: string }
+        action: { type: string }
+        status: { type: string, enum: [pending, approved, rejected] }
+        requester: { type: string }
+        approver: { type: ["string", "null"] }
+        reason: { type: ["string", "null"] }
+        accessor: { type: ["string", "null"] }
+        source: { type: string, enum: [manual, local, external] }
+        supplier_id: { type: ["string", "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, app_id, key_name, action, status]
+
+    # ── Evidence (Prompt 16.6/16.7) ──────────────────────────────────────
+    EvidenceRow:
+      type: object
+      properties:
+        ts: { type: string, format: date-time }
+        actor: { type: ["string", "null"] }
+        source: { type: string, enum: [manual, local, external] }
+        operation: { type: string }
+        resource_type: { type: ["string", "null"] }
+        resource_id: { type: ["string", "null"] }
+        namespace: { type: ["string", "null"] }
+        supplier: { type: ["string", "null"] }
+        outcome: { type: string, enum: [ok, denied, error] }
+        origin: { type: string, enum: [audit-log, approval, orchestration] }
+        lifecycle_stage:
+          type: string
+          enum: [Generate, Distribute, Store, Use, Rotate, Destroy]
+
+    EvidenceResponse:
+      type: object
+      description: "The Phase 16.7 shape — {rows, stage_counts, total}, never a bare array."
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/EvidenceRow" }
+        stage_counts:
+          type: object
+          additionalProperties: { type: integer }
+        total: { type: integer }
+      required: [rows, stage_counts, total]
+
+    # ── Reconciliation (Phase 20) ────────────────────────────────────────
+    # input/36's two-axis correction, made contractual: observation_status
+    # and disposition are two INDEPENDENT fields. Never collapse them into
+    # one merged string enum here — that was an earlier draft mistake this
+    # phase's own Deliverable 3/4 exist specifically to prevent recurring.
+    ObservationStatus:
+      type: string
+      enum: [COMPLIANT, DRIFTED, UNKNOWN]
+    Disposition:
+      type: string
+      enum: [OPEN, EXCEPTION_ACCEPTED, RECONCILED]
+
+    ReconciliationRunSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        observed_value:
+          oneOf:
+            - { type: object, properties: { days: { type: number } }, required: [days] }
+            - { type: "null" }
+        status: { $ref: "#/components/schemas/ObservationStatus" }
+        observed_at: { type: string, format: date-time }
+        detail: { type: ["string", "null"] }
+      required: [id, observed_value, status, observed_at]
+
+    ReconciliationRow:
+      type: object
+      properties:
+        desired_state_id: { type: string, format: uuid }
+        application_id: { type: string, format: uuid }
+        application_name: { type: string }
+        tenant: { type: ["string", "null"] }
+        key_name: { type: string }
+        requirement: { type: string }
+        desired_value: { type: object, properties: { days: { type: number } }, required: [days] }
+        version: { type: integer }
+        source: { type: string }
+        changed_by: { type: string }
+        changed_reason: { type: ["string", "null"] }
+        updated_at: { type: string, format: date-time }
+        latest_run:
+          oneOf:
+            - $ref: "#/components/schemas/ReconciliationRunSummary"
+            - type: "null"
+        observation_status: { $ref: "#/components/schemas/ObservationStatus" }
+        disposition: { $ref: "#/components/schemas/Disposition" }
+      required:
+        [
+          desired_state_id, application_id, application_name, tenant, key_name,
+          requirement, desired_value, version, source, changed_by, updated_at,
+          latest_run, observation_status, disposition,
+        ]
+
+    DesiredStateHistoryEntry:
+      type: object
+      properties:
+        version: { type: integer }
+        desired_value: { type: object, properties: { days: { type: number } }, required: [days] }
+        changed_by: { type: string }
+        changed_groups: { type: array, items: { type: string } }
+        changed_reason: { type: ["string", "null"] }
+        changed_at: { type: string, format: date-time }
+        current: { type: boolean }
+
+    ReconciliationAction:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        action: { type: string, enum: [reconcile, accept_exception] }
+        actor: { type: string }
+        actor_groups: { type: array, items: { type: string } }
+        result: { type: string, enum: [applied, failed, denied] }
+        reason: { type: ["string", "null"] }
+        expires_at: { type: ["string", "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+
+    ReconciliationDetail:
+      type: object
+      properties:
+        desired_state_id: { type: string, format: uuid }
+        run:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            desired_state_version: { type: integer }
+            observed_value: { type: ["object", "null"], additionalProperties: true }
+            status: { $ref: "#/components/schemas/ObservationStatus" }
+            observed_at: { type: string, format: date-time }
+            detail: { type: ["string", "null"] }
+        application_id: { type: string, format: uuid }
+        application_name: { type: string }
+        tenant: { type: ["string", "null"] }
+        key_name: { type: string }
+        requirement: { type: string }
+        desired_value: { type: object, properties: { days: { type: number } }, required: [days] }
+        observation_status: { $ref: "#/components/schemas/ObservationStatus" }
+        disposition: { $ref: "#/components/schemas/Disposition" }
+        desired_state_history:
+          type: array
+          items: { $ref: "#/components/schemas/DesiredStateHistoryEntry" }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/ReconciliationAction" }
+      required: [desired_state_id, run, observation_status, disposition]
+
+    # ── Controls / Evidence v2 (Phase 21) ────────────────────────────────
+    ControlStatus:
+      type: string
+      enum: [PASS, FAIL, UNKNOWN, "N/A"]
+    ConfidenceLevel:
+      type: string
+      enum: [HIGH, MEDIUM, LOW]
+
+    ControlAssessment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        control_id: { type: string, example: "ROT-POL-01" }
+        scope: { type: string, example: "suppliers/pepsi/payments-api/payments-api-key" }
+        status: { $ref: "#/components/schemas/ControlStatus" }
+        desired_value: { type: ["object", "null"], additionalProperties: true }
+        observed_value: { type: ["object", "null"], additionalProperties: true }
+        evidence_refs: { type: object, additionalProperties: true }
+        freshness_seconds: { type: ["integer", "null"] }
+        confidence: { $ref: "#/components/schemas/ConfidenceLevel" }
+        assessed_at: { type: string, format: date-time }
+        requirement: { type: string }
+        mandatory: { type: boolean }
+        dimension: { type: string }
+      required: [id, control_id, scope, status, confidence, assessed_at]
+
+    ControlDetail:
+      allOf:
+        - type: object
+          properties:
+            id: { type: string }
+            requirement: { type: string }
+            mandatory: { type: boolean }
+            dimension: { type: string }
+        - type: object
+          properties:
+            assessments:
+              type: array
+              items: { $ref: "#/components/schemas/ControlAssessment" }
+
+    ControlSummary:
+      type: object
+      properties:
+        id: { type: string }
+        requirement: { type: string }
+        mandatory: { type: boolean }
+        dimension: { type: string }
+        status: { $ref: "#/components/schemas/ControlStatus" }
+
+    MaturityDimension:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        score: { type: integer, minimum: 0, maximum: 100 }
+        basis: { type: string }
+        nextStep: { type: ["string", "null"] }
+        cls: { type: string, enum: [none, low, mid, high] }
+
+    # Phase 21 — {maturity, coverage, confidence}, three separate numbers.
+    # Never blend these back into one percentage — that is exactly the
+    # averaging failure mode (input/32's "Governance=0 but still Level 4")
+    # this whole phase exists to correct.
+    MaturityReport:
+      type: object
+      properties:
+        maturity: { type: integer, minimum: 0, maximum: 5, description: "Gated level." }
+        level: { type: integer, minimum: 0, maximum: 5, description: "Alias of maturity, kept for scenarios/08_evidence/collect.sh." }
+        levelName: { type: string }
+        levelCapReason:
+          type: ["string", "null"]
+          description: 'e.g. "Level capped at 3: AUTO-01 is FAIL" — never a bare number with no reason.'
+        coverage: { type: integer, minimum: 0, maximum: 100 }
+        confidence: { $ref: "#/components/schemas/ConfidenceLevel" }
+        controls:
+          type: array
+          items: { $ref: "#/components/schemas/ControlSummary" }
+        dimensions:
+          type: array
+          items: { $ref: "#/components/schemas/MaturityDimension" }
+          description: "Prompt 17's 5-dimension scores — supplementary, non-gating context (Non-goals)."
+        checks:
+          type: array
+          items: { type: object, additionalProperties: true }
+          description: "Backward-compat ladder-check view of controls[], for scenarios/08_evidence/collect.sh."
+        score: { type: integer }
+        maxScore: { type: integer }
+        percentage: { type: integer }
+        generatedAt: { type: string, format: date-time }
+        evaluatedAt: { type: string, format: date-time }
+      required: [maturity, levelName, coverage, confidence, controls]
+
+    # ── Auth (Phase 18) ───────────────────────────────────────────────────
+    Identity:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        user: { type: string }
+        persona: { type: string }
+        namespaces: { type: array, items: { type: string } }
+        groups: { type: array, items: { type: string } }
+        demoSwitch: { type: boolean }
+
+paths:
+  # ── Health / platform ────────────────────────────────────────────────
+  /health/live:
+    get:
+      summary: Process liveness
+      security: []
+      responses:
+        "200": { description: Alive }
+  /health/ready:
+    get:
+      summary: Vault authentication + database readiness
+      security: []
+      responses:
+        "200": { description: Ready }
+        "503": { description: Vault or database unavailable }
+  /health:
+    get:
+      summary: Dependency summary and API version
+      security: []
+      responses:
+        "200": { description: Healthy }
+        "503": { description: "Degraded — gateway relays a reduced payload, see the [...path].ts handler" }
+  /metrics:
+    get:
+      summary: Prometheus scrape endpoint
+      description: Outside session middleware entirely — bind to localhost in compose, never expose publicly.
+      security: []
+      responses:
+        "200": { description: Prometheus text exposition format }
+
+  # ── Auth (Phase 18) ──────────────────────────────────────────────────
+  /api/v1/auth/login:
+    get:
+      summary: Begin the OIDC Authorization Code + PKCE flow
+      security: []
+      responses:
+        "302":
+          description: Redirect to Keycloak's authorization endpoint. Relayed by a dedicated Nitro route (ui/server/routes/gateway/api/v1/auth/login.get.ts) as a real browser redirect, never proxied as JSON.
+          headers:
+            Location: { schema: { type: string } }
+  /api/v1/auth/callback:
+    get:
+      summary: OIDC callback — exchanges the code, creates the session, sets arc_session
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: Redirect to the app. Relayed by a dedicated Nitro route for the same reason as /auth/login.
+          headers:
+            Location: { schema: { type: string } }
+            Set-Cookie: { schema: { type: string } }
+        "401": { description: "Invalid state, wrong issuer/audience, or exchange failure" }
+  /api/v1/auth/me:
+    get:
+      summary: Current session identity
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Identity" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/logout:
+    post:
+      summary: Destroy the session
+      responses:
+        "200": { description: OK }
+  /api/v1/auth/demo-persona:
+    post:
+      summary: Switch the demo session's displayed persona (presentation only — never a real privilege change)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { persona: { type: string } }
+      responses:
+        "200": { description: OK }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  # ── Applications ──────────────────────────────────────────────────────
+  /api/v1/applications:
+    get:
+      summary: List applications (tenant-scoped)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Application" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      summary: Register an application
+      description: "authorize({action:'provision', tenant}) — Prompt 19 closed the missing-tenant-param gap that previously always denied supplier-admins here."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                supplier_id: { type: ["string", "null"], format: uuid }
+              required: [name]
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Application" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Name already registered }
+  /api/v1/applications/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Application detail (tenant-scoped since Phase 18 — the GET /applications/:id gap)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Application" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      summary: Update registry metadata (Prompt 19 — previously completely unguarded)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { description: { type: ["string", "null"] } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Application" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Deprovision the application (Prompt 19 — previously completely unguarded)
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/applications/{id}/provision:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Provision the AppRole + policy + Transit key; seeds Phase 20 desired_state when rotation_days is set
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                custody: { type: string, enum: [vault, softhsm] }
+                key_type: { type: string }
+                capabilities: { type: array, items: { type: string } }
+                rotation_days: { type: ["integer", "null"] }
+                tls: { type: boolean }
+      responses:
+        "202":
+          description: Accepted (queued or synchronously finished)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application: { $ref: "#/components/schemas/Application" }
+                  provisioning_job: { $ref: "#/components/schemas/ProvisioningJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/applications/{id}/classify:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Set platform/tenant/unscoped classification
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { category: { type: string, enum: [platform, tenant, unscoped] } }
+              required: [category]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Application" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Keys ──────────────────────────────────────────────────────────────
+  /api/v1/keys:
+    get:
+      summary: Merged Transit key inventory (primary cluster + vault-hsm managed keys)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TransitKey" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      summary: Create a Transit key
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                type: { type: string, enum: [aes256-gcm96, rsa-2048, rsa-4096, ecdsa-p256] }
+              required: [name]
+      responses:
+        "201": { description: Created }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/keys/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      summary: One key's metadata (primary cluster, falling back to vault-hsm)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransitKey" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/keys/{name}/rotate:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Rotate a Transit key (architect/operator/limited supplier-admin)
+      responses:
+        "200": { description: Rotated synchronously }
+        "202": { description: Queued }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/keys/{name}/rewrap:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Rewrap ciphertext to the latest key version — CIPHERTEXT ONLY, operator-only
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { ciphertext: { type: string, pattern: "^vault:v" } }
+              required: [ciphertext]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { ciphertext: { type: string } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/keys/{name}/destroy:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Request governed destruction — records an approval, does not delete
+      responses:
+        "202":
+          description: Approval recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approval: { $ref: "#/components/schemas/ApprovalRecord" }
+                  message: { type: string }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: No application registered to attach the destroy request to }
+
+  # ── PKI ───────────────────────────────────────────────────────────────
+  /api/v1/pki/ca-chain:
+    get:
+      summary: PKI intermediate CA chain (PEM)
+      responses:
+        "200": { description: OK, content: { text/plain: { schema: { type: string } } } }
+  /api/v1/pki/roles:
+    get:
+      summary: PKI issuance roles
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { type: string } }
+
+  # ── Suppliers ─────────────────────────────────────────────────────────
+  /api/v1/suppliers:
+    get:
+      summary: List suppliers (tenant-scoped)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Supplier" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      summary: Register + provision a tenant namespace
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                vault_namespace: { type: string }
+                sla_tier: { type: string, enum: [standard, premium] }
+              required: [name, vault_namespace]
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Supplier" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { description: "Supplier-admins cannot create tenants (estate-only action)" }
+        "409": { description: Name or namespace already exists }
+  /api/v1/suppliers/isolation:
+    get:
+      summary: Live bidirectional cross-tenant boundary check (60s cache)
+      responses:
+        "200": { description: OK }
+  /api/v1/suppliers/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Supplier detail
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Supplier" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      summary: Update registry metadata (Prompt 19 — previously completely unguarded)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Supplier" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Deprovision the Vault namespace + remove the record (estate-only, never supplier-admin — Prompt 19)
+      responses:
+        "200": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Linked applications or governance records; namespace still holds keys }
+  /api/v1/suppliers/{id}/applications:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: This supplier's applications
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Application" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/suppliers/{id}/keys:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: This supplier's Transit key inventory (namespace-scoped)
+      responses:
+        "200":
+          description: "OK (empty array on a 403 namespace boundary — by design, not an error)"
+          content:
+            application/json:
+              schema: { type: array, items: { type: object, additionalProperties: true } }
+
+  # ── Approvals ─────────────────────────────────────────────────────────
+  /api/v1/approvals:
+    get:
+      summary: List approvals (tenant-scoped; ?all=true includes resolved)
+      parameters:
+        - { name: all, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ApprovalRecord" } }
+    post:
+      summary: Register a new approval request (Prompt 19 — previously completely unguarded)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                app_id: { type: string, format: uuid }
+                key_name: { type: string }
+                action: { type: string }
+                requester: { type: string }
+                accessor: { type: string }
+                reason: { type: string }
+                source: { type: string, enum: [manual, local, external] }
+                supplier_id: { type: string, format: uuid }
+              required: [app_id, key_name, action, requester]
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRecord" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: app_id not found }
+        "409": { description: Accessor already registered }
+  /api/v1/approvals/{id}/approve:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Approve — records the decision (CISO-weight); the Vault CG authorize call itself happens out-of-band
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRecord" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Not pending }
+  /api/v1/approvals/{id}/deny:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Deny — records rejection without calling Vault
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRecord" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/approvals/{accessor}/authorize:
+    parameters:
+      - { name: accessor, in: path, required: true, schema: { type: string }, description: "Vault Control Group accessor, not a UUID." }
+    post:
+      summary: CLI alias — approves the pending record matching this accessor (Prompt 19 — previously completely unguarded; CISO-weight)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRecord" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Not pending }
+
+  # ── Cluster / Jobs / Platform ─────────────────────────────────────────
+  /api/v1/cluster:
+    get:
+      summary: Vault node health/reachability
+      responses:
+        "200": { description: OK }
+  /api/v1/jobs:
+    get:
+      summary: List provisioning jobs
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ProvisioningJob" } }
+  /api/v1/jobs/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: One provisioning job's detail (including step history)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProvisioningJob" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/platform/entitlements:
+    get:
+      summary: Vault license feature flags (Sentinel, HSM, KMIP, ...)
+      responses:
+        "200": { description: OK }
+
+  # ── Key management engine ────────────────────────────────────────────
+  /api/v1/keymgmt:
+    get:
+      summary: Key Management Secrets Engine inventory (emulated if unlicensed — never fabricated)
+      responses:
+        "200": { description: OK }
+  /api/v1/keymgmt/{name}/rotate:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Rotate a KMSE-distributed key
+      responses:
+        "200": { description: OK }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/keymgmt/{name}/sync:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Sync a key's latest versions to an external KMS provider
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { provider: { type: string } }
+              required: [provider]
+      responses:
+        "200": { description: OK }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ── Integrations ──────────────────────────────────────────────────────
+  /api/v1/integrations:
+    get:
+      summary: External integration channel status
+      responses:
+        "200": { description: OK }
+    post:
+      summary: Register an integration channel
+      responses:
+        "201": { description: Created }
+  /api/v1/integrations/{name}/heartbeat:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Record a liveness heartbeat for a channel
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Evidence (Prompt 16.6/16.7) ──────────────────────────────────────
+  /api/v1/evidence:
+    get:
+      summary: Ingested crypto-operation evidence unioned with governance decisions (tenant-scoped)
+      parameters:
+        - { name: source, in: query, schema: { type: string } }
+        - { name: operation, in: query, schema: { type: string } }
+        - { name: outcome, in: query, schema: { type: string } }
+        - { name: origin, in: query, schema: { type: string } }
+        - { name: stage, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 1000 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvidenceResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ── Reconciliation (Phase 20) ────────────────────────────────────────
+  /api/v1/reconciliation:
+    get:
+      summary: Desired-state rows joined to their latest reconciliation run (tenant-scoped from first commit)
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/ObservationStatus" } }
+        - { name: disposition, in: query, schema: { $ref: "#/components/schemas/Disposition" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ReconciliationRow" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/reconciliation/run:
+    post:
+      summary: On-demand observe→compare→persist sweep (never mutates Vault — see /{run_id}/reconcile for that)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { desired_state_id: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ReconciliationRunSummary" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  # redocly's no-ambiguous-paths linter flags this against
+  # /reconciliation/{run_id}/reconcile and /{run_id}/accept-exception —
+  # both are genuinely `/reconciliation/<segment>/<segment>` in the
+  # abstract OpenAPI path-template model, which has no notion of "a
+  # literal segment wins over a param". Express itself has no such
+  # ambiguity: reconciliationRouter registers this route before the
+  # generic /:run_id routes, so "desired-state" is matched literally,
+  # never captured as a run_id. Documented, not restructured — Deliverable
+  # 1 is capture-then-enforce, not a redesign of an unambiguous real API.
+  /api/v1/reconciliation/desired-state/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      summary: Edit the desired value itself (input/36 — who changed the intent, when, why)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                desired_value: { type: object, properties: { days: { type: number } } }
+                reason: { type: string }
+              required: [desired_value]
+      responses:
+        "200": { description: OK }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reconciliation/{run_id}:
+    parameters:
+      - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: One reconciliation run in full — desired-state history + action history
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reconciliation/{run_id}/reconcile:
+    parameters:
+      - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Correct drift — writes the desired value back to Vault, re-observes, records an action (DRIFTED runs only)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action: { $ref: "#/components/schemas/ReconciliationAction" }
+                  confirmation_run: { $ref: "#/components/schemas/ReconciliationRunSummary" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Run is not DRIFTED — nothing to reconcile }
+  /api/v1/reconciliation/{run_id}/accept-exception:
+    parameters:
+      - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Accept drift as a governed, time-boxed exception — does NOT touch Vault (CISO-weight)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+                expires_at: { type: string, format: date-time }
+              required: [reason, expires_at]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationAction" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Run is not DRIFTED — nothing to except }
+
+  # ── Controls / Evidence v2 (Phase 21) ────────────────────────────────
+  /api/v1/controls:
+    get:
+      summary: Latest assessment per (control_id, scope) — tenant-scoped from first commit
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ControlAssessment" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/controls/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: "Control catalogue id, e.g. ROT-POL-01 — not a UUID." }
+    get:
+      summary: One control's definition plus its per-scope assessments (tenant-filtered)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ControlDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Observability ─────────────────────────────────────────────────────
+  /api/v1/observability/health:
+    get:
+      summary: Optional observability stack dependency health
+      responses:
+        "200": { description: OK }
+  /api/v1/observability/summary:
+    get:
+      summary: Operational summaries via backend adapters
+      responses:
+        "200": { description: OK }
+
+  # ── Maturity (Phase 21) ──────────────────────────────────────────────
+  /api/v1/maturity:
+    get:
+      summary: Gated maturity report — {maturity, coverage, confidence}, never one blended percentage
+      description: >
+        Live: triggers a fresh control assessment and persists it to
+        control_assessments on every call (Phase 21) — not a cached read.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaturityReport" }
+        "401": { $ref: "#/components/responses/Unauthorized" }

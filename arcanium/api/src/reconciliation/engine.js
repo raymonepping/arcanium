@@ -10,6 +10,11 @@
 import { query } from "../db.js";
 import { observeRotationPeriod, applyRotationPeriod } from "./observe.js";
 import { compare } from "./diff.js";
+import {
+  OBSERVATION_STATUS_STATES,
+  DISPOSITION_STATES,
+  assertTransition,
+} from "../domain/state-machines.js";
 
 // Only 'rotation_period' exists this phase (Non-goal: widening the
 // requirement catalogue is a follow-on, not blocking this phase's exit
@@ -50,6 +55,25 @@ async function desiredStateRowsFor({ desiredStateId, supplierIds } = {}) {
 }
 
 async function recordRun(row, observed, result) {
+  // Prompt 22, Deliverable 3 — validate the observation_status transition
+  // against the run immediately prior for this same desired_state_id (each
+  // run is a fresh INSERT, never an UPDATE of one row, so the "transition"
+  // is across successive runs, not within a single row). A same-status
+  // run (by far the common case — nothing changed since last tick) is not
+  // a transition at all and is always allowed without consulting the
+  // machine, matching the same convention provisioner/steps.js's
+  // setStatus() uses.
+  const { rows: priorRows } = await query(
+    `SELECT status FROM reconciliation_runs
+      WHERE desired_state_id = $1
+      ORDER BY observed_at DESC LIMIT 1`,
+    [row.id],
+  );
+  const priorStatus = priorRows[0]?.status ?? null;
+  if (priorStatus && priorStatus !== result.status) {
+    assertTransition(OBSERVATION_STATUS_STATES, priorStatus, result.status);
+  }
+
   const { rows } = await query(
     `INSERT INTO reconciliation_runs
        (desired_state_id, desired_state_version, observed_value, status, detail)
@@ -200,6 +224,19 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
       throw new Error(
         `no applier registered for requirement '${run.requirement}'`,
       );
+    // Prompt 22, Deliverable 3 — a successful reconcile is the one real
+    // write site where disposition moves to RECONCILED; validate that
+    // transition against whatever disposition this desired_state is
+    // currently in (derived, not stored — see getDispositionFor's own
+    // comment) BEFORE applying anything to Vault, so an illegal transition
+    // is rejected up front rather than discovered after a Vault write.
+    const currentDisposition = await getDispositionFor(
+      run.desired_state_id,
+      run.status,
+    );
+    if (currentDisposition !== "RECONCILED") {
+      assertTransition(DISPOSITION_STATES, currentDisposition, "RECONCILED");
+    }
     await applier(desiredStateRow);
     const observed = await OBSERVERS[run.requirement](desiredStateRow);
     const compared = compare(desiredStateRow, observed);
@@ -237,7 +274,7 @@ export async function acceptException(
     throw e;
   }
   const { rows: runRows } = await query(
-    "SELECT id, status FROM reconciliation_runs WHERE id = $1",
+    "SELECT id, desired_state_id, status FROM reconciliation_runs WHERE id = $1",
     [runId],
   );
   if (!runRows.length) {
@@ -251,6 +288,23 @@ export async function acceptException(
     );
     e.status = 409;
     throw e;
+  }
+  // Prompt 22, Deliverable 3 — validate the disposition transition before
+  // recording anything. A CISO re-accepting/extending an already-accepted
+  // exception on the same still-DRIFTED run (EXCEPTION_ACCEPTED ->
+  // EXCEPTION_ACCEPTED) is a legitimate, currently-supported no-op, not an
+  // illegal transition — DISPOSITION_STATES has no self-loops (matching
+  // JOB_STATES' convention), so only check when it's actually changing.
+  const currentDisposition = await getDispositionFor(
+    runRows[0].desired_state_id,
+    runRows[0].status,
+  );
+  if (currentDisposition !== "EXCEPTION_ACCEPTED") {
+    assertTransition(
+      DISPOSITION_STATES,
+      currentDisposition,
+      "EXCEPTION_ACCEPTED",
+    );
   }
   const { rows } = await query(
     `INSERT INTO reconciliation_actions (run_id, action, actor, actor_groups, result, reason, expires_at)

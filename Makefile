@@ -363,3 +363,19 @@ scenario-reconciliation: ## Prompt 20 — hostile drift-detection proof (observe
 scenario-evidence-v2: ## Prompt 21 — hostile gated-maturity proof (forced FAIL caps the level, Vault-unreachable yields UNKNOWN, both recover)
 	@chmod +x scenarios/14_evidence_v2/test_gated_maturity.sh
 	@./scenarios/14_evidence_v2/test_gated_maturity.sh
+
+# ── Prompt 22 — OpenAPI / State Machines / CI Fitness Tests ────────────────
+.PHONY: openapi-generate openapi-lint scenario-fitness
+
+openapi-generate: ## Prompt 22 — regenerate arcanium/ui/app/types/api.generated.ts + the arcanium/api build-context mirror from openapi/arcanium.yaml
+	cd arcanium/ui && npm run generate:api-types
+	@mkdir -p arcanium/api/openapi
+	cp openapi/arcanium.yaml arcanium/api/openapi/arcanium.yaml
+	@echo "Synced arcanium/api/openapi/arcanium.yaml (Containerfile build-context mirror)"
+
+openapi-lint: ## Prompt 22 — validate openapi/arcanium.yaml itself
+	npx --yes @redocly/cli@latest lint openapi/arcanium.yaml
+
+scenario-fitness: ## Prompt 22 — architecture invariant checks (no Vault import in ui/, authorize() coverage, tenant-scope coverage, EXCEPTION_ACCEPTED regression guard, OpenAPI route coverage)
+	@chmod +x scenarios/13_fitness/test_architecture_invariants.sh
+	@./scenarios/13_fitness/test_architecture_invariants.sh

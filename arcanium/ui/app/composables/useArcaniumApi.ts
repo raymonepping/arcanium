@@ -5,6 +5,17 @@ import type {
   Supplier, Application, TransitKey, ApprovalRecord, ApiHealth, ClusterNode, MaturityReport, ProvisioningJob,
   ReconciliationRow, ReconciliationDetail
 } from '~/types/arcanium'
+// Prompt 22, Deliverable 2 — openapi/arcanium.yaml is the one authoritative
+// contract; these return types are generated from it (`make openapi-generate`
+// / `npm run generate:api-types`), not hand-declared a second time, for
+// exactly the shapes that already drifted once before (Prompt 16's evidence
+// shape change). Structurally compatible with the hand-declared types above
+// (same fields), so existing pages that still import those directly for
+// prop typing keep working unchanged.
+import type { components } from '~/types/api.generated'
+type GenApplication = components['schemas']['Application']
+type GenEvidenceResponse = components['schemas']['EvidenceResponse']
+type GenReconciliationRow = components['schemas']['ReconciliationRow']
 
 export function useArcaniumApi() {
   const config = useRuntimeConfig()
@@ -64,7 +75,7 @@ export function useArcaniumApi() {
     // ── Evidence trail (Prompt 15.3 · 16.6) ──────────────
     evidenceTrail: (opts?: { source?: string; operation?: string; outcome?: string; origin?: string; stage?: string }) => {
       const q = new URLSearchParams(Object.entries(opts ?? {}).filter(([, v]) => v) as [string, string][]).toString()
-      return $get<{ rows: any[]; stage_counts: Record<string, number>; total: number }>(`/api/v1/evidence${q ? `?${q}` : ''}`)
+      return $get<GenEvidenceResponse>(`/api/v1/evidence${q ? `?${q}` : ''}`)
     },
     supplierIsolation: () => $get<{ verified: boolean; checked_at: string; tenants: string[]; directions: { from: string; to: string; kind: string; outcome: string; pass: boolean }[]; note: string | null }>('/api/v1/suppliers/isolation'),
     createSupplier: (body: Pick<Supplier, 'name' | 'vault_namespace' | 'sla_tier'>) => $post<Supplier>('/api/v1/suppliers', body),
@@ -73,7 +84,7 @@ export function useArcaniumApi() {
     // ── Reconciliation (Prompt 20) ────────────────────────
     reconciliationList: (opts?: { status?: string; disposition?: string }) => {
       const q = new URLSearchParams(Object.entries(opts ?? {}).filter(([, v]) => v) as [string, string][]).toString()
-      return $get<ReconciliationRow[]>(`/api/v1/reconciliation${q ? `?${q}` : ''}`)
+      return $get<GenReconciliationRow[]>(`/api/v1/reconciliation${q ? `?${q}` : ''}`)
     },
     reconciliationDetail: (runId: string) => $get<ReconciliationDetail>(`/api/v1/reconciliation/${encodeURIComponent(runId)}`),
     // ── Controls / Evidence v2 (Prompt 21) ─────────────────
@@ -99,8 +110,8 @@ export function useArcaniumApi() {
     supplierKeys: (id: string) => $get<TransitKey[] | string[]>(`/api/v1/suppliers/${id}/keys`),
 
     // ── Applications ───────────────────────────────────────
-    applications: () => $get<Application[]>('/api/v1/applications'),
-    application:  (id: string) => $get<Application>(`/api/v1/applications/${id}`),
+    applications: () => $get<GenApplication[]>('/api/v1/applications'),
+    application:  (id: string) => $get<GenApplication>(`/api/v1/applications/${id}`),
     createApplication: (body: Partial<Application>) => $post<Application>('/api/v1/applications', body),
     updateApplication: (id: string, body: Partial<Application>) => $patch<Application>(`/api/v1/applications/${id}`, body),
     deleteApplication: (id: string) => $delete<void>(`/api/v1/applications/${id}`),

@@ -1,0 +1,54 @@
+{
+  "results": [
+    {
+      "check": "supplier_isolation",
+      "result": "UNKNOWN",
+      "detail": "endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"
+    },
+    {
+      "check": "oidc_discovery",
+      "result": "PASS",
+      "method": "GET realm .well-known/openid-configuration, non-mutating"
+    },
+    {
+      "check": "reconciliation",
+      "result": "UNKNOWN",
+      "detail": "endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"
+    },
+    {
+      "check": "maturity",
+      "result": "UNKNOWN",
+      "detail": "endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"
+    },
+    {
+      "check": "onboarding",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "transit",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "pki",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "kmip",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "managed_key",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    },
+    {
+      "check": "sentinel_negative",
+      "result": "UNKNOWN",
+      "detail": "not run — mutating scenario, requires --with-scenarios and creates/changes real resources"
+    }
+  ]
+}

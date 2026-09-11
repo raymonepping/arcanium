@@ -1,0 +1,307 @@
+name: CI
+
+# Prompt 22, Deliverable 5 — "if git clone && CI cannot reconstruct the
+# system, the developer's laptop is still silently part of the
+# architecture" (input/32). This workflow is authored to run against a
+# disposable Vault + Postgres (containers spun up in the job, never a
+# persistent environment) from a clean checkout, following exactly the
+# sequence docs/setup.md documents for a human operator — nothing here
+# assumes state that only exists on someone's laptop.
+#
+# Honesty note (Prompt 22's own standard, applied to itself): this workflow
+# was authored and YAML-validated in this session but has not been proven
+# green by an actual GitHub Actions run — no CI runner was reachable from
+# the environment that wrote it. The full-stack-e2e job additionally needs
+# VAULT_LICENSE / VAULT_LICENSE_ENT repository secrets (Vault Enterprise
+# license files, base64-encoded) to do anything beyond the community-
+# edition-shaped parts of the stack; without them it reports what it could
+# and could not verify, the same way scenarios/09_sentinel already reports
+# "SKIP — Sentinel not in licence" rather than fabricating a pass.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  read-all
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  # ── Fast, no-infra checks — fail fast before anything heavier runs ──────
+  static-checks:
+    name: Lint, typecheck, unit tests, contract + fitness statics
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install API dependencies
+        working-directory: arcanium/api
+        run: npm ci
+
+      - name: Install UI dependencies
+        working-directory: arcanium/ui
+        run: npm ci
+
+      - name: API unit tests (includes state-machine illegal-transition tests)
+        working-directory: arcanium/api
+        run: npm test
+
+      - name: UI typecheck
+        working-directory: arcanium/ui
+        run: npm run typecheck
+
+      - name: OpenAPI contract itself is valid (Deliverable 1)
+        run: npx --yes @redocly/cli@latest lint openapi/arcanium.yaml
+
+      - name: Regenerate API types and fail if they drifted from the contract (Deliverable 2)
+        run: |
+          make openapi-generate
+          git diff --exit-code -- arcanium/ui/app/types/api.generated.ts arcanium/api/openapi/arcanium.yaml || \
+            { echo "::error::openapi/arcanium.yaml or its generated/mirrored artifacts are out of sync — run 'make openapi-generate' and commit the result"; exit 1; }
+
+      - name: Architecture fitness — authorize()/tenantScope() static coverage (Deliverable 4)
+        run: |
+          node scenarios/13_fitness/check_authorize_coverage.mjs
+          node scenarios/13_fitness/check_tenant_scope_coverage.mjs
+
+      - name: Architecture fitness — no Vault client / credential literal under ui/ (Deliverable 4)
+        run: |
+          ! grep -rl "node-vault\|from ['\"]vault['\"]\|require(['\"]vault['\"]\|X-Vault-Token\|VAULT_ADDR" \
+            arcanium/ui/app arcanium/ui/server 2>/dev/null | grep -v '\.test\.'
+          ! grep -rl "VAULT_TOKEN\|VAULT_ROLE_ID\|VAULT_SECRET_ID" arcanium/ui/app arcanium/ui/server 2>/dev/null
+
+      - name: UI build (also produces the client bundle the OIDC-token-leak check inspects)
+        working-directory: arcanium/ui
+        run: npm run build
+
+      - name: Architecture fitness — no OIDC token key in the built client bundle (Deliverable 4)
+        run: |
+          ! grep -rl "access_token\|id_token\|refresh_token" arcanium/ui/.output/public 2>/dev/null
+
+  # ── Migration tests — disposable Postgres, no Vault needed ──────────────
+  migration-tests:
+    name: Run all migrations 001→latest against a fresh Postgres
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arcanium
+          POSTGRES_PASSWORD: arcanium_migration_test
+          POSTGRES_DB: arcanium_db
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install API dependencies
+        working-directory: arcanium/api
+        run: npm ci
+      - name: Run migrations 001 -> latest against a fresh disposable database
+        working-directory: arcanium/api
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: arcanium
+          PGPASSWORD: arcanium_migration_test
+          PGDATABASE: arcanium_db
+        run: node -e "
+          import('./src/migrations.js').then(async ({ runMigrations }) => {
+            const { init } = await import('./src/db.js');
+            init(process.env.PGUSER, process.env.PGPASSWORD);
+            await runMigrations();
+            console.log('all migrations applied cleanly to a fresh database');
+            process.exit(0);
+          }).catch((err) => { console.error(err); process.exit(1); });
+          "
+
+  # ── The full disposable stack: Vault + HSM + identity + Arcanium + workloads ──
+  full-stack-e2e:
+    name: Disposable end-to-end stack (Vault, HSM, identity, Arcanium, scenarios)
+    runs-on: ubuntu-latest
+    needs: [static-checks, migration-tests]
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install podman + podman-compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman podman-compose
+          podman version
+
+      - name: Install Vault, Terraform, jq
+        run: |
+          curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt-get update && sudo apt-get install -y vault terraform jq
+          vault version
+
+      # Vault Enterprise binary + licenses are not redistributable in this
+      # repo (gitignored — see vault-prepare.sh) and are not fetched here
+      # either; this job restores them ONLY from repository secrets.
+      # Without VAULT_LICENSE configured, every step below reports what it
+      # could verify with a community-shaped stack and skips the rest
+      # honestly — it does not fabricate a pass.
+      - name: Restore Vault Enterprise license (if configured)
+        env:
+          VAULT_LICENSE_B64: ${{ secrets.VAULT_LICENSE }}
+          VAULT_LICENSE_ENT_B64: ${{ secrets.VAULT_LICENSE_ENT }}
+        run: |
+          mkdir -p vault-s/config
+          if [ -n "${VAULT_LICENSE_B64:-}" ]; then
+            echo "$VAULT_LICENSE_B64" | base64 -d > vault-s/config/vault_v2.hclic
+          fi
+          if [ -n "${VAULT_LICENSE_ENT_B64:-}" ]; then
+            echo "$VAULT_LICENSE_ENT_B64" | base64 -d > vault-s/config/vault_v2_ent.hclic
+          fi
+          if [ ! -s vault-s/config/vault_v2.hclic ] || [ ! -s vault-s/config/vault_v2_ent.hclic ]; then
+            echo "::warning::VAULT_LICENSE/VAULT_LICENSE_ENT secrets not configured — the Vault-dependent steps below will report UNKNOWN/SKIP, not a fabricated pass."
+          fi
+
+      - name: .env from .env.example
+        run: cp .env.example .env
+
+      - name: make check / network
+        run: |
+          make network || true
+
+      - name: Vault prepare + up + status (docs/setup.md sequence)
+        id: vault_up
+        continue-on-error: true
+        run: |
+          test -s vault-s/config/vault_v2.hclic && test -s vault-s/config/vault_v2_ent.hclic || { echo "no license — skipping Vault bring-up"; exit 78; }
+          make vault-prepare
+          make vault-up
+          make vault-status
+
+      - name: infra-up
+        if: steps.vault_up.outcome == 'success'
+        run: make infra-up
+
+      - name: Vault platform Terraform (tf-platform, tf-transit, tf-pki, tf-database)
+        if: steps.vault_up.outcome == 'success'
+        run: |
+          export VAULT_ADDR=https://127.0.0.1:18200
+          export VAULT_CACERT="$PWD/vault-tls/ca-chain.pem"
+          make tf-platform
+          make tf-transit
+          make tf-pki
+          make tf-database
+
+      - name: Build + start Arcanium (api + ui + worker)
+        if: steps.vault_up.outcome == 'success'
+        run: |
+          make arcanium-up
+          curl -fsS --retry 10 --retry-delay 3 --retry-connrefused http://localhost:3001/health/ready
+
+      - name: Identity stack (OpenLDAP + Keycloak) — Phase 18 negative-auth needs real OIDC logins
+        if: steps.vault_up.outcome == 'success'
+        run: make identity-bootstrap
+
+      - name: HSM bootstrap (Prompt 14.1 Managed Key custody)
+        if: steps.vault_up.outcome == 'success'
+        continue-on-error: true
+        run: make hsm-bootstrap
+
+      - name: Terraform workloads/KMIP/suppliers + onboarding
+        if: steps.vault_up.outcome == 'success'
+        run: |
+          export VAULT_ADDR=https://127.0.0.1:18200
+          export VAULT_CACERT="$PWD/vault-tls/ca-chain.pem"
+          make tf-workloads
+          make tf-kmip
+          make tf-suppliers
+          make onboarding
+
+      - name: Provision workload credentials + start workload containers
+        if: steps.vault_up.outcome == 'success'
+        run: |
+          export VAULT_ADDR=https://127.0.0.1:18200
+          export VAULT_CACERT="$PWD/vault-tls/ca-chain.pem"
+          make kmip-provision
+          make supplier-provision
+          make workloads-up
+
+      # ── Deliverable 5's scenario list ──────────────────────────────────
+      - name: End-to-end onboarding scenario (scenarios/01_onboarding)
+        if: steps.vault_up.outcome == 'success'
+        run: ./scenarios/01_onboarding/run.sh
+
+      - name: Tenant isolation negative tests (scenarios/06_supplier_isolation)
+        if: steps.vault_up.outcome == 'success'
+        run: ./scenarios/06_supplier_isolation/provision.sh
+
+      - name: Phase 18 security negative tests (scenarios/11_security_foundation)
+        if: steps.vault_up.outcome == 'success'
+        run: make scenario-security-foundation
+
+      - name: Phase 20 drift detection (scenarios/12_reconciliation)
+        if: steps.vault_up.outcome == 'success'
+        run: make scenario-reconciliation
+
+      - name: Phase 21 gated maturity (scenarios/14_evidence_v2)
+        if: steps.vault_up.outcome == 'success'
+        run: make scenario-evidence-v2
+
+      - name: Sentinel negative test (scenario-automation-depth — self-skips if unlicensed)
+        if: steps.vault_up.outcome == 'success'
+        run: |
+          export VAULT_ADDR=https://127.0.0.1:18200
+          export VAULT_CACERT="$PWD/vault-tls/ca-chain.pem"
+          make tf-sentinel
+          make scenario-automation-depth
+
+      - name: Architecture fitness tests, full live set (Deliverable 4)
+        if: steps.vault_up.outcome == 'success'
+        run: make scenario-fitness
+
+      - name: State-recording smoke test (state/scripts/capture-state.sh)
+        if: steps.vault_up.outcome == 'success'
+        run: |
+          ./state/scripts/capture-state.sh ci-$(date +%Y%m%d%H%M%S) "CI disposable-stack smoke test"
+          # A baseline that can't even be captured in CI is a real finding
+          # about the tooling, not a gap to quietly work around (Deliverable 5).
+
+      - name: Container build (api + ui images)
+        run: |
+          make arcanium-build
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p ci-logs
+          podman ps -a > ci-logs/podman-ps.txt 2>&1 || true
+          for c in arcanium-api arcanium-ui arcanium-worker arcanium-vault_1 arcanium-vault_2 arcanium-vault_3; do
+            podman logs "$c" > "ci-logs/${c}.log" 2>&1 || true
+          done
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: ci-failure-logs
+          path: ci-logs/
+          retention-days: 7
