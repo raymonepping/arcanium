@@ -1,0 +1,170 @@
+diff --git a/arcanium/ui/app/pages/index.vue b/arcanium/ui/app/pages/index.vue
+index ea6d02e..fed4405 100644
+--- a/arcanium/ui/app/pages/index.vue
++++ b/arcanium/ui/app/pages/index.vue
+@@ -1,6 +1,27 @@
+ <template>
+   <div class="dash">
+ 
++    <!-- ── "Which problem is yours?" (Prompt 26, Deliverable 1) ──
++    A persistent switcher, not a one-time gate — always visible here,
++    never blocks direct navigation to any page. Each door links to the
++    single page that most demonstrates that story; the other pages each
++    story also touches are named in the subtext rather than force-fit
++    into one href. -->
++    <section class="story-doors">
++      <NuxtLink to="/reconciliation" class="door-card">
++        <span class="door-title">Lifecycle management</span>
++        <span class="door-sub">Dashboard · Keys · Reconciliation</span>
++      </NuxtLink>
++      <NuxtLink to="/approvals" class="door-card">
++        <span class="door-title">Governance</span>
++        <span class="door-sub">Approvals · Evidence · Maturity</span>
++      </NuxtLink>
++      <NuxtLink to="/suppliers" class="door-card">
++        <span class="door-title">Tenant isolation</span>
++        <span class="door-sub">Suppliers · Isolation · Cross-tenant test</span>
++      </NuxtLink>
++    </section>
++
+     <!-- ── Command-center hero ─────────────────────────────── -->
+     <section class="arc-hero dash-hero">
+       <div class="hero-lead">
+@@ -71,6 +92,39 @@
+       </div>
+     </div>
+ 
++    <!-- ── Estate story summary (Prompt 26, Deliverable 2) — collapsible,
++    collapsed by default. A summary of data already loaded elsewhere on
++    this page (plus one extra /maturity read for the Governance line),
++    never a new source of truth — each number is exactly what the linked
++    page itself shows. ── -->
++    <div class="dash-card">
++      <div class="card-head">
++        <button class="card-fold" :aria-expanded="showStorySummary" @click="toggleFold('storySummary')">
++          <span class="fold-caret" :class="{ open: showStorySummary }">▸</span>
++          <h3 class="card-title">Estate Story Summary</h3>
++        </button>
++      </div>
++      <template v-if="showStorySummary">
++        <ul class="story-lines">
++          <li>
++            <NuxtLink to="/reconciliation" class="story-line-link">
++              <strong>Lifecycle:</strong> {{ storyLines.lifecycle }}
++            </NuxtLink>
++          </li>
++          <li>
++            <NuxtLink to="/maturity" class="story-line-link">
++              <strong>Governance:</strong> {{ storyLines.governance }}
++            </NuxtLink>
++          </li>
++          <li>
++            <NuxtLink to="/suppliers" class="story-line-link">
++              <strong>Isolation:</strong> {{ storyLines.isolation }}
++            </NuxtLink>
++          </li>
++        </ul>
++      </template>
++    </div>
++
+     <!-- ── Cryptographic lifecycle rail ────────────────────── -->
+     <div class="dash-card">
+       <div class="card-head">
+@@ -272,12 +326,12 @@
+ import { ref, computed, onMounted, watch } from 'vue'
+ import { useArcaniumApi } from '~/composables/useArcaniumApi'
+ import { useClusterHealth } from '~/composables/useClusterHealth'
+-import type { ApprovalRecord, Supplier, Application, TransitKey, ReconciliationRow } from '~/types/arcanium'
++import type { ApprovalRecord, Supplier, Application, TransitKey, ReconciliationRow, MaturityReport } from '~/types/arcanium'
+ 
+ definePageMeta({ layout: 'default' })
+ useHead({ title: 'Dashboard' })
+ 
+-const { applications: fetchApps, keys: fetchKeys, approvals: fetchApprovals, suppliers: fetchSuppliers, evidenceTrail, supplierIsolation, reconciliationList } = useArcaniumApi()
++const { applications: fetchApps, keys: fetchKeys, approvals: fetchApprovals, suppliers: fetchSuppliers, evidenceTrail, supplierIsolation, reconciliationList, maturity: fetchMaturity } = useArcaniumApi()
+ const { nodes: clusterNodes, loading: clusterLoading, error: clusterError, status: clusterStatus, healthyCount } = useClusterHealth()
+ 
+ const loading = ref(true)
+@@ -290,12 +344,13 @@ const suppliers = ref<Supplier[]>([])
+ const allApprovals = ref<ApprovalRecord[]>([])
+ const cryptoOpsIngested = ref(0)
+ const stageCounts = ref<Record<string, number>>({})
+-const isolation = ref<{ verified: boolean } | null>(null)
++const isolation = ref<{ verified: boolean, checked_at?: string } | null>(null)
++const maturityReport = ref<MaturityReport | null>(null)
+ const reconciliation = ref<ReconciliationRow[]>([])
+ const reconciliationLoading = ref(true)
+ 
+ // Collapsible dashboard panels — collapsed by default, the choice is remembered per browser.
+-const folds = ref<Record<string, boolean>>({ evidence: false, cluster: false, reconciliation: false })
++const folds = ref<Record<string, boolean>>({ evidence: false, cluster: false, reconciliation: false, storySummary: false })
+ onMounted(() => {
+   for (const k of Object.keys(folds.value)) {
+     try { folds.value[k] = localStorage.getItem(`arc.dash.${k}`) === 'open' } catch { /* private mode */ }
+@@ -308,6 +363,29 @@ function toggleFold(k: string) {
+ const showEvidence = computed(() => folds.value.evidence)
+ const showCluster = computed(() => folds.value.cluster)
+ const showReconciliation = computed(() => folds.value.reconciliation)
++const showStorySummary = computed(() => folds.value.storySummary)
++
++// ── Estate story summary (Prompt 26, Deliverable 2) ────────
++// Every number here is read from state already fetched for the rest of
++// this page (or one extra /maturity call) — never computed independently
++// of what the linked page itself would show.
++const storyLines = computed(() => {
++  const appCount = new Set(reconciliation.value.map(r => r.application_id)).size
++  const lifecycle = reconciliation.value.length
++    ? `${appCount} application${appCount === 1 ? '' : 's'} under active reconciliation, ${driftedRows.value.length} drifted`
++    : 'No applications under active reconciliation yet'
++
++  const governance = maturityReport.value
++    ? `Level ${maturityReport.value.level} (${maturityReport.value.levelName}), ${maturityReport.value.coverage}% coverage, ${approvalStats.value.pending} pending approval${approvalStats.value.pending === 1 ? '' : 's'}`
++    : 'Maturity data not yet loaded'
++
++  const isolationAge = isolation.value?.checked_at ? relativeTime(isolation.value.checked_at) : null
++  const isolation_ = isolation.value === null
++    ? `${stats.value.suppliers} tenant${stats.value.suppliers === 1 ? '' : 's'}, isolation not yet checked this session`
++    : `${stats.value.suppliers} tenant${stats.value.suppliers === 1 ? '' : 's'}, isolation ${isolation.value.verified ? 'verified' : 'NOT verified'}${isolationAge ? ` ${isolationAge}` : ''}`
++
++  return { lifecycle, governance, isolation: isolation_ }
++})
+ 
+ const driftedRows = computed(() => reconciliation.value.filter(r => r.observation_status === 'DRIFTED'))
+ const reconciliationHeadline = computed(() => {
+@@ -459,6 +537,7 @@ onMounted(async () => {
+   await loadApprovals()
+   supplierIsolation().then(r => { isolation.value = r }).catch(() => { isolation.value = null })
+   reconciliationList().then(r => { reconciliation.value = Array.isArray(r) ? r : [] }).catch(() => {}).finally(() => { reconciliationLoading.value = false })
++  fetchMaturity().then(r => { maturityReport.value = r }).catch(() => { maturityReport.value = null })
+ })
+ usePolling(loadApprovals, 10000)
+ watch(healthyCount, firePulse)
+@@ -467,6 +546,28 @@ watch(healthyCount, firePulse)
+ <style scoped>
+ .dash { display: flex; flex-direction: column; gap: 18px; }
+ 
++/* Prompt 26 — "which problem is yours?" doors */
++.story-doors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
++@media (max-width: 800px) { .story-doors { grid-template-columns: 1fr; } }
++.door-card {
++  display: flex; flex-direction: column; gap: 4px;
++  background: var(--arc-glass); border: 1px solid var(--arc-glass-border);
++  border-radius: var(--arc-radius); padding: 14px 16px;
++  text-decoration: none; transition: border-color 0.15s, transform 0.15s;
++}
++.door-card:hover { border-color: rgba(0, 180, 216, 0.35); transform: translateY(-1px); }
++.door-title { font-size: 13px; font-weight: 700; color: var(--arc-text-primary); }
++.door-sub { font-size: 11px; color: var(--arc-text-muted); }
++
++/* Prompt 26 — estate story summary */
++.story-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
++.story-line-link {
++  display: block; font-size: 12.5px; color: var(--arc-text-secondary);
++  text-decoration: none; line-height: 1.6;
++}
++.story-line-link:hover { color: var(--arc-action-bright); }
++.story-line-link strong { color: var(--arc-text-primary); margin-right: 4px; }
++
+ /* Hero */
+ .dash-hero { display: flex; gap: 32px; align-items: center; flex-wrap: wrap; }
+ .hero-lead { flex: 1; min-width: 260px; }

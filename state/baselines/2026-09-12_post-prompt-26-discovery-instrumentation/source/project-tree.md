@@ -1,0 +1,1083 @@
+🔗 Git-tracked files in: arcanium
+  - .containerignore
+  - .editorconfig
+  - .env.example
+  - .github/  - CODEOWNERS
+  - .github/  - ISSUE_TEMPLATE/  - bug_report.md
+  - .github/  - ISSUE_TEMPLATE/  - feature_request.md
+  - .github/  - dependabot.yml
+  - .github/  - pull_request_template.md
+  - .github/  - workflows/  - ci.yml
+  - .github/  - workflows/  - gitleaks.yml
+  - .github/  - workflows/  - release.yml
+  - .github/  - workflows/  - scan_on_pr.yml
+  - .gitignore
+  - .gitleaks.toml
+  - CHANGELOG.md
+  - CONTRIBUTING.md
+  - LICENSE
+  - Makefile
+  - README.md
+  - VERSION
+  - arcanium/  - api/  - .dockerignore
+  - arcanium/  - api/  - Containerfile
+  - arcanium/  - api/  - README.md
+  - arcanium/  - api/  - openapi/  - arcanium.yaml
+  - arcanium/  - api/  - package-lock.json
+  - arcanium/  - api/  - package.json
+  - arcanium/  - api/  - src/  - aggregation/  - intent.js
+  - arcanium/  - api/  - src/  - auth/  - authorize.js
+  - arcanium/  - api/  - src/  - auth/  - index.js
+  - arcanium/  - api/  - src/  - auth/  - oidc.js
+  - arcanium/  - api/  - src/  - config.js
+  - arcanium/  - api/  - src/  - db.js
+  - arcanium/  - api/  - src/  - domain/  - state-machines.js
+  - arcanium/  - api/  - src/  - evidence/  - ingest.js
+  - arcanium/  - api/  - src/  - index.js
+  - arcanium/  - api/  - src/  - maturity/  - checks.js
+  - arcanium/  - api/  - src/  - maturity/  - controls.js
+  - arcanium/  - api/  - src/  - maturity/  - report.js
+  - arcanium/  - api/  - src/  - maturity/  - scorer.js
+  - arcanium/  - api/  - src/  - middleware/  - errorHandler.js
+  - arcanium/  - api/  - src/  - middleware/  - requestId.js
+  - arcanium/  - api/  - src/  - middleware/  - requestLogger.js
+  - arcanium/  - api/  - src/  - middleware/  - securityHeaders.js
+  - arcanium/  - api/  - src/  - middleware/  - validateRequest.js
+  - arcanium/  - api/  - src/  - migrations.js
+  - arcanium/  - api/  - src/  - migrations/  - 001_init.sql
+  - arcanium/  - api/  - src/  - migrations/  - 002_approvals.sql
+  - arcanium/  - api/  - src/  - migrations/  - 003_supplier_isolation.sql
+  - arcanium/  - api/  - src/  - migrations/  - 004_control_group_accessor.sql
+  - arcanium/  - api/  - src/  - migrations/  - 005_provisioning.sql
+  - arcanium/  - api/  - src/  - migrations/  - 006_sessions.sql
+  - arcanium/  - api/  - src/  - migrations/  - 007_job_params.sql
+  - arcanium/  - api/  - src/  - migrations/  - 008_integrations.sql
+  - arcanium/  - api/  - src/  - migrations/  - 009_evidence.sql
+  - arcanium/  - api/  - src/  - migrations/  - 010_platform_apps.sql
+  - arcanium/  - api/  - src/  - migrations/  - 011_session_groups.sql
+  - arcanium/  - api/  - src/  - migrations/  - 012_desired_state.sql
+  - arcanium/  - api/  - src/  - migrations/  - 013_controls.sql
+  - arcanium/  - api/  - src/  - migrations/  - 014_scenario_runs.sql
+  - arcanium/  - api/  - src/  - migrations/  - 015_correlation_ids.sql
+  - arcanium/  - api/  - src/  - migrations/  - 016_restore_drills.sql
+  - arcanium/  - api/  - src/  - provisioner/  - application.js
+  - arcanium/  - api/  - src/  - provisioner/  - dispatch.js
+  - arcanium/  - api/  - src/  - provisioner/  - key.js
+  - arcanium/  - api/  - src/  - provisioner/  - steps.js
+  - arcanium/  - api/  - src/  - provisioner/  - supplier.js
+  - arcanium/  - api/  - src/  - reconciliation/  - desiredState.js
+  - arcanium/  - api/  - src/  - reconciliation/  - diff.js
+  - arcanium/  - api/  - src/  - reconciliation/  - engine.js
+  - arcanium/  - api/  - src/  - reconciliation/  - observe.js
+  - arcanium/  - api/  - src/  - routes/  - applications.js
+  - arcanium/  - api/  - src/  - routes/  - approvals.js
+  - arcanium/  - api/  - src/  - routes/  - cluster.js
+  - arcanium/  - api/  - src/  - routes/  - controls.js
+  - arcanium/  - api/  - src/  - routes/  - evidence.js
+  - arcanium/  - api/  - src/  - routes/  - health.js
+  - arcanium/  - api/  - src/  - routes/  - integrations.js
+  - arcanium/  - api/  - src/  - routes/  - jobs.js
+  - arcanium/  - api/  - src/  - routes/  - keymgmt.js
+  - arcanium/  - api/  - src/  - routes/  - keys.js
+  - arcanium/  - api/  - src/  - routes/  - observability.js
+  - arcanium/  - api/  - src/  - routes/  - pki.js
+  - arcanium/  - api/  - src/  - routes/  - platform.js
+  - arcanium/  - api/  - src/  - routes/  - reconciliation.js
+  - arcanium/  - api/  - src/  - routes/  - suppliers.js
+  - arcanium/  - api/  - src/  - supplier-validation.js
+  - arcanium/  - api/  - src/  - suppliers/  - isolation.js
+  - arcanium/  - api/  - src/  - telemetry/  - metrics.js
+  - arcanium/  - api/  - src/  - telemetry/  - slo.js
+  - arcanium/  - api/  - src/  - vault.js
+  - arcanium/  - api/  - src/  - worker.js
+  - arcanium/  - api/  - test/  - applications.test.js
+  - arcanium/  - api/  - test/  - health.test.js
+  - arcanium/  - api/  - test/  - state-machines.test.js
+  - arcanium/  - api/  - test/  - vault.test.js
+  - arcanium/  - cli/  - README.md
+  - arcanium/  - cli/  - package-lock.json
+  - arcanium/  - cli/  - package.json
+  - arcanium/  - cli/  - src/  - client.js
+  - arcanium/  - cli/  - src/  - commands/  - applications.js
+  - arcanium/  - cli/  - src/  - commands/  - approvals.js
+  - arcanium/  - cli/  - src/  - commands/  - controls.js
+  - arcanium/  - cli/  - src/  - commands/  - health.js
+  - arcanium/  - cli/  - src/  - commands/  - integrations.js
+  - arcanium/  - cli/  - src/  - commands/  - jobs.js
+  - arcanium/  - cli/  - src/  - commands/  - keys.js
+  - arcanium/  - cli/  - src/  - commands/  - onboard.js
+  - arcanium/  - cli/  - src/  - commands/  - reconciliation.js
+  - arcanium/  - cli/  - src/  - commands/  - suppliers.js
+  - arcanium/  - cli/  - src/  - config.js
+  - arcanium/  - cli/  - src/  - index.js
+  - arcanium/  - ui/  - .containerignore
+  - arcanium/  - ui/  - .gitignore
+  - arcanium/  - ui/  - .node-version
+  - arcanium/  - ui/  - .npmrc
+  - arcanium/  - ui/  - Containerfile
+  - arcanium/  - ui/  - README.md
+  - arcanium/  - ui/  - app/  - app.vue
+  - arcanium/  - ui/  - app/  - assets/  - css/  - main.css
+  - arcanium/  - ui/  - app/  - components/  - AppFooter.vue
+  - arcanium/  - ui/  - app/  - components/  - ClusterTopology.vue
+  - arcanium/  - ui/  - app/  - components/  - ManagementDialog.vue
+  - arcanium/  - ui/  - app/  - components/  - RecordPagination.vue
+  - arcanium/  - ui/  - app/  - composables/  - useArcaniumApi.ts
+  - arcanium/  - ui/  - app/  - composables/  - useClusterHealth.ts
+  - arcanium/  - ui/  - app/  - composables/  - usePolling.ts
+  - arcanium/  - ui/  - app/  - layouts/  - default.vue
+  - arcanium/  - ui/  - app/  - middleware/  - auth.global.ts
+  - arcanium/  - ui/  - app/  - pages/  - applications/  - [id]/  - index.vue
+  - arcanium/  - ui/  - app/  - pages/  - applications/  - [id]/  - intent.vue
+  - arcanium/  - ui/  - app/  - pages/  - applications/  - index.vue
+  - arcanium/  - ui/  - app/  - pages/  - approvals.vue
+  - arcanium/  - ui/  - app/  - pages/  - cluster.vue
+  - arcanium/  - ui/  - app/  - pages/  - evidence.vue
+  - arcanium/  - ui/  - app/  - pages/  - index.vue
+  - arcanium/  - ui/  - app/  - pages/  - integrations.vue
+  - arcanium/  - ui/  - app/  - pages/  - jobs.vue
+  - arcanium/  - ui/  - app/  - pages/  - keys/  - [id].vue
+  - arcanium/  - ui/  - app/  - pages/  - keys/  - index.vue
+  - arcanium/  - ui/  - app/  - pages/  - login.vue
+  - arcanium/  - ui/  - app/  - pages/  - maturity.vue
+  - arcanium/  - ui/  - app/  - pages/  - observability.vue
+  - arcanium/  - ui/  - app/  - pages/  - onboard.vue
+  - arcanium/  - ui/  - app/  - pages/  - reconciliation/  - [id].vue
+  - arcanium/  - ui/  - app/  - pages/  - reconciliation/  - index.vue
+  - arcanium/  - ui/  - app/  - pages/  - suppliers/  - [id].vue
+  - arcanium/  - ui/  - app/  - pages/  - suppliers/  - index.vue
+  - arcanium/  - ui/  - app/  - types/  - api.generated.ts
+  - arcanium/  - ui/  - app/  - types/  - arcanium.ts
+  - arcanium/  - ui/  - app/  - utils/  - apiError.ts
+  - arcanium/  - ui/  - app/  - utils/  - cluster.ts
+  - arcanium/  - ui/  - app/  - utils/  - maturity.ts
+  - arcanium/  - ui/  - nuxt.config.ts
+  - arcanium/  - ui/  - package-lock.json
+  - arcanium/  - ui/  - package.json
+  - arcanium/  - ui/  - public/  - favicon.svg
+  - arcanium/  - ui/  - server/  - api/  - cluster-health.ts
+  - arcanium/  - ui/  - server/  - middleware/  - gateway.ts
+  - arcanium/  - ui/  - server/  - routes/  - gateway/  - [...path].ts
+  - arcanium/  - ui/  - server/  - routes/  - gateway/  - api/  - v1/  - auth/  - callback.get.ts
+  - arcanium/  - ui/  - server/  - routes/  - gateway/  - api/  - v1/  - auth/  - login.get.ts
+  - arcanium/  - ui/  - server/  - utils/  - oidcRelay.ts
+  - arcanium/  - ui/  - tsconfig.json
+  - compose/  - README.md
+  - compose/  - arcanium/  - .gitkeep
+  - compose/  - arcanium/  - README.md
+  - compose/  - arcanium/  - compose.yaml
+  - compose/  - hsm/  - .gitkeep
+  - compose/  - hsm/  - README.md
+  - compose/  - hsm/  - compose.yaml
+  - compose/  - identity/  - compose.yaml
+  - compose/  - identity/  - keycloak/  - setup_keycloak.sh
+  - compose/  - identity/  - keycloak/  - verify_keycloak.sh
+  - compose/  - identity/  - ldap/  - bootstrap.ldif
+  - compose/  - identity/  - ldap/  - setup_ldap.sh
+  - compose/  - infra/  - .gitkeep
+  - compose/  - infra/  - README.md
+  - compose/  - infra/  - compose.yaml
+  - compose/  - kms-sim/  - README.md
+  - compose/  - kms-sim/  - compose.yaml
+  - compose/  - observability/  - .gitkeep
+  - compose/  - observability/  - README.md
+  - compose/  - observability/  - compose.yaml
+  - compose/  - observability/  - grafana/  - dashboards/  - arcanium-overview.json
+  - compose/  - observability/  - grafana/  - provisioning/  - dashboards/  - arcanium.yml
+  - compose/  - observability/  - grafana/  - provisioning/  - datasources/  - prometheus.yml
+  - compose/  - observability/  - otel-collector-config.yaml
+  - compose/  - observability/  - prometheus/  - prometheus.yml
+  - compose/  - vault/  - .gitkeep
+  - compose/  - vault/  - README.md
+  - compose/  - vault/  - compose.restore-drill.yaml
+  - compose/  - vault/  - compose.yaml
+  - compose/  - workloads/  - .gitkeep
+  - compose/  - workloads/  - README.md
+  - compose/  - workloads/  - compose.yaml
+  - config/  - persistence-manifest.yaml
+  - docs/  - README.md
+  - docs/  - api.md
+  - docs/  - architecture.md
+  - docs/  - bootstrap.md
+  - docs/  - capabilities.md
+  - docs/  - configuration.md
+  - docs/  - correlation-ids.md
+  - docs/  - index.md
+  - docs/  - key-distribution.md
+  - docs/  - local-dependency-audit.md
+  - docs/  - managed-keys.md
+  - docs/  - maturity-model.md
+  - docs/  - onboarding.md
+  - docs/  - operations.md
+  - docs/  - orchestration.md
+  - docs/  - persistence.md
+  - docs/  - personas.md
+  - docs/  - policy-as-code.md
+  - docs/  - release-checklist.md
+  - docs/  - repository-layout.md
+  - docs/  - resource-ownership.md
+  - docs/  - scale.md
+  - docs/  - scenarios.md
+  - docs/  - security.md
+  - docs/  - setup.md
+  - docs/  - slo.md
+  - docs/  - troubleshooting.md
+  - docs/  - upgrade.md
+  - docs/  - usage.md
+  - hooks/  - pre-commit
+  - openapi/  - arcanium.yaml
+  - scenarios/  - 01_onboarding/  - run.sh
+  - scenarios/  - 03_kmip/  - provision.sh
+  - scenarios/  - 05_approval/  - approve.sh
+  - scenarios/  - 05_approval/  - provision.sh
+  - scenarios/  - 06_supplier_isolation/  - provision.sh
+  - scenarios/  - 06_supplier_isolation/  - test_list_isolation.sh
+  - scenarios/  - 06_supplier_isolation/  - test_negative.sh
+  - scenarios/  - 06_supplier_isolation/  - test_positive.sh
+  - scenarios/  - 07_failure/  - 01_node_failure.sh
+  - scenarios/  - 07_failure/  - 02_leader_failover.sh
+  - scenarios/  - 07_failure/  - 03_quorum_loss.sh
+  - scenarios/  - 07_failure/  - 04_seal_unseal.sh
+  - scenarios/  - 07_failure/  - README.md
+  - scenarios/  - 08_evidence/  - collect.sh
+  - scenarios/  - 09_sentinel/  - test_automation_depth.sh
+  - scenarios/  - 09_sentinel/  - test_sentinel_block.sh
+  - scenarios/  - 10_key_distribution/  - run.sh
+  - scenarios/  - 11_security_foundation/  - check_token_validation.mjs
+  - scenarios/  - 11_security_foundation/  - test_negative_auth.sh
+  - scenarios/  - 12_reconciliation/  - test_drift_detection.sh
+  - scenarios/  - 13_fitness/  - check_authorize_coverage.mjs
+  - scenarios/  - 13_fitness/  - check_tenant_scope_coverage.mjs
+  - scenarios/  - 13_fitness/  - test_architecture_invariants.sh
+  - scenarios/  - 14_evidence_v2/  - test_gated_maturity.sh
+  - scenarios/  - 15_operability/  - test_postgres_recovery.sh
+  - scenarios/  - pre_24_persistence/  - test_restart_persistence.sh
+  - scripts/  - arcanium-upgrade.sh
+  - scripts/  - compose.sh
+  - scripts/  - hsm-resolve-slot.sh
+  - scripts/  - hsm-setup.sh
+  - scripts/  - podman-check.sh
+  - scripts/  - podman-storage.sh
+  - scripts/  - rehydrate-stack.sh
+  - scripts/  - ui-rebuild.sh
+  - scripts/  - vault-backup.sh
+  - scripts/  - vault-bootstrap.sh
+  - scripts/  - vault-check-entitlement.sh
+  - scripts/  - vault-common.sh
+  - scripts/  - vault-hsm-bootstrap.sh
+  - scripts/  - vault-hsm-server.sh
+  - scripts/  - vault-license-inspect.sh
+  - scripts/  - vault-license-parameters.sh
+  - scripts/  - vault-prepare.sh
+  - scripts/  - vault-restore-drill.sh
+  - scripts/  - vault-seed-users.sh
+  - scripts/  - vault-server.sh
+  - scripts/  - vault-status.sh
+  - scripts/  - vault-tls.cnf
+  - scripts/  - vault-unseal.sh
+  - scripts/  - verify-stack.sh
+  - scripts/  - workload-credentials.sh
+  - state/  - .last-persistence-scenario-result
+  - state/  - CURRENT
+  - state/  - README.md
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - arcanium/  - capabilities.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - scenarios/  - results.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - scenarios/  - summary.md
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - summary.md
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_all-healthy/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - arcanium/  - capabilities.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - scenarios/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - scenarios/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-complete/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-identity-fixed/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - arcanium/  - capabilities.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - scenarios/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - scenarios/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18-verified/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - arcanium/  - capabilities.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - scenarios/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - scenarios/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-18/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19-complete/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-19/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-check/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-20-complete/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-check/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-21-complete/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-phase-22-complete/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - summary.md
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_post-prompt-23-api-explorer/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - arcanium/  - capabilities.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - scenarios/  - results.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - scenarios/  - summary.md
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - summary.md
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_pre-hardening/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - summary.md
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-21/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - summary.md
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_pre-phase-22/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - summary.md
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-11_pre-prompt-23/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - backup/  - backup.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - backup/  - query.err
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - persistence/  - persistence.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - summary.md
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-24-operability-recovery-slo/  - verification/  - summary.md
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - arcanium/  - api-smoke.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - arcanium/  - health.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - arcanium/  - migrations.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - arcanium/  - mode-flags.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - arcanium/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - backup/  - backup.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - backup/  - query.err
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - hsm/  - managed-keys.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - hsm/  - pkcs11-slots.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - hsm/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - identity/  - keycloak-discovery.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - identity/  - ldap-check.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - identity/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - infra/  - postgres.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - infra/  - schema.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - kms/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - observability/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - observability/  - targets.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - persistence/  - persistence.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - vault/  - audit-devices.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - vault/  - auth-methods.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - vault/  - cluster.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - vault/  - mounts.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - vault/  - namespaces.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - vault/  - policies-summary.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - workloads/  - inventory.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - components/  - workloads/  - status.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - manifest.yaml
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - runtime/  - containers.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - runtime/  - images.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - runtime/  - networks.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - runtime/  - volumes.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - source/  - diff.patch
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - source/  - git-status.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - source/  - git.txt
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - source/  - hashes.sha256
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - source/  - project-tree.md
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - source/  - versions.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - summary.md
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - verification/  - results.json
+  - state/  - baselines/  - 2026-09-12_post-prompt-25-unified-intent-view/  - verification/  - summary.md
+  - state/  - scripts/  - capture-state.sh
+  - state/  - scripts/  - commit-baseline.sh
+  - state/  - scripts/  - compare-state.sh
+  - state/  - scripts/  - validate-state.sh
+  - terraform/  - bootstrap/  - README.md
+  - terraform/  - bootstrap/  - backend.tf
+  - terraform/  - vault-database/  - README.md
+  - terraform/  - vault-database/  - database.tf
+  - terraform/  - vault-database/  - main.tf
+  - terraform/  - vault-database/  - outputs.tf
+  - terraform/  - vault-database/  - variables.tf
+  - terraform/  - vault-keymgmt/  - main.tf
+  - terraform/  - vault-keymgmt/  - variables.tf
+  - terraform/  - vault-kmip/  - README.md
+  - terraform/  - vault-kmip/  - kmip.tf
+  - terraform/  - vault-kmip/  - main.tf
+  - terraform/  - vault-kmip/  - outputs.tf
+  - terraform/  - vault-kmip/  - variables.tf
+  - terraform/  - vault-managed-keys/  - main.tf
+  - terraform/  - vault-managed-keys/  - managed_key.tf
+  - terraform/  - vault-managed-keys/  - outputs.tf
+  - terraform/  - vault-managed-keys/  - transit.tf
+  - terraform/  - vault-managed-keys/  - variables.tf
+  - terraform/  - vault-pki/  - ca.tf
+  - terraform/  - vault-pki/  - intermediate.tf
+  - terraform/  - vault-pki/  - main.tf
+  - terraform/  - vault-pki/  - mounts.tf
+  - terraform/  - vault-pki/  - outputs.tf
+  - terraform/  - vault-pki/  - roles.tf
+  - terraform/  - vault-pki/  - variables.tf
+  - terraform/  - vault-platform/  - audit.tf
+  - terraform/  - vault-platform/  - auth-userpass.tf
+  - terraform/  - vault-platform/  - auth.tf
+  - terraform/  - vault-platform/  - control-groups.tf
+  - terraform/  - vault-platform/  - main.tf
+  - terraform/  - vault-platform/  - namespaces.tf
+  - terraform/  - vault-platform/  - outputs.tf
+  - terraform/  - vault-platform/  - policies.tf
+  - terraform/  - vault-platform/  - variables.tf
+  - terraform/  - vault-sentinel/  - main.tf
+  - terraform/  - vault-sentinel/  - variables.tf
+  - terraform/  - vault-suppliers/  - README.md
+  - terraform/  - vault-suppliers/  - cocacola.tf
+  - terraform/  - vault-suppliers/  - main.tf
+  - terraform/  - vault-suppliers/  - namespaces.tf
+  - terraform/  - vault-suppliers/  - outputs.tf
+  - terraform/  - vault-suppliers/  - pepsi.tf
+  - terraform/  - vault-suppliers/  - quotas.tf
+  - terraform/  - vault-suppliers/  - variables.tf
+  - terraform/  - vault-transit/  - engine.tf
+  - terraform/  - vault-transit/  - keys.tf
+  - terraform/  - vault-transit/  - main.tf
+  - terraform/  - vault-transit/  - outputs.tf
+  - terraform/  - vault-transit/  - policies.tf
+  - terraform/  - vault-transit/  - variables.tf
+  - terraform/  - vault-workloads/  - approle.tf
+  - terraform/  - vault-workloads/  - main.tf
+  - terraform/  - vault-workloads/  - outputs.tf
+  - terraform/  - vault-workloads/  - policies.tf
+  - terraform/  - vault-workloads/  - transit.tf
+  - terraform/  - vault-workloads/  - variables.tf
+  - vault-1/  - config.hcl
+  - vault-2/  - config-2.hcl
+  - vault-3/  - config-3.hcl
+  - vault-hsm/  - Containerfile
+  - vault-hsm/  - config-hsm.hcl
+  - vault-hsm/  - softhsm2.conf
+  - vault-restore-drill/  - config.hcl
+  - vault-s/  - config-s.hcl
+  - vault-s/  - policies/  - autounseal.hcl
+  - workloads/  - document-signing/  - Containerfile
+  - workloads/  - document-signing/  - package-lock.json
+  - workloads/  - document-signing/  - package.json
+  - workloads/  - document-signing/  - src/  - config.js
+  - workloads/  - document-signing/  - src/  - index.js
+  - workloads/  - document-signing/  - src/  - vault.js
+  - workloads/  - external-supplier/  - Containerfile
+  - workloads/  - external-supplier/  - package-lock.json
+  - workloads/  - external-supplier/  - package.json
+  - workloads/  - external-supplier/  - src/  - config.js
+  - workloads/  - external-supplier/  - src/  - index.js
+  - workloads/  - external-supplier/  - src/  - vault.js
+  - workloads/  - kmip-client/  - Containerfile
+  - workloads/  - kmip-client/  - pyproject.toml
+  - workloads/  - kmip-client/  - requirements.txt
+  - workloads/  - kmip-client/  - src/  - client.py
+  - workloads/  - payments-api/  - Containerfile
+  - workloads/  - payments-api/  - package-lock.json
+  - workloads/  - payments-api/  - package.json
+  - workloads/  - payments-api/  - src/  - config.js
+  - workloads/  - payments-api/  - src/  - index.js
+  - workloads/  - payments-api/  - src/  - vault.js
+  - workloads/  - pki-client/  - Containerfile
+  - workloads/  - pki-client/  - package-lock.json
+  - workloads/  - pki-client/  - package.json
+  - workloads/  - pki-client/  - src/  - config.js
+  - workloads/  - pki-client/  - src/  - index.js
+  - workloads/  - pki-client/  - src/  - vault.js
