@@ -1,5 +1,17 @@
 <template>
   <div>
+    <!-- Prompt 25 — pages/applications/[id]/intent.vue is a NESTED child
+    route of this page in Nuxt's file-based router (any page sharing this
+    [id] directory with this index.vue becomes a child, rendered through
+    NuxtPage — found live: Nuxt does this regardless of whether the parent
+    is [id].vue or [id]/index.vue, so there's no directory layout that
+    avoids it). Rather than fight the framework, this embraces it as the
+    "tab on the existing detail page" option Prompt 25 explicitly offered:
+    when a child route (currently just /intent) is active, show ONLY its
+    content — full-page, not sandwiched inside this page's own hero/profile
+    chrome below. -->
+    <NuxtPage v-if="route.name !== 'applications-id'" />
+    <template v-else>
     <div v-if="loading" class="state-loading"><div class="spinner" /><span>Loading application…</span></div>
     <div v-else-if="error" class="state-error"><div class="error-icon">⚠</div><p>{{ error }}</p></div>
     <div v-else-if="app">
@@ -59,6 +71,7 @@
       <div class="section-header">
         <h3 class="section-title">Crypto Profiles</h3>
         <span class="count-badge">{{ app.crypto_profiles?.length ?? 0 }}</span>
+        <NuxtLink :to="`/applications/${id}/intent`" class="section-link">Unified intent view →</NuxtLink>
       </div>
       <div v-if="!app.crypto_profiles?.length" class="empty-panel">
         No crypto profiles registered for this application.
@@ -99,6 +112,7 @@
         </tbody>
       </table>
     </div>
+    </template>
   </div>
 </template>
 

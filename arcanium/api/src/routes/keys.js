@@ -21,7 +21,9 @@ export const keysRouter = Router();
 const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
 
 // Derive a human custody label without inferring from the key name.
-function custodyOf(meta) {
+// Exported for reuse by aggregation/intent.js (Prompt 25) — one custody
+// derivation, not a second copy.
+export function custodyOf(meta) {
   if (meta?._managedKey || meta?.type === "managed_key")
     return "SoftHSM (PKCS#11 Managed Key)";
   if (meta?.exportable === true) return "Vault Transit · exportable";

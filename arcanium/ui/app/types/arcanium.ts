@@ -241,6 +241,76 @@ export interface ControlAssessment {
   dimension?: string
 }
 
+// ── Unified Cryptographic Service Intent View (Phase 25) ──────────────────
+// A read-model over Phases 18-21's existing tables/live reads — no new
+// domain data. `custody` and `assessment.reconciliation` are arrays, not
+// single objects, because a real application can have more than one crypto
+// profile (this project's own demo data does — ticket-service, pki-client
+// both have two) — see arcanium/api/src/aggregation/intent.js's own header.
+export interface IntentCustodyEntry {
+  profile_id: string
+  key_name: string
+  vault_path: string
+  type: 'transit' | 'pki' | 'kmip' | 'managed_key'
+  custody: string
+  /** null = not live-confirmable right now (Vault unreachable), never guessed as false. */
+  hsm_backed: boolean | null
+  rotation_days: number | null
+}
+
+export interface IntentRotationPolicy {
+  desired_state_id: string
+  key_name: string
+  desired_days: number | null
+  source: string
+  changed_by: string
+  changed_reason?: string | null
+  updated_at: string
+}
+
+export interface IntentReconciliationEntry {
+  desired_state_id: string
+  key_name: string
+  requirement: string
+  observation_status: ObservationStatus
+  disposition: Disposition
+  observed_at: string | null
+}
+
+export interface IntentEvidenceEntry {
+  kind: 'lifecycle_event' | 'evidence'
+  [key: string]: unknown
+}
+
+export interface IntentEntryStory {
+  labels: ('Lifecycle view' | 'Governance view' | 'Tenant isolation view')[]
+  summary: string
+}
+
+export interface ApplicationIntent {
+  application_id: string
+  application: string
+  tenant: string
+  /** Always null today — Arcanium has no per-application environment concept in the data model yet. */
+  environment: string | null
+  requirements: { encryption: boolean, signing: boolean, kmip: boolean, tls: boolean }
+  custody: IntentCustodyEntry[]
+  governance: {
+    rotation_policies: IntentRotationPolicy[]
+    /** A code invariant, not per-application data — true for every application today. */
+    destruction_requires_approval: boolean
+    approvals: ApprovalRecord[]
+  }
+  desired_state: Record<string, unknown>[]
+  observed_state: Record<string, unknown>[]
+  assessment: {
+    reconciliation: IntentReconciliationEntry[]
+    controls: ControlAssessment[]
+  }
+  evidence: IntentEvidenceEntry[]
+  entry_story: IntentEntryStory
+}
+
 export interface MaturityReport {
   // Prompt 21 — gated, not averaged.
   maturity: number

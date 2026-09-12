@@ -380,6 +380,116 @@ components:
         dimension: { type: string }
         status: { $ref: "#/components/schemas/ControlStatus" }
 
+    # ── Unified Cryptographic Service Intent View (Phase 25) ─────────────
+    # A read-model over Phases 18-21's existing tables — nothing here is a
+    # new source of truth. `custody` and `assessment.reconciliation` are
+    # arrays, not single objects, because a real application can have more
+    # than one crypto profile (this project's own demo data does) — see
+    # arcanium/api/src/aggregation/intent.js's own header comment.
+    IntentCustodyEntry:
+      type: object
+      properties:
+        profile_id: { type: string, format: uuid }
+        key_name: { type: string }
+        vault_path: { type: string }
+        type: { type: string, enum: [transit, pki, kmip, managed_key] }
+        custody: { type: string }
+        hsm_backed: { type: ["boolean", "null"], description: "null = not live-confirmable right now, never guessed" }
+        rotation_days: { type: ["integer", "null"] }
+      required: [profile_id, key_name, vault_path, type, custody]
+
+    IntentReconciliationEntry:
+      type: object
+      properties:
+        desired_state_id: { type: string, format: uuid }
+        key_name: { type: string }
+        requirement: { type: string }
+        observation_status: { $ref: "#/components/schemas/ObservationStatus" }
+        disposition: { $ref: "#/components/schemas/Disposition" }
+        observed_at: { type: ["string", "null"], format: date-time }
+      required: [desired_state_id, key_name, requirement, observation_status, disposition]
+
+    IntentView:
+      type: object
+      properties:
+        application_id: { type: string, format: uuid }
+        application: { type: string }
+        tenant: { type: string, example: "root" }
+        environment:
+          type: ["string", "null"]
+          description: "Always null — Arcanium has no per-application environment concept in the data model yet. Never fabricated as a default like \"production\"."
+        requirements:
+          type: object
+          properties:
+            encryption: { type: boolean }
+            signing: { type: boolean }
+            kmip: { type: boolean }
+            tls: { type: boolean }
+          required: [encryption, signing, kmip, tls]
+        custody:
+          type: array
+          items: { $ref: "#/components/schemas/IntentCustodyEntry" }
+        governance:
+          type: object
+          properties:
+            rotation_policies:
+              type: array
+              items:
+                type: object
+                properties:
+                  desired_state_id: { type: string, format: uuid }
+                  key_name: { type: string }
+                  desired_days: { type: ["integer", "null"] }
+                  source: { type: string }
+                  changed_by: { type: string }
+                  changed_reason: { type: ["string", "null"] }
+                  updated_at: { type: string, format: date-time }
+            destruction_requires_approval:
+              type: boolean
+              description: "A code invariant (provisioner/key.js's requestKeyDestroy() always creates an approval), not per-application configurable data — true for every application today."
+            approvals:
+              type: array
+              items: { type: object, additionalProperties: true }
+          required: [rotation_policies, destruction_requires_approval, approvals]
+        desired_state:
+          type: array
+          items: { type: object, additionalProperties: true, description: "Raw desired_state rows, current version only" }
+        observed_state:
+          type: array
+          items: { type: object, additionalProperties: true, description: "Latest reconciliation_runs row per desired_state row" }
+        assessment:
+          type: object
+          properties:
+            reconciliation:
+              type: array
+              items: { $ref: "#/components/schemas/IntentReconciliationEntry" }
+            controls:
+              type: array
+              items: { $ref: "#/components/schemas/ControlAssessment" }
+          required: [reconciliation, controls]
+        evidence:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [lifecycle_event, evidence] }
+            additionalProperties: true
+        entry_story:
+          type: object
+          description: "Prompt 25 Deliverable 3 — computed from real data presence, never a static string."
+          properties:
+            labels:
+              type: array
+              items: { type: string, enum: ["Lifecycle view", "Governance view", "Tenant isolation view"] }
+            summary: { type: string }
+          required: [labels, summary]
+      required:
+        [
+          application_id, application, tenant, environment, requirements,
+          custody, governance, desired_state, observed_state, assessment,
+          evidence, entry_story,
+        ]
+
     MaturityDimension:
       type: object
       properties:
@@ -635,6 +745,19 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Application" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/applications/{id}/intent:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Unified Cryptographic Service Intent View (Phase 25) — pure aggregation over Phases 18-21's existing data, tenant-scoped the same way GET /applications/{id} is
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntentView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ── Keys ──────────────────────────────────────────────────────────────

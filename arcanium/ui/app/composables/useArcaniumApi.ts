@@ -3,7 +3,7 @@
 
 import type {
   Supplier, Application, TransitKey, ApprovalRecord, ApiHealth, ClusterNode, MaturityReport, ProvisioningJob,
-  ReconciliationRow, ReconciliationDetail
+  ReconciliationRow, ReconciliationDetail, ApplicationIntent
 } from '~/types/arcanium'
 // Prompt 22, Deliverable 2 — openapi/arcanium.yaml is the one authoritative
 // contract; these return types are generated from it (`make openapi-generate`
@@ -115,6 +115,8 @@ export function useArcaniumApi() {
     createApplication: (body: Partial<Application>) => $post<Application>('/api/v1/applications', body),
     updateApplication: (id: string, body: Partial<Application>) => $patch<Application>(`/api/v1/applications/${id}`, body),
     deleteApplication: (id: string) => $delete<void>(`/api/v1/applications/${id}`),
+    // ── Unified Intent View (Prompt 25) ────────────────────
+    applicationIntent: (id: string) => $get<ApplicationIntent>(`/api/v1/applications/${encodeURIComponent(id)}/intent`),
 
     // ── Keys ───────────────────────────────────────────────
     keys: () => $get<TransitKey[]>('/api/v1/keys'),

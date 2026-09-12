@@ -87,7 +87,6 @@ for node in vault-1 vault-2 vault-3; do
   vault_node "$node"
   vault_wait unsealed
 done
-vault_node vault-1
 vault_root cluster
 # `vault_wait unsealed` above only confirms each node answers "initialized
 # and not sealed" — not that Raft leader election has finished. Any write
@@ -97,14 +96,24 @@ vault_root cluster
 # restart scenario: "local node not active but active cluster node not
 # found", self-resolving within a few seconds). Retry rather than
 # fail-fast on this one specific, known-transient condition.
+#
+# Re-resolve the leader on EVERY attempt (vault_node_leader), not once
+# before the loop with a hardcoded `vault_node vault-1` — found live during
+# a cold Podman-machine restart (all 3 nodes starting simultaneously):
+# pinning to vault-1 fails outright with "dial tcp: lookup vault-2: no such
+# host" the moment leadership actually lands elsewhere, because a request
+# to a standby redirects to the leader's cluster-internal hostname, which
+# the host can't resolve (the same class of bug already fixed in
+# vault-backup.sh). Re-resolving each pass also naturally rides out
+# leadership moving during the election window itself.
 leader_wait_attempts=0
-until vault audit list -format=json >/tmp/vault-bootstrap-audit-check.$$ 2>&1; do
+until vault_node_leader 2>/dev/null && vault audit list -format=json >/tmp/vault-bootstrap-audit-check.$$ 2>&1; do
   leader_wait_attempts=$((leader_wait_attempts + 1))
-  if grep -q "active cluster node not found" /tmp/vault-bootstrap-audit-check.$$ && [ "$leader_wait_attempts" -lt 15 ]; then
+  if [ "$leader_wait_attempts" -lt 15 ] && { [ ! -s /tmp/vault-bootstrap-audit-check.$$ ] || grep -q "active cluster node not found\|no such host" /tmp/vault-bootstrap-audit-check.$$; }; then
     sleep 2
     continue
   fi
-  cat /tmp/vault-bootstrap-audit-check.$$ >&2
+  cat /tmp/vault-bootstrap-audit-check.$$ >&2 2>/dev/null
   rm -f /tmp/vault-bootstrap-audit-check.$$
   exit 1
 done

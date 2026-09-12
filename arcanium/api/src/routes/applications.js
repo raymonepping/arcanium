@@ -6,6 +6,7 @@ import { createJob, runOrQueue } from "../provisioner/steps.js";
 import { provisionApplication } from "../provisioner/application.js";
 import { tenantScope } from "../auth/index.js";
 import { authorize } from "../auth/authorize.js";
+import { getApplicationIntent } from "../aggregation/intent.js";
 
 export const applicationsRouter = Router();
 
@@ -129,6 +130,45 @@ applicationsRouter.get("/:id", async (req, res, next) => {
       [req.params.id],
     );
     res.json({ ...apps[0], crypto_profiles: profiles });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/applications/:id/intent — Prompt 25.
+// Pure read-model aggregation over Phases 18-21's existing tables/live
+// reads — no new domain data. Tenant-scoped the same way GET /:id above is
+// (404 on cross-tenant, not 403 — matches this file's own established
+// convention rather than inventing a new one for this one route).
+applicationsRouter.get("/:id/intent", async (req, res, next) => {
+  try {
+    validateUuid(req.params.id);
+    const { rows: apps } = await query(
+      "SELECT id, supplier_id FROM applications WHERE id = $1",
+      [req.params.id],
+    );
+    if (!apps.length) return next(notFound());
+
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(apps[0].supplier_id)) {
+      return next(notFound());
+    }
+
+    const intent = await getApplicationIntent(req.params.id);
+    if (!intent) return next(notFound());
+
+    // "Tenant isolation view" is a property of who's asking (a scoped
+    // supplier-admin session), not of the application's own data — appended
+    // here, at the route, rather than inside the data-only aggregation
+    // module, which has no notion of a caller.
+    const { _entryStoryLabels, ...body } = intent;
+    const labels = [..._entryStoryLabels];
+    if (scope.scoped) labels.push("Tenant isolation view");
+    const summary = labels.length
+      ? `This application's data currently supports: ${labels.join(", ")}.`
+      : "Not enough data yet to characterize this application's story — no lifecycle, governance, or tenant-scoped session data present.";
+
+    res.json({ ...body, entry_story: { labels, summary } });
   } catch (err) {
     next(err);
   }

@@ -631,6 +631,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/applications/{id}/intent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Unified Cryptographic Service Intent View (Phase 25) — pure aggregation over Phases 18-21's existing data, tenant-scoped the same way GET /applications/{id} is */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntentView"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/keys": {
         parameters: {
             query?: never;
@@ -2638,6 +2680,83 @@ export interface components {
             mandatory?: boolean;
             dimension?: string;
             status?: components["schemas"]["ControlStatus"];
+        };
+        IntentCustodyEntry: {
+            /** Format: uuid */
+            profile_id: string;
+            key_name: string;
+            vault_path: string;
+            /** @enum {string} */
+            type: "transit" | "pki" | "kmip" | "managed_key";
+            custody: string;
+            /** @description null = not live-confirmable right now, never guessed */
+            hsm_backed?: boolean | null;
+            rotation_days?: number | null;
+        };
+        IntentReconciliationEntry: {
+            /** Format: uuid */
+            desired_state_id: string;
+            key_name: string;
+            requirement: string;
+            observation_status: components["schemas"]["ObservationStatus"];
+            disposition: components["schemas"]["Disposition"];
+            /** Format: date-time */
+            observed_at?: string | null;
+        };
+        IntentView: {
+            /** Format: uuid */
+            application_id: string;
+            application: string;
+            /** @example root */
+            tenant: string;
+            /** @description Always null — Arcanium has no per-application environment concept in the data model yet. Never fabricated as a default like "production". */
+            environment: string | null;
+            requirements: {
+                encryption: boolean;
+                signing: boolean;
+                kmip: boolean;
+                tls: boolean;
+            };
+            custody: components["schemas"]["IntentCustodyEntry"][];
+            governance: {
+                rotation_policies: {
+                    /** Format: uuid */
+                    desired_state_id?: string;
+                    key_name?: string;
+                    desired_days?: number | null;
+                    source?: string;
+                    changed_by?: string;
+                    changed_reason?: string | null;
+                    /** Format: date-time */
+                    updated_at?: string;
+                }[];
+                /** @description A code invariant (provisioner/key.js's requestKeyDestroy() always creates an approval), not per-application configurable data — true for every application today. */
+                destruction_requires_approval: boolean;
+                approvals: {
+                    [key: string]: unknown;
+                }[];
+            };
+            desired_state: {
+                [key: string]: unknown;
+            }[];
+            observed_state: {
+                [key: string]: unknown;
+            }[];
+            assessment: {
+                reconciliation: components["schemas"]["IntentReconciliationEntry"][];
+                controls: components["schemas"]["ControlAssessment"][];
+            };
+            evidence: ({
+                /** @enum {string} */
+                kind?: "lifecycle_event" | "evidence";
+            } & {
+                [key: string]: unknown;
+            })[];
+            /** @description Prompt 25 Deliverable 3 — computed from real data presence, never a static string. */
+            entry_story: {
+                labels: ("Lifecycle view" | "Governance view" | "Tenant isolation view")[];
+                summary: string;
+            };
         };
         MaturityDimension: {
             id?: string;

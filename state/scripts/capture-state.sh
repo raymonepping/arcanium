@@ -679,6 +679,55 @@ capture_verification() {
     results=$(jq '. + [{check:"maturity", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
   fi
 
+  # Prompt 25, Deliverable 4 — GET /api/v1/applications/:id/intent for one
+  # known demo application (payments-api). Non-mutating: a pure read-model
+  # aggregation, same as the reconciliation/maturity checks above. Confirms
+  # the endpoint responds AND that every top-level key from Deliverable 1's
+  # shape is present — even when a value inside is UNKNOWN/empty, the KEY
+  # itself must never be silently omitted (this whole phase's own design
+  # rule, checked here rather than just asserted).
+  if running arcanium-api; then
+    local apps_code
+    apps_code=$(curl -s -o /tmp/arc-apps-check.$$ -w '%{http_code}' --max-time 10 \
+      http://localhost:3001/api/v1/applications 2>/dev/null || echo 000)
+    if [ "$apps_code" = "200" ]; then
+      local demo_app_id
+      demo_app_id=$(jq -r '.[] | select(.name=="payments-api") | .id' /tmp/arc-apps-check.$$ 2>/dev/null | head -1)
+      if [ -z "$demo_app_id" ]; then
+        results=$(jq '. + [{check:"intent_view", result:"UNKNOWN", detail:"demo application payments-api not found — cannot exercise the endpoint"}]' <<<"$results")
+      else
+        local intent_code
+        intent_code=$(curl -s -o /tmp/arc-intent-check.$$ -w '%{http_code}' --max-time 10 \
+          "http://localhost:3001/api/v1/applications/${demo_app_id}/intent" 2>/dev/null || echo 000)
+        if [ "$intent_code" = "200" ]; then
+          local missing
+          missing=$(jq -r '
+            ["application_id","application","tenant","environment","requirements",
+             "custody","governance","desired_state","observed_state","assessment",
+             "evidence","entry_story"] - (keys) | join(",")
+          ' /tmp/arc-intent-check.$$ 2>/dev/null)
+          if [ -z "$missing" ]; then
+            results=$(jq '. + [{check:"intent_view", result:"PASS", method:"GET /api/v1/applications/:id/intent, non-mutating"}]' <<<"$results")
+          else
+            results=$(jq --arg m "$missing" '. + [{check:"intent_view", result:"FAIL", detail:("missing top-level key(s): " + $m)}]' <<<"$results")
+          fi
+        elif [ "$intent_code" = "401" ]; then
+          results=$(jq '. + [{check:"intent_view", result:"UNKNOWN", detail:"endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"}]' <<<"$results")
+        else
+          results=$(jq --arg c "$intent_code" '. + [{check:"intent_view", result:"UNKNOWN", detail:("endpoint did not respond (http " + $c + ")")}]' <<<"$results")
+        fi
+        rm -f /tmp/arc-intent-check.$$
+      fi
+    elif [ "$apps_code" = "401" ]; then
+      results=$(jq '. + [{check:"intent_view", result:"UNKNOWN", detail:"endpoint requires an authenticated session (ARCANIUM_AUTH_ENABLED=true) — not run anonymously"}]' <<<"$results")
+    else
+      results=$(jq --arg c "$apps_code" '. + [{check:"intent_view", result:"UNKNOWN", detail:("could not list applications to resolve the demo app id (http " + $c + ")")}]' <<<"$results")
+    fi
+    rm -f /tmp/arc-apps-check.$$
+  else
+    results=$(jq '. + [{check:"intent_view", result:"UNKNOWN", detail:"arcanium-api not running"}]' <<<"$results")
+  fi
+
   local mutating_checks="onboarding transit pki kmip managed_key sentinel_negative"
   if $WITH_SCENARIOS; then
     results=$(jq '. + [{check:"onboarding", result:"UNKNOWN", detail:"scenario runner wiring not implemented yet — run scenarios/01_onboarding manually and record the result"}]' <<<"$results")
