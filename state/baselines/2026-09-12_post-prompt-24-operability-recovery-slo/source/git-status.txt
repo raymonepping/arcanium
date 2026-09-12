@@ -1,0 +1,2 @@
+ M scenarios/15_operability/test_postgres_recovery.sh
+ M scripts/arcanium-upgrade.sh

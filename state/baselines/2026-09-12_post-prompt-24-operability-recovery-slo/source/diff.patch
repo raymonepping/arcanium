@@ -1,0 +1,118 @@
+diff --git a/scenarios/15_operability/test_postgres_recovery.sh b/scenarios/15_operability/test_postgres_recovery.sh
+index c506ad7..b83ae15 100755
+--- a/scenarios/15_operability/test_postgres_recovery.sh
++++ b/scenarios/15_operability/test_postgres_recovery.sh
+@@ -83,7 +83,33 @@ last_write_ts() {
+     ))::bigint;" 2>/dev/null
+ }
+ 
+-echo "[pg-recovery] step 1/10: recording current state ($KNOWN_APP_NAME)"
++echo "[pg-recovery] step 1/10: pg_dump (this IS the backup — not assumed to already exist)"
++# --no-acl: found live while proving this drill — Vault's Postgres
++# dynamic-secrets-engine has issued thousands of short-lived
++# "v-approle-arcanium-<random>-<epoch>" roles over this project's
++# lifetime, and a plain pg_dump faithfully captures every GRANT/ALTER
++# DEFAULT PRIVILEGES referencing them. Those roles are artifacts of the
++# OLD cluster instance; none of them exist in a freshly recreated one, so
++# restoring an un-sanitized dump fails partway through on the first
++# GRANT-to-a-role-that-no-longer-exists it hits (found live: it got
++# through every CREATE TABLE/COPY/constraint/index first — the actual
++# schema and data were never the problem). --no-acl drops privilege
++# grants only; `ALTER TABLE ... OWNER TO arcanium` (a real, portable
++# role) is untouched.
++podman exec -i arcanium-postgres pg_dump -U arcanium --no-acl arcanium_db >"$DUMP_FILE"
++DUMP_SIZE=$(wc -c <"$DUMP_FILE" | tr -d ' ')
++echo "  pg_dump saved: $DUMP_FILE ($DUMP_SIZE bytes)"
++RPO_BASELINE=$(last_write_ts)
++
++echo "[pg-recovery] step 2/10: recording current state ($KNOWN_APP_NAME)"
++# Taken right after pg_dump, not before it — found live: this system has
++# real, continuous background traffic (payments-api's own encrypt/decrypt
++# workload loop), so a snapshot taken BEFORE pg_dump can legitimately be
++# older than what pg_dump itself captured moments later, making step 7's
++# before/after comparison fail on a handful of newer rows that were
++# never actually lost — they just postdate an earlier "before". Snapshotting
++# right after the dump (instead of right before it) shrinks that race
++# window to pg_dump's own runtime instead of this whole script's.
+ BEFORE=$(snapshot)
+ if [ -z "$BEFORE" ] || [ "$BEFORE" = "{}" ]; then
+   echo "[pg-recovery] could not find application '$KNOWN_APP_NAME' — set KNOWN_APP_NAME to an app that exists (see 'GET /api/v1/applications')." >&2
+@@ -92,21 +118,40 @@ fi
+ echo "$BEFORE" >"$DUMP_DIR/before.json"
+ echo "  snapshot saved: $DUMP_DIR/before.json"
+ 
+-echo "[pg-recovery] step 2/10: pg_dump (this IS the backup — not assumed to already exist)"
+-podman exec -i arcanium-postgres pg_dump -U arcanium arcanium_db >"$DUMP_FILE"
+-DUMP_SIZE=$(wc -c <"$DUMP_FILE" | tr -d ' ')
+-echo "  pg_dump saved: $DUMP_FILE ($DUMP_SIZE bytes)"
+-RPO_BASELINE=$(last_write_ts)
+-
+ echo "[pg-recovery] step 3/10: destroying PostgreSQL (container + volume)"
+ STARTED=$(date +%s)
+-./scripts/compose.sh infra stop postgres >/dev/null 2>&1 || true
+-podman rm -f arcanium-postgres >/dev/null 2>&1 || true
+-podman volume rm -f arcanium-infra_postgres-data >/dev/null 2>&1 || true
+-echo "  arcanium-postgres and its volume are gone."
++# Found live while proving this drill: `podman rm -f arcanium-postgres`
++# alone fails with "has dependent containers which must be removed before
++# it" — arcanium-adminer depends_on: postgres (compose/infra/compose.yaml),
++# and podman's storage layer enforces that as a hard removal-order
++# dependency, the same class of issue hit earlier with arcanium-ui/
++# arcanium-api. An earlier version of this script masked every destroy
++# command's exit status with `>/dev/null 2>&1 || true`, so that failure
++# went unnoticed and the "restore" step ran against still-live, untouched
++# data (a real, load-bearing bug this comment exists to prevent
++# recurring) — every destroy command below is now unmasked and fatal.
++./scripts/compose.sh infra stop adminer postgres || {
++  echo "[pg-recovery] FAILED: could not stop adminer/postgres — aborting before touching anything further" >&2
++  exit 1
++}
++podman rm -f arcanium-adminer arcanium-postgres || {
++  echo "[pg-recovery] FAILED: could not remove arcanium-adminer/arcanium-postgres — aborting" >&2
++  exit 1
++}
++podman volume rm -f arcanium-infra_postgres-data || {
++  echo "[pg-recovery] FAILED: could not remove the postgres volume — aborting" >&2
++  exit 1
++}
++# Trust, but verify — this exact silent-failure shape is what this drill
++# already caught once; a passing exit code alone isn't enough anymore.
++if podman volume exists arcanium-infra_postgres-data 2>/dev/null; then
++  echo "[pg-recovery] FAILED: arcanium-infra_postgres-data still exists after 'volume rm' reported success" >&2
++  exit 1
++fi
++echo "  arcanium-postgres, arcanium-adminer, and the postgres volume are gone (verified)."
+ 
+ echo "[pg-recovery] step 4/10: recreating PostgreSQL from scratch"
+-./scripts/compose.sh infra up -d postgres >/dev/null 2>&1
++./scripts/compose.sh infra up -d postgres
+ for i in $(seq 1 30); do
+   status=$(podman inspect arcanium-postgres --format '{{.State.Health.Status}}' 2>/dev/null || echo "starting")
+   [ "$status" = healthy ] && break
+@@ -121,6 +166,7 @@ if [ "$status" != healthy ]; then
+   exit 1
+ fi
+ echo "  fresh, empty arcanium-postgres is healthy"
++./scripts/compose.sh infra up -d adminer >/dev/null 2>&1 || true
+ 
+ echo "[pg-recovery] step 5/10: restoring from the pg_dump taken in step 2"
+ if ! podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -v ON_ERROR_STOP=1 <"$DUMP_FILE" >"$DUMP_DIR/restore.log" 2>&1; then
+diff --git a/scripts/arcanium-upgrade.sh b/scripts/arcanium-upgrade.sh
+index 524a25e..fd0303c 100755
+--- a/scripts/arcanium-upgrade.sh
++++ b/scripts/arcanium-upgrade.sh
+@@ -108,7 +108,13 @@ cmd_backup() {
+   echo "== backup: PostgreSQL pg_dump =="
+   mkdir -p backups
+   local dumpfile="backups/pg-upgrade-$(date -u +%Y%m%dT%H%M%SZ).sql"
+-  podman exec -i arcanium-postgres pg_dump -U arcanium arcanium_db >"$dumpfile"
++  # --no-acl: found live in scenarios/15_operability/test_postgres_recovery.sh
++  # — Vault's Postgres dynamic-secrets-engine leaves thousands of
++  # short-lived "v-approle-arcanium-<random>-<epoch>" GRANT/ALTER DEFAULT
++  # PRIVILEGES entries in the schema ACL, none of which exist in a
++  # freshly recreated cluster. A plain pg_dump captures them anyway,
++  # which breaks restore. Ownership (OWNER TO arcanium) is unaffected.
++  podman exec -i arcanium-postgres pg_dump -U arcanium --no-acl arcanium_db >"$dumpfile"
+   echo "pg_dump saved: $dumpfile ($(wc -c <"$dumpfile" | tr -d ' ') bytes)"
+ }
+ 

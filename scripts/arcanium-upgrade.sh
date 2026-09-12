@@ -108,7 +108,13 @@ cmd_backup() {
   echo "== backup: PostgreSQL pg_dump =="
   mkdir -p backups
   local dumpfile="backups/pg-upgrade-$(date -u +%Y%m%dT%H%M%SZ).sql"
-  podman exec -i arcanium-postgres pg_dump -U arcanium arcanium_db >"$dumpfile"
+  # --no-acl: found live in scenarios/15_operability/test_postgres_recovery.sh
+  # — Vault's Postgres dynamic-secrets-engine leaves thousands of
+  # short-lived "v-approle-arcanium-<random>-<epoch>" GRANT/ALTER DEFAULT
+  # PRIVILEGES entries in the schema ACL, none of which exist in a
+  # freshly recreated cluster. A plain pg_dump captures them anyway,
+  # which breaks restore. Ownership (OWNER TO arcanium) is unaffected.
+  podman exec -i arcanium-postgres pg_dump -U arcanium --no-acl arcanium_db >"$dumpfile"
   echo "pg_dump saved: $dumpfile ($(wc -c <"$dumpfile" | tr -d ' ') bytes)"
 }
 
