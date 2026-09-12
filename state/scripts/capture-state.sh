@@ -635,6 +635,60 @@ capture_multitenancy() {
   fi
 }
 
+# ------------------------------------------------ lifecycle completion (28) --
+# Prompt 28, Deliverable 9 — service accounts, expiry_date coverage/drift,
+# and offboarding progress. Same "count what's true right now, never a
+# static/assumed number" discipline every other capture_* function follows.
+capture_lifecycle_completion() {
+  local d="$TMP/components/lifecycle_completion"
+  mkdir -p "$d"
+
+  if ! running arcanium-postgres; then
+    jq -n '{service_accounts: {active: null, revoked: null},
+            expiry_date: {tracked: null, drifted: null},
+            offboarding: {initiated: null, completed: null}}' \
+      >"$d/lifecycle_completion.json"
+  else
+    local sa_active sa_revoked exp_tracked exp_drifted ob_initiated ob_completed
+    sa_active=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from service_accounts where revoked_at is null;" 2>/dev/null | tr -d '[:space:]')
+    sa_revoked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from service_accounts where revoked_at is not null;" 2>/dev/null | tr -d '[:space:]')
+    exp_tracked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from desired_state where requirement='expiry_date' and archived_at is null;" 2>/dev/null | tr -d '[:space:]')
+    # Counted from the latest reconciliation_runs row per desired_state, not
+    # a stale/cached flag — matches how every other DRIFTED count in this
+    # script (e.g. capture_persistence's own reconciliation figures) is
+    # derived: from the most recent observed run per row, live.
+    exp_drifted=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from (
+         select distinct on (rr.desired_state_id) rr.desired_state_id, rr.status
+           from reconciliation_runs rr
+           join desired_state ds on ds.id = rr.desired_state_id
+          where ds.requirement = 'expiry_date' and ds.archived_at is null
+          order by rr.desired_state_id, rr.observed_at desc
+       ) latest where status = 'DRIFTED';" 2>/dev/null | tr -d '[:space:]')
+    ob_initiated=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from applications where offboarding_initiated_at is not null;" 2>/dev/null | tr -d '[:space:]')
+    ob_completed=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from applications where offboarded_at is not null;" 2>/dev/null | tr -d '[:space:]')
+    jq -n \
+      --arg saa "${sa_active:-0}" --arg sar "${sa_revoked:-0}" \
+      --arg ext "${exp_tracked:-0}" --arg exd "${exp_drifted:-0}" \
+      --arg obi "${ob_initiated:-0}" --arg obc "${ob_completed:-0}" \
+      '{service_accounts: {active: ($saa | tonumber), revoked: ($sar | tonumber)},
+        expiry_date: {tracked: ($ext | tonumber), drifted: ($exd | tonumber)},
+        offboarding: {initiated: ($obi | tonumber), completed: ($obc | tonumber)}}' \
+      >"$d/lifecycle_completion.json"
+  fi
+
+  if running arcanium-postgres; then
+    set_status lifecycle_completion CAPTURED
+  else
+    set_status lifecycle_completion UNKNOWN
+  fi
+}
+
 # ------------------------------------------------------------- verification --
 capture_verification() {
   local results="[]"
@@ -813,7 +867,7 @@ echo "Capturing baseline: $FINAL"
 echo "  purpose: $PURPOSE"
 echo
 
-for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_multitenancy capture_verification; do
+for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_multitenancy capture_lifecycle_completion capture_verification; do
   echo "-> ${fn#capture_}"
   "$fn"
 done

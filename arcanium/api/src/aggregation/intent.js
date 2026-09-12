@@ -31,7 +31,8 @@ function keyNameFromPath(vaultPath) {
 // for tenant-scoping (this module has no notion of a caller identity).
 export async function getApplicationIntent(appId) {
   const { rows: appRows } = await query(
-    `SELECT a.id, a.name, a.description, a.category, a.supplier_id, s.vault_namespace
+    `SELECT a.id, a.name, a.description, a.category, a.supplier_id, a.environment,
+            a.offboarding_initiated_at, a.offboarded_at, s.vault_namespace
        FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
       WHERE a.id = $1`,
     [appId],
@@ -192,10 +193,17 @@ export async function getApplicationIntent(appId) {
     application_id: app.id,
     application: app.name,
     tenant: namespace,
-    // Arcanium has no per-application environment concept in the data
-    // model yet (no column, no table) — explicitly null, never a fabricated
-    // "production" default, per this phase's own design rules.
-    environment: null,
+    // Prompt 27 added applications.environment — this was hardcoded null
+    // here (with a comment saying no such column existed) until this
+    // prompt's own audit found it stale and wired it to the real value.
+    environment: app.environment,
+    // Prompt 28, Deliverable 6 — an application mid-offboarding (or fully
+    // offboarded) is labeled here, never displayed as a normal healthy
+    // application. null/null means "not offboarding."
+    offboarding: {
+      initiated_at: app.offboarding_initiated_at ?? null,
+      offboarded_at: app.offboarded_at ?? null,
+    },
     requirements,
     custody,
     governance: {

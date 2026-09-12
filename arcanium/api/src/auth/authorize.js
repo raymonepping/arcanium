@@ -20,6 +20,12 @@ const ROLE_GROUPS = {
   "arcanium-supplier-admin": "supplier-admin",
 };
 
+// Prompt 28 — every role name MATRIX recognizes, exported so
+// routes/service-accounts.js can validate a machine identity's declared
+// roles against the same set humans are drawn from, without hand-copying
+// the list a second time.
+export const VALID_ROLES = Object.freeze(Object.values(ROLE_GROUPS));
+
 const TENANT_GROUP_PREFIX = "arcanium-tenant-";
 
 // Prompt 27 — scoped-role group naming: "arcanium-<role>:env:<env>" or

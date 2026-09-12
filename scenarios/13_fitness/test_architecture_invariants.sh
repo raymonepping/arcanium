@@ -172,6 +172,110 @@ else
   ok "API explorer not reachable by default (HTTP $EXPLORER_STATUS) — default-off gate intact"
 fi
 
+# ── Prompt 28, Deliverable 8 ──────────────────────────────────────────────
+psqlc() {
+  podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA -c "$1" 2>/dev/null
+}
+
+# The earlier EXCEPTION_ACCEPTED check above already removed its own $JAR —
+# a fresh session (demo-architect: provision=true, same as demo-operator)
+# is needed for these checks, not a reuse of that deleted cookie jar.
+JAR=$(mktemp)
+if ! ($STACK_UP && oidc_login "demo-architect" "$JAR" "Arcanium-arch-2026"); then
+  rm -f "$JAR"
+  JAR=""
+fi
+
+# (a) — a service-account token value is never echoed back anywhere except
+# the single POST /:id/tokens response that issued it.
+if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
+  SA_CREATE=$(curl -s -b "$JAR" -X POST "$API/api/v1/service-accounts" \
+    -H 'Content-Type: application/json' \
+    -d '{"name":"fitness-test-sa","description":"scenario 13 fitness check","roles":["auditor"]}')
+  SA_ID=$(echo "$SA_CREATE" | jq -r '.id // empty')
+  if [ -n "$SA_ID" ]; then
+    TOKEN_RESP=$(curl -s -b "$JAR" -X POST "$API/api/v1/service-accounts/$SA_ID/tokens" \
+      -H 'Content-Type: application/json' -d '{"description":"fitness test token"}')
+    TOKEN_VALUE=$(echo "$TOKEN_RESP" | jq -r '.token // empty')
+    if [ -n "$TOKEN_VALUE" ]; then
+      DETAIL_BODY=$(curl -s -b "$JAR" "$API/api/v1/service-accounts/$SA_ID")
+      LIST_BODY=$(curl -s -b "$JAR" "$API/api/v1/service-accounts")
+      if echo "$DETAIL_BODY$LIST_BODY" | grep -qF "$TOKEN_VALUE"; then
+        bad "service-account token value leaked outside its single POST /tokens issuance response"
+      else
+        ok "service-account token value appears ONLY in its one-time POST /tokens response, never in GET detail/list"
+      fi
+    else
+      unk "service-account token leak check — token issuance did not return a token value"
+    fi
+    curl -s -b "$JAR" -X DELETE "$API/api/v1/service-accounts/$SA_ID" >/dev/null
+  else
+    unk "service-account token leak check — could not create a test service account"
+  fi
+else
+  unk "service-account token leak check — identity stack/API/jq not reachable"
+fi
+
+# (b) — every webhook delivery attempt is recorded in webhook_deliveries,
+# never a silent drop, even when the endpoint is unreachable.
+if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
+  WH_CREATE=$(curl -s -b "$JAR" -X POST "$API/api/v1/webhooks" \
+    -H 'Content-Type: application/json' \
+    -d '{"url":"http://127.0.0.1:1/unreachable-fitness-sink","events":["reconciliation.drifted"],"description":"fitness test sink (deliberately unreachable)"}')
+  WH_ID=$(echo "$WH_CREATE" | jq -r '.id // empty')
+  DS_ID=$(psqlc "SELECT id FROM desired_state WHERE requirement='rotation_period' AND archived_at IS NULL LIMIT 1" | tr -d '[:space:]')
+  if [ -n "$WH_ID" ] && [ -n "$DS_ID" ]; then
+    BEFORE=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
+    CUR_DAYS=$(psqlc "SELECT desired_value->>'days' FROM desired_state WHERE id='$DS_ID'" | tr -d '[:space:]')
+    NEXT_DAYS=$([ "$CUR_DAYS" = "30" ] && echo 45 || echo 30)
+    curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
+      -H 'Content-Type: application/json' \
+      -d "{\"desired_value\":{\"days\":$NEXT_DAYS},\"reason\":\"fitness test — force a drift for webhook delivery proof\"}" >/dev/null
+    curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" >/dev/null
+    sleep 2
+    AFTER=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
+    if [ "${AFTER:-0}" -gt "${BEFORE:-0}" ]; then
+      ok "a real reconciliation.drifted transition produced a recorded row in webhook_deliveries (even for an unreachable endpoint)"
+    else
+      bad "no webhook_deliveries row was recorded for a genuine reconciliation.drifted transition"
+    fi
+    curl -s -b "$JAR" -X DELETE "$API/api/v1/webhooks/$WH_ID" >/dev/null
+  else
+    unk "webhook delivery recording check — could not create endpoint/fixture"
+  fi
+else
+  unk "webhook delivery recording check — identity stack/API/jq not reachable"
+fi
+[ -n "${JAR:-}" ] && rm -f "$JAR"
+
+# (c) — the Terraform provider skeleton's HTTP client authenticates with
+# Authorization: Bearer, never a Cookie header (the M2M surface, not the
+# human session path). Static check here; scenario-terraform-provider
+# proves this dynamically against a real terraform apply.
+PROVIDER_CLIENT="terraform/arcanium-provider/internal/provider/client.go"
+if [ -f "$PROVIDER_CLIENT" ]; then
+  if grep -q '"Authorization", "Bearer "' "$PROVIDER_CLIENT" && ! grep -qi '"Cookie"' "$PROVIDER_CLIENT"; then
+    ok "terraform-provider-arcanium's client sends Authorization: Bearer, never a Cookie header"
+  else
+    bad "terraform-provider-arcanium's client does not match the expected Bearer-only auth pattern"
+  fi
+else
+  unk "terraform provider Bearer-auth check — $PROVIDER_CLIENT not found"
+fi
+
+# (d) — no hard DELETE of desired_state, evidence, reconciliation_runs, or
+# control_assessments rows anywhere in a route handler. Tombstone
+# (archived_at) discipline, not a cascade delete, for anything that is
+# itself an audit/evidence trail — applications and approval_requests rows
+# are NOT in this list; those are registry/workflow rows, not evidence.
+HITS=$(grep -rniE "DELETE FROM (desired_state|evidence|reconciliation_runs|control_assessments)\b" \
+  arcanium/api/src/routes arcanium/api/src/offboarding.js arcanium/api/src/reconciliation 2>/dev/null || true)
+if [ -z "$HITS" ]; then
+  ok "no hard DELETE of desired_state/evidence/reconciliation_runs/control_assessments rows in any route handler"
+else
+  bad "a hard DELETE of an evidence/history table was found: $HITS"
+fi
+
 echo
 TOTAL=$((PASS + FAIL + UNKNOWN))
 echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="

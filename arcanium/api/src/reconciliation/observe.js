@@ -64,6 +64,64 @@ export async function observeRotationPeriod(vaultPath, namespace = null) {
 }
 
 /**
+ * Prompt 28, Deliverable 5 — live-reads whether a Transit key still exists
+ * (Vault has no separate "active" flag; a destroyed key is simply gone).
+ * A 404 specifically means "destroyed" (a real, known outcome — never
+ * treated as UNKNOWN, unlike an actual Vault-unreachable/auth failure).
+ *
+ * @param {string} vaultPath  e.g. 'transit/keys/payments-api-key'
+ * @param {string|null} namespace  supplier's vault_namespace, or null for root.
+ */
+export async function observeExpiryDate(vaultPath, namespace = null) {
+  const observed_at = new Date().toISOString();
+  if (!vaultPath) {
+    return {
+      value: null,
+      status: "UNKNOWN",
+      detail: "no Transit key on record for this application (crypto_profiles)",
+      observed_at,
+      source: "vault-live",
+    };
+  }
+  try {
+    if (namespace) {
+      await vaultRequestNs(
+        "GET",
+        vaultPath,
+        null,
+        getProvisionerToken(),
+        namespace,
+      );
+    } else {
+      await vaultRequest("GET", vaultPath, null, getProvisionerToken());
+    }
+    return {
+      value: { active: true, observed_date: observed_at.slice(0, 10) },
+      status: "OK",
+      observed_at,
+      source: "vault-live",
+    };
+  } catch (err) {
+    if (err.vaultStatus === 404) {
+      // Destroyed — a real, positively-observed outcome, not an unreachable read.
+      return {
+        value: { active: false, observed_date: observed_at.slice(0, 10) },
+        status: "OK",
+        observed_at,
+        source: "vault-live",
+      };
+    }
+    return {
+      value: null,
+      status: "UNKNOWN",
+      detail: err.message,
+      observed_at,
+      source: "vault-live",
+    };
+  }
+}
+
+/**
  * Writes the desired rotation period back to Vault (the "reconcile" side
  * effect) — POST transit/keys/:name/config, same duration-string convention
  * provisioner/application.js already uses at key-creation time.

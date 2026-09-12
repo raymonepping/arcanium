@@ -1,0 +1,29 @@
+ M Makefile
+ M arcanium/api/openapi/arcanium.yaml
+ M arcanium/api/src/aggregation/intent.js
+ M arcanium/api/src/auth/authorize.js
+ M arcanium/api/src/auth/index.js
+ M arcanium/api/src/index.js
+ M arcanium/api/src/maturity/controls.js
+ M arcanium/api/src/reconciliation/diff.js
+ M arcanium/api/src/reconciliation/engine.js
+ M arcanium/api/src/reconciliation/observe.js
+ M arcanium/api/src/routes/applications.js
+ M arcanium/api/src/vault.js
+ M arcanium/api/src/worker.js
+ M arcanium/ui/app/types/api.generated.ts
+ M arcanium/ui/server/routes/gateway/[...path].ts
+ M openapi/arcanium.yaml
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M state/scripts/capture-state.sh
+ M terraform/vault-platform/policies.tf
+?? arcanium/api/src/events/
+?? arcanium/api/src/migrations/019_service_accounts.sql
+?? arcanium/api/src/migrations/020_webhooks.sql
+?? arcanium/api/src/migrations/021_offboarding.sql
+?? arcanium/api/src/migrations/022_lifecycle_completion_controls.sql
+?? arcanium/api/src/offboarding.js
+?? arcanium/api/src/routes/service-accounts.js
+?? arcanium/api/src/routes/webhooks.js
+?? scenarios/17_terraform_provider/
+?? terraform/arcanium-provider/

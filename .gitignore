@@ -137,6 +137,11 @@ vault-tls/
 .terraform.lock.hcl
 *.log
 crash.log
+
+########################################
+# 🛠️ Prompt 28 — Terraform provider skeleton build output
+########################################
+terraform/arcanium-provider/terraform-provider-arcanium
 justfile
 # tfvars often carry real credentials — commit .tfvars.example instead
 *.tfvars

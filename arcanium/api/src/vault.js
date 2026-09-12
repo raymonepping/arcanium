@@ -232,6 +232,47 @@ export async function createTransitKey(name, type = "aes256-gcm96") {
   return { name, type };
 }
 
+// Prompt 28, Deliverable 3 — webhook signing secrets need to be genuinely
+// reversible (Arcanium computes an HMAC signature with them on every
+// outgoing delivery, unlike a service-account token, which is only ever
+// verified by comparing hashes). A dedicated Transit key, encrypted at
+// rest, same discipline every other stored secret in this codebase already
+// uses — never a home-rolled reversible scheme. Lazily created on first use.
+const WEBHOOK_SIGNING_KEY = "arcanium-webhook-signing";
+
+async function ensureWebhookSigningKey() {
+  try {
+    await getTransitKey(WEBHOOK_SIGNING_KEY);
+  } catch (err) {
+    if (err.vaultStatus === 404) {
+      await createTransitKey(WEBHOOK_SIGNING_KEY, "aes256-gcm96");
+    } else {
+      throw err;
+    }
+  }
+}
+
+export async function encryptWebhookSecret(plaintext) {
+  await ensureWebhookSigningKey();
+  const res = await vaultRequest(
+    "POST",
+    `transit/encrypt/${WEBHOOK_SIGNING_KEY}`,
+    { plaintext: Buffer.from(plaintext, "utf8").toString("base64") },
+    state.token,
+  );
+  return res.data.ciphertext;
+}
+
+export async function decryptWebhookSecret(ciphertext) {
+  const res = await vaultRequest(
+    "POST",
+    `transit/decrypt/${WEBHOOK_SIGNING_KEY}`,
+    { ciphertext },
+    state.token,
+  );
+  return Buffer.from(res.data.plaintext, "base64").toString("utf8");
+}
+
 export async function getPkiCaChain() {
   return vaultRequest("GET", "pki-int/ca/pem", null, state.token);
 }

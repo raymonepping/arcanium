@@ -418,6 +418,15 @@ scenario-fitness: ## Prompt 22 — architecture invariant checks (no Vault impor
 	@chmod +x scenarios/13_fitness/test_architecture_invariants.sh
 	@./scenarios/13_fitness/test_architecture_invariants.sh
 
+# ── Prompt 28, Deliverable 4 — Terraform provider skeleton ──────────────────
+provider-build: ## Build terraform-provider-arcanium (skeleton, not published to the Registry)
+	@cd terraform/arcanium-provider && go build -o terraform-provider-arcanium .
+	@echo "built terraform/arcanium-provider/terraform-provider-arcanium"
+
+scenario-terraform-provider: provider-build ## Prompt 28, Deliverable 4 — real terraform apply against the demo stack via a service-account token
+	@chmod +x scenarios/17_terraform_provider/test_terraform_provider.sh
+	@./scenarios/17_terraform_provider/test_terraform_provider.sh
+
 # ── Pre-24 — Persistence, Rehydration & Deterministic Stack Recovery ───────
 # up/down/restart retain all persistent volumes — never call `down -v`,
 # `volume prune`, or any equivalent here. rehydrate runs the same

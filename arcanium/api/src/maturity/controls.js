@@ -202,6 +202,140 @@ async function assessRotationPolicy() {
   });
 }
 
+// ── KML-DESTR-01 — active keys must not exceed their declared expiry date ──
+// Prompt 28, Deliverable 7. Same structure as assessRotationPolicy() above,
+// for requirement='expiry_date' instead of 'rotation_period' — UNKNOWN
+// estate-wide until any application actually sets an expiry policy, never
+// fabricated PASS just because the control exists in the catalogue.
+async function assessKeyExpiry() {
+  const { rows } = await query(
+    `SELECT ds.id, ds.application_id, a.name AS app_name, a.supplier_id,
+            s.vault_namespace, ds.key_name, ds.desired_value,
+            lr.id AS run_id, lr.status, lr.observed_value, lr.observed_at
+       FROM desired_state ds
+       JOIN applications a ON a.id = ds.application_id
+       LEFT JOIN suppliers s ON s.id = a.supplier_id
+       LEFT JOIN LATERAL (
+         SELECT * FROM reconciliation_runs r
+          WHERE r.desired_state_id = ds.id
+          ORDER BY r.observed_at DESC LIMIT 1
+       ) lr ON true
+      WHERE ds.requirement = 'expiry_date' AND ds.archived_at IS NULL`,
+  );
+
+  if (!rows.length) {
+    return [
+      assessment({
+        control_id: "KML-DESTR-01",
+        scope: "estate",
+        status: "UNKNOWN",
+        evidence_refs: {
+          detail: "no expiry-date desired state configured yet",
+        },
+        confidence: "HIGH",
+      }),
+    ];
+  }
+
+  return rows.map((r) => {
+    const scope = `${r.vault_namespace ?? "root"}/${r.app_name}/${r.key_name}`;
+    if (!r.run_id) {
+      return assessment({
+        control_id: "KML-DESTR-01",
+        scope,
+        status: "UNKNOWN",
+        desired_value: r.desired_value,
+        evidence_refs: { desired_state_id: r.id, detail: "never reconciled" },
+        confidence: "HIGH",
+      });
+    }
+    const stale =
+      Date.now() - new Date(r.observed_at).getTime() > ROT_POL_TTL_MS;
+    const status = stale
+      ? "UNKNOWN"
+      : r.status === "COMPLIANT"
+        ? "PASS"
+        : r.status === "DRIFTED"
+          ? "FAIL"
+          : "UNKNOWN";
+    return assessment({
+      control_id: "KML-DESTR-01",
+      scope,
+      status,
+      desired_value: r.desired_value,
+      observed_value: r.observed_value,
+      evidence_refs: {
+        reconciliation_run_id: r.run_id,
+        desired_state_id: r.id,
+        stale: stale || undefined,
+      },
+      freshness_seconds: freshnessSeconds(r.observed_at),
+      confidence: status === "UNKNOWN" ? "HIGH" : "MEDIUM",
+    });
+  });
+}
+
+const OFFBOARD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+// ── KML-OFFBOARD-01 — decommissioned applications must have all keys
+// destroyed within 30 days ─────────────────────────────────────────────
+// Prompt 28, Deliverable 7. Non-mandatory (governance adoption, not a hard
+// gate) — UNKNOWN estate-wide until any application has actually gone
+// through offboarding.
+async function assessOffboarding() {
+  const { rows } = await query(
+    `SELECT id, name, supplier_id, offboarding_initiated_at, offboarded_at
+       FROM applications WHERE offboarding_initiated_at IS NOT NULL`,
+  );
+  if (!rows.length) {
+    return [
+      assessment({
+        control_id: "KML-OFFBOARD-01",
+        scope: "estate",
+        status: "UNKNOWN",
+        evidence_refs: { detail: "no application has been offboarded yet" },
+        confidence: "HIGH",
+      }),
+    ];
+  }
+  return rows.map((r) => {
+    const scope = `applications/${r.name}`;
+    const elapsedMs =
+      (r.offboarded_at ? new Date(r.offboarded_at) : new Date()) -
+      new Date(r.offboarding_initiated_at);
+    if (!r.offboarded_at) {
+      // Still in progress — only a genuine FAIL if it's overrun the
+      // window without completing; otherwise honestly still UNKNOWN
+      // (not yet resolved either way), never a premature PASS.
+      const status = elapsedMs > OFFBOARD_WINDOW_MS ? "FAIL" : "UNKNOWN";
+      return assessment({
+        control_id: "KML-OFFBOARD-01",
+        scope,
+        status,
+        evidence_refs: {
+          application_id: r.id,
+          offboarding_initiated_at: r.offboarding_initiated_at,
+          detail: "offboarding still in progress",
+        },
+        confidence: "HIGH",
+      });
+    }
+    return assessment({
+      control_id: "KML-OFFBOARD-01",
+      scope,
+      status: elapsedMs <= OFFBOARD_WINDOW_MS ? "PASS" : "FAIL",
+      evidence_refs: {
+        application_id: r.id,
+        offboarding_initiated_at: r.offboarding_initiated_at,
+        offboarded_at: r.offboarded_at,
+        elapsed_days: Math.round(elapsedMs / 86400000),
+      },
+      freshness_seconds: freshnessSeconds(r.offboarded_at),
+      confidence: "HIGH",
+    });
+  });
+}
+
 // ── AUD-01 — governance actions are source/actor-attributed ────────────────
 async function assessAuditTrail() {
   const { rows } = await query(
@@ -438,6 +572,8 @@ const ASSESSORS = [
   assessKeyInventory,
   assessTenantIsolation,
   assessRotationPolicy,
+  assessKeyExpiry,
+  assessOffboarding,
   assessAuditTrail,
   assessWorkloadIdentity,
   assessNegativeAuthz,

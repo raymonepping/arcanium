@@ -8,26 +8,44 @@
 // worker's periodic tick.
 
 import { query } from "../db.js";
-import { observeRotationPeriod, applyRotationPeriod } from "./observe.js";
-import { compare } from "./diff.js";
+import {
+  observeRotationPeriod,
+  applyRotationPeriod,
+  observeExpiryDate,
+} from "./observe.js";
+import { compare, compareExpiryDate } from "./diff.js";
+import { requestKeyDestroy } from "../provisioner/key.js";
+import { emitEvent } from "../events/emit.js";
 import {
   OBSERVATION_STATUS_STATES,
   DISPOSITION_STATES,
   assertTransition,
 } from "../domain/state-machines.js";
 
-// Only 'rotation_period' exists this phase (Non-goal: widening the
-// requirement catalogue is a follow-on, not blocking this phase's exit
-// criterion) — but keyed by requirement so adding a second type later is a
-// one-line registration, not a rewrite.
+// Prompt 28, Deliverable 5 adds 'expiry_date' alongside Prompt 20's
+// 'rotation_period' — keyed by requirement so this stays a one-line
+// registration, not a rewrite, exactly as the Prompt 20 comment this
+// replaces anticipated.
 const OBSERVERS = {
   rotation_period: (row) =>
     observeRotationPeriod(row.vault_path, row.namespace),
+  expiry_date: (row) => observeExpiryDate(row.vault_path, row.namespace),
 };
 const APPLIERS = {
   rotation_period: (row) =>
     applyRotationPeriod(row.vault_path, row.desired_value?.days, row.namespace),
+  // expiry_date has no entry here deliberately — see reconcileRun()'s own
+  // branch below. Its "apply" is submitting a destroy_request approval,
+  // not a direct Vault mutation, so it can't go through the generic
+  // applier -> re-observe -> expect-COMPLIANT pipeline every other
+  // requirement type uses; destruction stays gated behind human approval.
 };
+// Requirement-aware comparator dispatch — rotation_period keeps using the
+// generic deep-equal `compare()`, unchanged.
+const COMPARATORS = { expiry_date: compareExpiryDate };
+function compareFor(row, observed) {
+  return (COMPARATORS[row.requirement] || compare)(row, observed);
+}
 
 async function desiredStateRowsFor({ desiredStateId, supplierIds } = {}) {
   const params = [];
@@ -74,19 +92,66 @@ async function recordRun(row, observed, result) {
     assertTransition(OBSERVATION_STATUS_STATES, priorStatus, result.status);
   }
 
+  // Prompt 28, Deliverable 5 — fold compareExpiryDate()'s approaching_expiry
+  // signal into the free-text detail column (reconciliation_runs has no
+  // dedicated column for it, and this is the same field rotation_period's
+  // own re-observation commentary already uses for derived, non-observed
+  // explanation text).
+  const detail = result.approaching_expiry
+    ? [result.detail, "approaching_expiry: true (within 14 days of not_after)"]
+        .filter(Boolean)
+        .join(" — ")
+    : (result.detail ?? null);
+
   const { rows } = await query(
     `INSERT INTO reconciliation_runs
        (desired_state_id, desired_state_version, observed_value, status, detail)
      VALUES ($1,$2,$3,$4,$5)
      RETURNING id, desired_state_id, desired_state_version, observed_value, status, observed_at, detail`,
-    [
-      row.id,
-      row.version,
-      observed.value ?? null,
-      result.status,
-      result.detail ?? null,
-    ],
+    [row.id, row.version, observed.value ?? null, result.status, detail],
   );
+
+  // Prompt 28, Deliverable 3 — event emission, hung off the SAME transition
+  // detection Prompt 22 already validates above (never re-derived). Never
+  // awaited: a reconciliation sweep must not block on a third party's
+  // webhook endpoint. `key.expiry_approaching` only fires on ENTERING the
+  // approaching window (prior status wasn't already COMPLIANT) — a
+  // deliberate, documented simplification to avoid re-firing on every
+  // sweep tick for the entire 14-day window (webhook_deliveries has no
+  // desired_state_id column to dedupe against more precisely without a
+  // schema change this modest deliverable doesn't warrant).
+  if (priorStatus !== result.status) {
+    const eventName =
+      result.status === "DRIFTED"
+        ? "reconciliation.drifted"
+        : result.status === "COMPLIANT"
+          ? "reconciliation.compliant"
+          : null;
+    if (eventName) {
+      emitEvent(eventName, {
+        event: eventName,
+        application_id: row.application_id,
+        tenant: row.namespace ?? null,
+        desired_state_id: row.id,
+        run_id: rows[0].id,
+        observation_status: result.status,
+        observed_at: rows[0].observed_at,
+      }).catch(() => {});
+    }
+  }
+  if (result.approaching_expiry && priorStatus !== "COMPLIANT") {
+    emitEvent("key.expiry_approaching", {
+      event: "key.expiry_approaching",
+      application_id: row.application_id,
+      tenant: row.namespace ?? null,
+      desired_state_id: row.id,
+      run_id: rows[0].id,
+      key_name: row.key_name,
+      not_after: row.desired_value?.not_after ?? null,
+      observed_at: rows[0].observed_at,
+    }).catch(() => {});
+  }
+
   return {
     ...rows[0],
     application_id: row.application_id,
@@ -116,7 +181,7 @@ export async function runSweep(opts = {}) {
           detail: `no observer registered for requirement '${row.requirement}'`,
           observed_at: new Date().toISOString(),
         };
-    const result = compare(row, observed);
+    const result = compareFor(row, observed);
     results.push(await recordRun(row, observed, result));
   }
   return results;
@@ -215,6 +280,20 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
     vault_path: run.vault_path,
   };
 
+  // Prompt 28, Deliverable 5 — expiry_date's reconcile action is
+  // fundamentally different from every other requirement type: it must
+  // NOT directly mutate Vault. Destruction stays behind the same four-eyes
+  // approval gate every other destroy path in this codebase already uses
+  // (provisioner/key.js's requestKeyDestroy(), reused as-is — not a second
+  // destruction mechanism). Branches BEFORE the generic applier ->
+  // re-observe -> expect-COMPLIANT pipeline below, which would otherwise
+  // misreport "reconcile failed" the instant it re-observed the key still
+  // active (correctly so — actual destruction is still pending human
+  // approval, not a failure).
+  if (run.requirement === "expiry_date") {
+    return reconcileExpiryDate(runId, desiredStateRow, { actor, actorGroups });
+  }
+
   const applier = APPLIERS[run.requirement];
   let result = "applied";
   let detail = null;
@@ -239,7 +318,7 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
     }
     await applier(desiredStateRow);
     const observed = await OBSERVERS[run.requirement](desiredStateRow);
-    const compared = compare(desiredStateRow, observed);
+    const compared = compareFor(desiredStateRow, observed);
     confirmationRun = await recordRun(desiredStateRow, observed, compared);
     if (compared.status !== "COMPLIANT") {
       result = "failed";
@@ -257,6 +336,44 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
     [runId, actor, actorGroups ?? [], result, detail],
   );
   return { action: actionRows[0], confirmation_run: confirmationRun };
+}
+
+/**
+ * Prompt 28, Deliverable 5 — expiry_date's reconcile action: submits a
+ * destroy_request approval rather than mutating Vault directly. Disposition
+ * deliberately does NOT move to RECONCILED here — that only happens once a
+ * LATER sweep observes the key genuinely inactive (destroyed), which can
+ * only occur after the approval is actually granted and executed elsewhere
+ * (routes/approvals.js / provisioner/key.js) — this action's job is only
+ * to submit the request, honestly, not to pretend the drift is already
+ * resolved.
+ */
+async function reconcileExpiryDate(
+  runId,
+  desiredStateRow,
+  { actor, actorGroups },
+) {
+  let result = "applied";
+  let detail =
+    "destroy_request approval submitted — awaiting four-eyes authorization before any Vault mutation";
+  let approval = null;
+  try {
+    const keyName = desiredStateRow.vault_path
+      ? desiredStateRow.vault_path.split("/").pop()
+      : desiredStateRow.key_name;
+    approval = await requestKeyDestroy(keyName, actor ?? "arcanium");
+  } catch (err) {
+    result = "failed";
+    detail = err.message;
+  }
+
+  const { rows: actionRows } = await query(
+    `INSERT INTO reconciliation_actions (run_id, action, actor, actor_groups, result, reason)
+     VALUES ($1,'reconcile',$2,$3,$4,$5)
+     RETURNING *`,
+    [runId, actor, actorGroups ?? [], result, detail],
+  );
+  return { action: actionRows[0], confirmation_run: null, approval };
 }
 
 /**

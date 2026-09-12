@@ -133,6 +133,22 @@ resource "vault_policy" "arcanium_transit" {
     path "transit/keys/*" {
       capabilities = ["read"]
     }
+    # Prompt 28, Deliverable 3 — ensureWebhookSigningKey() lazily provisions its
+    # own dedicated Transit key on first use. This exact-path rule is a
+    # narrower, more specific match than "transit/keys/*" above, so Vault's
+    # resultant ACL applies THIS grant (not the broader read-only one) for
+    # this one key name specifically — verified live: a broader "transit/*"
+    # create grant from arcanium-admin does NOT flow through here, because
+    # Vault always prefers the most specific matching path per-request over
+    # a wider glob from another attached policy, even a more privileged one.
+    # "update" is required (not just "create"): confirmed live via the audit
+    # log that Vault's transit key-write path has no existence check, so it
+    # classifies this request as an UpdateOperation even the very first time
+    # the key is written, when the key doesn't exist yet.
+    # Least-privilege: every other transit key stays read-only for this role.
+    path "transit/keys/arcanium-webhook-signing" {
+      capabilities = ["create", "read", "update"]
+    }
   EOT
 }
 

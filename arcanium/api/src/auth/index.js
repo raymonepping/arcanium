@@ -9,7 +9,7 @@
 // token, Vault token, or LDAP credential ever reaches it.
 
 import { Router } from "express";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import config from "../config.js";
 import { query } from "../db.js";
 import {
@@ -255,6 +255,54 @@ export async function tenantScope(req) {
   };
 }
 
+// Prompt 28, Deliverable 2 — hash the presented token, look up the service
+// account it belongs to, and build the SAME req.identity shape the cookie
+// path builds. authorize() is never told which source an identity came
+// from — this is the whole point (no parallel authorization path).
+function authenticateServiceAccount(token, req, res, next) {
+  const tokenHash = createHash("sha256").update(token, "utf8").digest("hex");
+  query(
+    `SELECT t.id AS token_id, sa.id AS sa_id, sa.name, sa.roles, sa.tenant_scopes, sa.revoked_at AS sa_revoked_at
+       FROM service_account_tokens t
+       JOIN service_accounts sa ON sa.id = t.service_account_id
+      WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > now()`,
+    [tokenHash],
+  )
+    .then(({ rows }) => {
+      if (!rows.length)
+        return res.status(401).json({ error: "invalid or expired token" });
+      const sa = rows[0];
+      if (sa.sa_revoked_at)
+        return res.status(401).json({ error: "service account revoked" });
+
+      req.identity = {
+        // "service-account:<name>" — never confusable with a real human
+        // username (Prompt 18's usernames never contain a colon), so
+        // audit trails (approvals.requester, lifecycle_events.actor, etc.)
+        // stay honestly attributable to a machine caller, not a person.
+        user: `service-account:${sa.name}`,
+        persona: sa.roles[0] ?? "service-account",
+        namespaces: sa.tenant_scopes ?? [],
+        roles: sa.roles,
+        tenantScopes: sa.tenant_scopes ?? [],
+        scopes: [], // Prompt 27's env/team scoping is a human-group concept; not extended to service accounts here
+        groups: [],
+        serviceAccount: true,
+      };
+      // Fire-and-forget, same non-blocking pattern as the session's own
+      // idle-timeout touch below.
+      query(
+        "UPDATE service_account_tokens SET last_used_at = now() WHERE id = $1",
+        [sa.token_id],
+      ).catch(() => {});
+      query("UPDATE service_accounts SET last_used_at = now() WHERE id = $1", [
+        sa.sa_id,
+      ]).catch(() => {});
+      next();
+    })
+    .catch(next);
+}
+
 // Middleware: enforce a session on /api/v1/** (except auth/*) when enabled.
 // Builds req.identity with `roles`/`tenantScopes` for auth/authorize.js, in
 // addition to the legacy `persona`/`namespaces` shape existing routes read.
@@ -273,6 +321,19 @@ export function requireSession(req, res, next) {
   }
   const openPaths = [/^\/health/, /^\/api\/v1\/auth\//];
   if (openPaths.some((r) => r.test(req.path))) return next();
+
+  // Prompt 28, Deliverable 2 — machine-to-machine: Authorization: Bearer is
+  // checked FIRST and, when present, is the only path taken (a request
+  // carrying both a bearer token and a stale cookie should authenticate as
+  // the token, not silently fall back). This is additive — the cookie path
+  // below is completely unchanged for every request that doesn't send this
+  // header, and authorize() sees no difference between the two: both build
+  // the exact same req.identity shape.
+  const authHeader = req.headers.authorization || "";
+  const bearerMatch = /^Bearer\s+(\S+)$/i.exec(authHeader);
+  if (bearerMatch) {
+    return authenticateServiceAccount(bearerMatch[1], req, res, next);
+  }
 
   const id = readCookie(req);
   if (!id) return res.status(401).json({ error: "authentication required" });

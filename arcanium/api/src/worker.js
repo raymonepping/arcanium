@@ -8,6 +8,7 @@ import { runMigrations } from "./migrations.js";
 import { dispatchJob } from "./provisioner/dispatch.js";
 import { ingestAuditLog } from "./evidence/ingest.js";
 import { runSweep } from "./reconciliation/engine.js";
+import { sweepOffboarding } from "./offboarding.js";
 
 const POLL_MS = Number(process.env.WORKER_POLL_MS || 3000);
 // Prompt 20 — Deliverable 3: runs on a schedule, reusing this existing job
@@ -68,6 +69,23 @@ async function main() {
             );
         } catch (e) {
           console.error(`[worker] reconciliation sweep error: ${e.message}`);
+        }
+        // Prompt 28, Deliverable 6 — same tick as the reconciliation
+        // sweep: checks every in-progress offboarding for whether all its
+        // destroy_request approvals have since been resolved (via the
+        // normal approve/deny routes, unrelated to this tick), finalizing
+        // (tombstone + offboarded_at) the ones that have. This is how an
+        // approval resolved minutes or days after POST /:id/offboard
+        // eventually completes the workflow without any offboarding-aware
+        // logic in routes/approvals.js itself.
+        try {
+          const ob = await sweepOffboarding();
+          if (ob.completed)
+            console.log(
+              `[worker] offboarding sweep: ${ob.checked} in progress, ${ob.completed} completed`,
+            );
+        } catch (e) {
+          console.error(`[worker] offboarding sweep error: ${e.message}`);
         }
       }
 

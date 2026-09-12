@@ -8,6 +8,7 @@ import { tenantScope } from "../auth/index.js";
 import { authorize, roleVerdict } from "../auth/authorize.js";
 import { teamReadScope, scopedReadDenied } from "../auth/scope.js";
 import { getApplicationIntent } from "../aggregation/intent.js";
+import { initiateOffboarding } from "../offboarding.js";
 
 export const applicationsRouter = Router();
 
@@ -467,6 +468,48 @@ applicationsRouter.post("/:id/classify", async (req, res, next) => {
 
     res.json(rows[0]);
   } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/applications/:id/offboard — Prompt 28, Deliverable 6.
+// A governed workflow (real destroy_request approvals, tombstoned
+// desired_state, no hard deletes), not a cascade delete — see offboarding.js.
+applicationsRouter.post("/:id/offboard", async (req, res, next) => {
+  try {
+    validateUuid(req.params.id);
+    const app = await applicationTenant(req.params.id);
+    if (!app) return next(notFound());
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(app.supplier_id))
+      return next(notFound());
+    const decision = authorize({
+      identity: req.identity,
+      action: "destroy_request",
+      tenant: app.vault_namespace,
+      env: app.environment,
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "destroy_request",
+        reason: decision.reason,
+      });
+
+    const result = await initiateOffboarding(req.params.id, req.identity?.user);
+    await query(
+      `INSERT INTO lifecycle_events (resource_type, resource_id, event, detail, source)
+       VALUES ('application', $1, 'offboarding.initiated', $2, 'local')`,
+      [
+        req.params.id,
+        JSON.stringify({
+          destroy_requests_submitted: result.destroy_requests_submitted.length,
+        }),
+      ],
+    ).catch(() => {});
+    res.status(202).json(result);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });

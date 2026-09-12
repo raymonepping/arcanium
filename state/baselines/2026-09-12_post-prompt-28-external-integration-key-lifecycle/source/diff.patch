@@ -1,0 +1,1925 @@
+diff --git a/Makefile b/Makefile
+index 11ba119..fbde29d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -418,6 +418,15 @@ scenario-fitness: ## Prompt 22 — architecture invariant checks (no Vault impor
+ 	@chmod +x scenarios/13_fitness/test_architecture_invariants.sh
+ 	@./scenarios/13_fitness/test_architecture_invariants.sh
+ 
++# ── Prompt 28, Deliverable 4 — Terraform provider skeleton ──────────────────
++provider-build: ## Build terraform-provider-arcanium (skeleton, not published to the Registry)
++	@cd terraform/arcanium-provider && go build -o terraform-provider-arcanium .
++	@echo "built terraform/arcanium-provider/terraform-provider-arcanium"
++
++scenario-terraform-provider: provider-build ## Prompt 28, Deliverable 4 — real terraform apply against the demo stack via a service-account token
++	@chmod +x scenarios/17_terraform_provider/test_terraform_provider.sh
++	@./scenarios/17_terraform_provider/test_terraform_provider.sh
++
+ # ── Pre-24 — Persistence, Rehydration & Deterministic Stack Recovery ───────
+ # up/down/restart retain all persistent volumes — never call `down -v`,
+ # `volume prune`, or any equivalent here. rehydrate runs the same
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 5259716..73a4656 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -152,6 +152,36 @@ components:
+         created_at: { type: string, format: date-time }
+       required: [id, name, created_by, created_at]
+ 
++    # ── Service accounts / webhooks (Prompt 28) ──────────────────────────
++    ServiceAccount:
++      type: object
++      properties:
++        id: { type: string, format: uuid }
++        name: { type: string }
++        description: { type: ["string", "null"] }
++        roles: { type: array, items: { type: string } }
++        tenant_scopes:
++          type: ["array", "null"]
++          items: { type: string }
++          description: "null = estate-wide"
++        created_by: { type: string }
++        created_at: { type: string, format: date-time }
++        last_used_at: { type: ["string", "null"], format: date-time }
++        revoked_at: { type: ["string", "null"], format: date-time }
++        revoked_by: { type: ["string", "null"] }
++      required: [id, name, roles, created_by, created_at]
++
++    WebhookEndpoint:
++      type: object
++      properties:
++        id: { type: string, format: uuid }
++        url: { type: string }
++        events: { type: array, items: { type: string } }
++        enabled: { type: boolean }
++        created_by: { type: string }
++        created_at: { type: string, format: date-time }
++      required: [id, url, events, enabled, created_by, created_at]
++
+     # ── Transit keys ──────────────────────────────────────────────────────
+     TransitKey:
+       type: object
+@@ -767,6 +797,17 @@ paths:
+               schema: { $ref: "#/components/schemas/Application" }
+         "400": { $ref: "#/components/responses/BadRequest" }
+         "404": { $ref: "#/components/responses/NotFound" }
++  /api/v1/applications/{id}/offboard:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    post:
++      summary: Initiate offboarding (Prompt 28) — submits destroy_request approvals, never a cascade delete
++      responses:
++        "202":
++          description: Accepted (workflow initiated — nothing destroyed yet)
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { description: Application already offboarded }
+   /api/v1/applications/{id}/intent:
+     parameters:
+       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+@@ -1036,6 +1077,132 @@ paths:
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "404": { $ref: "#/components/responses/NotFound" }
+ 
++  # ── Service accounts (Prompt 28 — machine-to-machine) ────────────────
++  /api/v1/service-accounts:
++    get:
++      summary: List service accounts (estate-wide read only) — never token material
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { type: array, items: { $ref: "#/components/schemas/ServiceAccount" } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++    post:
++      summary: Create a service account (estate-wide provision only) — machines don't self-issue
++      requestBody:
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                name: { type: string }
++                description: { type: ["string", "null"] }
++                roles: { type: array, items: { type: string } }
++                tenant_scopes: { type: ["array", "null"], items: { type: string } }
++              required: [name, roles]
++      responses:
++        "201":
++          description: Created
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/ServiceAccount" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "409": { description: Name already registered }
++  /api/v1/service-accounts/{id}:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    get:
++      summary: Service account detail, including non-secret token metadata
++      responses:
++        "200": { description: OK }
++        "404": { $ref: "#/components/responses/NotFound" }
++    delete:
++      summary: Revoke a service account (tombstone, not a hard delete)
++      responses:
++        "200": { description: Revoked }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { description: Already revoked }
++  /api/v1/service-accounts/{id}/tokens:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    post:
++      summary: Issue a new token — plaintext returned exactly once, never again
++      responses:
++        "201":
++          description: Created
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  token_id: { type: string, format: uuid }
++                  token: { type: string, description: "Plaintext — present in THIS response only" }
++                  expires_at: { type: string, format: date-time }
++                  warning: { type: string }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { description: Service account is revoked }
++  /api/v1/service-accounts/{id}/tokens/{token_id}:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++      - { name: token_id, in: path, required: true, schema: { type: string, format: uuid } }
++    delete:
++      summary: Revoke one token without revoking the whole service account
++      responses:
++        "204": { description: Revoked }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
++  # ── Webhooks (Prompt 28) ─────────────────────────────────────────────
++  /api/v1/webhooks:
++    get:
++      summary: List webhook endpoints (estate-wide read only) — never secret material
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { type: array, items: { $ref: "#/components/schemas/WebhookEndpoint" } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++    post:
++      summary: Register a webhook endpoint — signing secret returned exactly once
++      requestBody:
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                url: { type: string }
++                events: { type: array, items: { type: string, enum: [reconciliation.drifted, reconciliation.compliant, key.expiry_approaching] } }
++              required: [url, events]
++      responses:
++        "201": { description: Created }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++  /api/v1/webhooks/{id}:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    delete:
++      summary: Remove a webhook endpoint (hard delete — operational config, not evidence)
++      responses:
++        "204": { description: Deleted }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++  /api/v1/webhooks/{id}/deliveries:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++      - { name: status, in: query, schema: { type: string, enum: [failed] } }
++    get:
++      summary: Delivery attempts for this endpoint — failures surfaced, never silently dropped
++      responses:
++        "200": { description: OK }
++        "403": { $ref: "#/components/responses/Forbidden" }
++
+   # ── Approvals ─────────────────────────────────────────────────────────
+   /api/v1/approvals:
+     get:
+diff --git a/arcanium/api/src/aggregation/intent.js b/arcanium/api/src/aggregation/intent.js
+index 5cac5c8..bc54468 100644
+--- a/arcanium/api/src/aggregation/intent.js
++++ b/arcanium/api/src/aggregation/intent.js
+@@ -31,7 +31,8 @@ function keyNameFromPath(vaultPath) {
+ // for tenant-scoping (this module has no notion of a caller identity).
+ export async function getApplicationIntent(appId) {
+   const { rows: appRows } = await query(
+-    `SELECT a.id, a.name, a.description, a.category, a.supplier_id, s.vault_namespace
++    `SELECT a.id, a.name, a.description, a.category, a.supplier_id, a.environment,
++            a.offboarding_initiated_at, a.offboarded_at, s.vault_namespace
+        FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
+       WHERE a.id = $1`,
+     [appId],
+@@ -192,10 +193,17 @@ export async function getApplicationIntent(appId) {
+     application_id: app.id,
+     application: app.name,
+     tenant: namespace,
+-    // Arcanium has no per-application environment concept in the data
+-    // model yet (no column, no table) — explicitly null, never a fabricated
+-    // "production" default, per this phase's own design rules.
+-    environment: null,
++    // Prompt 27 added applications.environment — this was hardcoded null
++    // here (with a comment saying no such column existed) until this
++    // prompt's own audit found it stale and wired it to the real value.
++    environment: app.environment,
++    // Prompt 28, Deliverable 6 — an application mid-offboarding (or fully
++    // offboarded) is labeled here, never displayed as a normal healthy
++    // application. null/null means "not offboarding."
++    offboarding: {
++      initiated_at: app.offboarding_initiated_at ?? null,
++      offboarded_at: app.offboarded_at ?? null,
++    },
+     requirements,
+     custody,
+     governance: {
+diff --git a/arcanium/api/src/auth/authorize.js b/arcanium/api/src/auth/authorize.js
+index d104b7a..a44f08c 100644
+--- a/arcanium/api/src/auth/authorize.js
++++ b/arcanium/api/src/auth/authorize.js
+@@ -20,6 +20,12 @@ const ROLE_GROUPS = {
+   "arcanium-supplier-admin": "supplier-admin",
+ };
+ 
++// Prompt 28 — every role name MATRIX recognizes, exported so
++// routes/service-accounts.js can validate a machine identity's declared
++// roles against the same set humans are drawn from, without hand-copying
++// the list a second time.
++export const VALID_ROLES = Object.freeze(Object.values(ROLE_GROUPS));
++
+ const TENANT_GROUP_PREFIX = "arcanium-tenant-";
+ 
+ // Prompt 27 — scoped-role group naming: "arcanium-<role>:env:<env>" or
+diff --git a/arcanium/api/src/auth/index.js b/arcanium/api/src/auth/index.js
+index df796ca..ba4a75b 100644
+--- a/arcanium/api/src/auth/index.js
++++ b/arcanium/api/src/auth/index.js
+@@ -9,7 +9,7 @@
+ // token, Vault token, or LDAP credential ever reaches it.
+ 
+ import { Router } from "express";
+-import { randomBytes } from "node:crypto";
++import { randomBytes, createHash } from "node:crypto";
+ import config from "../config.js";
+ import { query } from "../db.js";
+ import {
+@@ -255,6 +255,53 @@ export async function tenantScope(req) {
+   };
+ }
+ 
++// Prompt 28, Deliverable 2 — hash the presented token, look up the service
++// account it belongs to, and build the SAME req.identity shape the cookie
++// path builds. authorize() is never told which source an identity came
++// from — this is the whole point (no parallel authorization path).
++function authenticateServiceAccount(token, req, res, next) {
++  const tokenHash = createHash("sha256").update(token, "utf8").digest("hex");
++  query(
++    `SELECT t.id AS token_id, sa.id AS sa_id, sa.name, sa.roles, sa.tenant_scopes, sa.revoked_at AS sa_revoked_at
++       FROM service_account_tokens t
++       JOIN service_accounts sa ON sa.id = t.service_account_id
++      WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > now()`,
++    [tokenHash],
++  )
++    .then(({ rows }) => {
++      if (!rows.length)
++        return res.status(401).json({ error: "invalid or expired token" });
++      const sa = rows[0];
++      if (sa.sa_revoked_at)
++        return res.status(401).json({ error: "service account revoked" });
++
++      req.identity = {
++        // "service-account:<name>" — never confusable with a real human
++        // username (Prompt 18's usernames never contain a colon), so
++        // audit trails (approvals.requester, lifecycle_events.actor, etc.)
++        // stay honestly attributable to a machine caller, not a person.
++        user: `service-account:${sa.name}`,
++        persona: sa.roles[0] ?? "service-account",
++        namespaces: sa.tenant_scopes ?? [],
++        roles: sa.roles,
++        tenantScopes: sa.tenant_scopes ?? [],
++        scopes: [], // Prompt 27's env/team scoping is a human-group concept; not extended to service accounts here
++        groups: [],
++        serviceAccount: true,
++      };
++      // Fire-and-forget, same non-blocking pattern as the session's own
++      // idle-timeout touch below.
++      query("UPDATE service_account_tokens SET last_used_at = now() WHERE id = $1", [
++        sa.token_id,
++      ]).catch(() => {});
++      query("UPDATE service_accounts SET last_used_at = now() WHERE id = $1", [
++        sa.sa_id,
++      ]).catch(() => {});
++      next();
++    })
++    .catch(next);
++}
++
+ // Middleware: enforce a session on /api/v1/** (except auth/*) when enabled.
+ // Builds req.identity with `roles`/`tenantScopes` for auth/authorize.js, in
+ // addition to the legacy `persona`/`namespaces` shape existing routes read.
+@@ -274,6 +321,19 @@ export function requireSession(req, res, next) {
+   const openPaths = [/^\/health/, /^\/api\/v1\/auth\//];
+   if (openPaths.some((r) => r.test(req.path))) return next();
+ 
++  // Prompt 28, Deliverable 2 — machine-to-machine: Authorization: Bearer is
++  // checked FIRST and, when present, is the only path taken (a request
++  // carrying both a bearer token and a stale cookie should authenticate as
++  // the token, not silently fall back). This is additive — the cookie path
++  // below is completely unchanged for every request that doesn't send this
++  // header, and authorize() sees no difference between the two: both build
++  // the exact same req.identity shape.
++  const authHeader = req.headers.authorization || "";
++  const bearerMatch = /^Bearer\s+(\S+)$/i.exec(authHeader);
++  if (bearerMatch) {
++    return authenticateServiceAccount(bearerMatch[1], req, res, next);
++  }
++
+   const id = readCookie(req);
+   if (!id) return res.status(401).json({ error: "authentication required" });
+   query(
+diff --git a/arcanium/api/src/index.js b/arcanium/api/src/index.js
+index 2e3e594..2cda4e1 100644
+--- a/arcanium/api/src/index.js
++++ b/arcanium/api/src/index.js
+@@ -20,6 +20,8 @@ import { keysRouter } from "./routes/keys.js";
+ import { pkiRouter } from "./routes/pki.js";
+ import { suppliersRouter } from "./routes/suppliers.js";
+ import { teamsRouter } from "./routes/teams.js";
++import { serviceAccountsRouter } from "./routes/service-accounts.js";
++import { webhooksRouter } from "./routes/webhooks.js";
+ import { approvalsRouter } from "./routes/approvals.js";
+ import { clusterRouter } from "./routes/cluster.js";
+ import { jobsRouter } from "./routes/jobs.js";
+@@ -125,6 +127,8 @@ async function main() {
+   app.use("/api/v1/pki", pkiRouter);
+   app.use("/api/v1/suppliers", suppliersRouter);
+   app.use("/api/v1/teams", teamsRouter);
++  app.use("/api/v1/service-accounts", serviceAccountsRouter);
++  app.use("/api/v1/webhooks", webhooksRouter);
+   app.use("/api/v1/approvals", approvalsRouter);
+   app.use("/api/v1/cluster", clusterRouter);
+   app.use("/api/v1/jobs", jobsRouter);
+diff --git a/arcanium/api/src/maturity/controls.js b/arcanium/api/src/maturity/controls.js
+index b19efd4..2a3bda7 100644
+--- a/arcanium/api/src/maturity/controls.js
++++ b/arcanium/api/src/maturity/controls.js
+@@ -202,6 +202,137 @@ async function assessRotationPolicy() {
+   });
+ }
+ 
++// ── KML-DESTR-01 — active keys must not exceed their declared expiry date ──
++// Prompt 28, Deliverable 7. Same structure as assessRotationPolicy() above,
++// for requirement='expiry_date' instead of 'rotation_period' — UNKNOWN
++// estate-wide until any application actually sets an expiry policy, never
++// fabricated PASS just because the control exists in the catalogue.
++async function assessKeyExpiry() {
++  const { rows } = await query(
++    `SELECT ds.id, ds.application_id, a.name AS app_name, a.supplier_id,
++            s.vault_namespace, ds.key_name, ds.desired_value,
++            lr.id AS run_id, lr.status, lr.observed_value, lr.observed_at
++       FROM desired_state ds
++       JOIN applications a ON a.id = ds.application_id
++       LEFT JOIN suppliers s ON s.id = a.supplier_id
++       LEFT JOIN LATERAL (
++         SELECT * FROM reconciliation_runs r
++          WHERE r.desired_state_id = ds.id
++          ORDER BY r.observed_at DESC LIMIT 1
++       ) lr ON true
++      WHERE ds.requirement = 'expiry_date' AND ds.archived_at IS NULL`,
++  );
++
++  if (!rows.length) {
++    return [
++      assessment({
++        control_id: "KML-DESTR-01",
++        scope: "estate",
++        status: "UNKNOWN",
++        evidence_refs: { detail: "no expiry-date desired state configured yet" },
++        confidence: "HIGH",
++      }),
++    ];
++  }
++
++  return rows.map((r) => {
++    const scope = `${r.vault_namespace ?? "root"}/${r.app_name}/${r.key_name}`;
++    if (!r.run_id) {
++      return assessment({
++        control_id: "KML-DESTR-01",
++        scope,
++        status: "UNKNOWN",
++        desired_value: r.desired_value,
++        evidence_refs: { desired_state_id: r.id, detail: "never reconciled" },
++        confidence: "HIGH",
++      });
++    }
++    const stale =
++      Date.now() - new Date(r.observed_at).getTime() > ROT_POL_TTL_MS;
++    const status = stale
++      ? "UNKNOWN"
++      : r.status === "COMPLIANT"
++        ? "PASS"
++        : r.status === "DRIFTED"
++          ? "FAIL"
++          : "UNKNOWN";
++    return assessment({
++      control_id: "KML-DESTR-01",
++      scope,
++      status,
++      desired_value: r.desired_value,
++      observed_value: r.observed_value,
++      evidence_refs: {
++        reconciliation_run_id: r.run_id,
++        desired_state_id: r.id,
++        stale: stale || undefined,
++      },
++      freshness_seconds: freshnessSeconds(r.observed_at),
++      confidence: status === "UNKNOWN" ? "HIGH" : "MEDIUM",
++    });
++  });
++}
++
++const OFFBOARD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
++
++// ── KML-OFFBOARD-01 — decommissioned applications must have all keys
++// destroyed within 30 days ─────────────────────────────────────────────
++// Prompt 28, Deliverable 7. Non-mandatory (governance adoption, not a hard
++// gate) — UNKNOWN estate-wide until any application has actually gone
++// through offboarding.
++async function assessOffboarding() {
++  const { rows } = await query(
++    `SELECT id, name, supplier_id, offboarding_initiated_at, offboarded_at
++       FROM applications WHERE offboarding_initiated_at IS NOT NULL`,
++  );
++  if (!rows.length) {
++    return [
++      assessment({
++        control_id: "KML-OFFBOARD-01",
++        scope: "estate",
++        status: "UNKNOWN",
++        evidence_refs: { detail: "no application has been offboarded yet" },
++        confidence: "HIGH",
++      }),
++    ];
++  }
++  return rows.map((r) => {
++    const scope = `applications/${r.name}`;
++    const elapsedMs = (r.offboarded_at ? new Date(r.offboarded_at) : new Date()) -
++      new Date(r.offboarding_initiated_at);
++    if (!r.offboarded_at) {
++      // Still in progress — only a genuine FAIL if it's overrun the
++      // window without completing; otherwise honestly still UNKNOWN
++      // (not yet resolved either way), never a premature PASS.
++      const status = elapsedMs > OFFBOARD_WINDOW_MS ? "FAIL" : "UNKNOWN";
++      return assessment({
++        control_id: "KML-OFFBOARD-01",
++        scope,
++        status,
++        evidence_refs: {
++          application_id: r.id,
++          offboarding_initiated_at: r.offboarding_initiated_at,
++          detail: "offboarding still in progress",
++        },
++        confidence: "HIGH",
++      });
++    }
++    return assessment({
++      control_id: "KML-OFFBOARD-01",
++      scope,
++      status: elapsedMs <= OFFBOARD_WINDOW_MS ? "PASS" : "FAIL",
++      evidence_refs: {
++        application_id: r.id,
++        offboarding_initiated_at: r.offboarding_initiated_at,
++        offboarded_at: r.offboarded_at,
++        elapsed_days: Math.round(elapsedMs / 86400000),
++      },
++      freshness_seconds: freshnessSeconds(r.offboarded_at),
++      confidence: "HIGH",
++    });
++  });
++}
++
+ // ── AUD-01 — governance actions are source/actor-attributed ────────────────
+ async function assessAuditTrail() {
+   const { rows } = await query(
+@@ -438,6 +569,8 @@ const ASSESSORS = [
+   assessKeyInventory,
+   assessTenantIsolation,
+   assessRotationPolicy,
++  assessKeyExpiry,
++  assessOffboarding,
+   assessAuditTrail,
+   assessWorkloadIdentity,
+   assessNegativeAuthz,
+diff --git a/arcanium/api/src/reconciliation/diff.js b/arcanium/api/src/reconciliation/diff.js
+index 6140957..7cd2e4e 100644
+--- a/arcanium/api/src/reconciliation/diff.js
++++ b/arcanium/api/src/reconciliation/diff.js
+@@ -22,3 +22,44 @@ export function compare(desired, observed) {
+     observed: observed.value,
+   };
+ }
++
++const APPROACHING_EXPIRY_DAYS = 14;
++const MS_PER_DAY = 86400000;
++
++// Prompt 28, Deliverable 5 — `expiry_date` needs a different comparator
++// than the generic deep-equal `compare()` above: "must not be active after
++// this date" is a date-ordering question, not an equality check, and it
++// carries an extra `approaching_expiry` signal `compare()` has no concept
++// of (used to trigger Deliverable 3's `key.expiry_approaching` webhook
++// event — a COMPLIANT key can still be worth flagging before it drifts).
++export function compareExpiryDate(desired, observed) {
++  if (observed.status === "UNKNOWN") {
++    return { status: "UNKNOWN", detail: observed.detail };
++  }
++  const notAfter = desired.desired_value?.not_after;
++  if (!notAfter) {
++    return { status: "UNKNOWN", detail: "desired_value.not_after is missing" };
++  }
++  // A destroyed/inactive key can never violate "must not be active after
++  // this date" regardless of what the date says — the requirement's own
++  // intent is already satisfied.
++  if (observed.value?.active === false) {
++    return { status: "COMPLIANT" };
++  }
++  const today = new Date(observed.value?.observed_date ?? Date.now());
++  const deadline = new Date(`${notAfter}T00:00:00Z`);
++  if (today.getTime() > deadline.getTime()) {
++    return {
++      status: "DRIFTED",
++      desired: desired.desired_value,
++      observed: observed.value,
++    };
++  }
++  const daysRemaining = Math.floor(
++    (deadline.getTime() - today.getTime()) / MS_PER_DAY,
++  );
++  return {
++    status: "COMPLIANT",
++    approaching_expiry: daysRemaining <= APPROACHING_EXPIRY_DAYS,
++  };
++}
+diff --git a/arcanium/api/src/reconciliation/engine.js b/arcanium/api/src/reconciliation/engine.js
+index 3016bdd..cd934d0 100644
+--- a/arcanium/api/src/reconciliation/engine.js
++++ b/arcanium/api/src/reconciliation/engine.js
+@@ -8,26 +8,44 @@
+ // worker's periodic tick.
+ 
+ import { query } from "../db.js";
+-import { observeRotationPeriod, applyRotationPeriod } from "./observe.js";
+-import { compare } from "./diff.js";
++import {
++  observeRotationPeriod,
++  applyRotationPeriod,
++  observeExpiryDate,
++} from "./observe.js";
++import { compare, compareExpiryDate } from "./diff.js";
++import { requestKeyDestroy } from "../provisioner/key.js";
++import { emitEvent } from "../events/emit.js";
+ import {
+   OBSERVATION_STATUS_STATES,
+   DISPOSITION_STATES,
+   assertTransition,
+ } from "../domain/state-machines.js";
+ 
+-// Only 'rotation_period' exists this phase (Non-goal: widening the
+-// requirement catalogue is a follow-on, not blocking this phase's exit
+-// criterion) — but keyed by requirement so adding a second type later is a
+-// one-line registration, not a rewrite.
++// Prompt 28, Deliverable 5 adds 'expiry_date' alongside Prompt 20's
++// 'rotation_period' — keyed by requirement so this stays a one-line
++// registration, not a rewrite, exactly as the Prompt 20 comment this
++// replaces anticipated.
+ const OBSERVERS = {
+   rotation_period: (row) =>
+     observeRotationPeriod(row.vault_path, row.namespace),
++  expiry_date: (row) => observeExpiryDate(row.vault_path, row.namespace),
+ };
+ const APPLIERS = {
+   rotation_period: (row) =>
+     applyRotationPeriod(row.vault_path, row.desired_value?.days, row.namespace),
++  // expiry_date has no entry here deliberately — see reconcileRun()'s own
++  // branch below. Its "apply" is submitting a destroy_request approval,
++  // not a direct Vault mutation, so it can't go through the generic
++  // applier -> re-observe -> expect-COMPLIANT pipeline every other
++  // requirement type uses; destruction stays gated behind human approval.
+ };
++// Requirement-aware comparator dispatch — rotation_period keeps using the
++// generic deep-equal `compare()`, unchanged.
++const COMPARATORS = { expiry_date: compareExpiryDate };
++function compareFor(row, observed) {
++  return (COMPARATORS[row.requirement] || compare)(row, observed);
++}
+ 
+ async function desiredStateRowsFor({ desiredStateId, supplierIds } = {}) {
+   const params = [];
+@@ -74,19 +92,66 @@ async function recordRun(row, observed, result) {
+     assertTransition(OBSERVATION_STATUS_STATES, priorStatus, result.status);
+   }
+ 
++  // Prompt 28, Deliverable 5 — fold compareExpiryDate()'s approaching_expiry
++  // signal into the free-text detail column (reconciliation_runs has no
++  // dedicated column for it, and this is the same field rotation_period's
++  // own re-observation commentary already uses for derived, non-observed
++  // explanation text).
++  const detail = result.approaching_expiry
++    ? [result.detail, "approaching_expiry: true (within 14 days of not_after)"]
++        .filter(Boolean)
++        .join(" — ")
++    : (result.detail ?? null);
++
+   const { rows } = await query(
+     `INSERT INTO reconciliation_runs
+        (desired_state_id, desired_state_version, observed_value, status, detail)
+      VALUES ($1,$2,$3,$4,$5)
+      RETURNING id, desired_state_id, desired_state_version, observed_value, status, observed_at, detail`,
+-    [
+-      row.id,
+-      row.version,
+-      observed.value ?? null,
+-      result.status,
+-      result.detail ?? null,
+-    ],
++    [row.id, row.version, observed.value ?? null, result.status, detail],
+   );
++
++  // Prompt 28, Deliverable 3 — event emission, hung off the SAME transition
++  // detection Prompt 22 already validates above (never re-derived). Never
++  // awaited: a reconciliation sweep must not block on a third party's
++  // webhook endpoint. `key.expiry_approaching` only fires on ENTERING the
++  // approaching window (prior status wasn't already COMPLIANT) — a
++  // deliberate, documented simplification to avoid re-firing on every
++  // sweep tick for the entire 14-day window (webhook_deliveries has no
++  // desired_state_id column to dedupe against more precisely without a
++  // schema change this modest deliverable doesn't warrant).
++  if (priorStatus !== result.status) {
++    const eventName =
++      result.status === "DRIFTED"
++        ? "reconciliation.drifted"
++        : result.status === "COMPLIANT"
++          ? "reconciliation.compliant"
++          : null;
++    if (eventName) {
++      emitEvent(eventName, {
++        event: eventName,
++        application_id: row.application_id,
++        tenant: row.namespace ?? null,
++        desired_state_id: row.id,
++        run_id: rows[0].id,
++        observation_status: result.status,
++        observed_at: rows[0].observed_at,
++      }).catch(() => {});
++    }
++  }
++  if (result.approaching_expiry && priorStatus !== "COMPLIANT") {
++    emitEvent("key.expiry_approaching", {
++      event: "key.expiry_approaching",
++      application_id: row.application_id,
++      tenant: row.namespace ?? null,
++      desired_state_id: row.id,
++      run_id: rows[0].id,
++      key_name: row.key_name,
++      not_after: row.desired_value?.not_after ?? null,
++      observed_at: rows[0].observed_at,
++    }).catch(() => {});
++  }
++
+   return {
+     ...rows[0],
+     application_id: row.application_id,
+@@ -116,7 +181,7 @@ export async function runSweep(opts = {}) {
+           detail: `no observer registered for requirement '${row.requirement}'`,
+           observed_at: new Date().toISOString(),
+         };
+-    const result = compare(row, observed);
++    const result = compareFor(row, observed);
+     results.push(await recordRun(row, observed, result));
+   }
+   return results;
+@@ -215,6 +280,20 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
+     vault_path: run.vault_path,
+   };
+ 
++  // Prompt 28, Deliverable 5 — expiry_date's reconcile action is
++  // fundamentally different from every other requirement type: it must
++  // NOT directly mutate Vault. Destruction stays behind the same four-eyes
++  // approval gate every other destroy path in this codebase already uses
++  // (provisioner/key.js's requestKeyDestroy(), reused as-is — not a second
++  // destruction mechanism). Branches BEFORE the generic applier ->
++  // re-observe -> expect-COMPLIANT pipeline below, which would otherwise
++  // misreport "reconcile failed" the instant it re-observed the key still
++  // active (correctly so — actual destruction is still pending human
++  // approval, not a failure).
++  if (run.requirement === "expiry_date") {
++    return reconcileExpiryDate(runId, desiredStateRow, { actor, actorGroups });
++  }
++
+   const applier = APPLIERS[run.requirement];
+   let result = "applied";
+   let detail = null;
+@@ -239,7 +318,7 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
+     }
+     await applier(desiredStateRow);
+     const observed = await OBSERVERS[run.requirement](desiredStateRow);
+-    const compared = compare(desiredStateRow, observed);
++    const compared = compareFor(desiredStateRow, observed);
+     confirmationRun = await recordRun(desiredStateRow, observed, compared);
+     if (compared.status !== "COMPLIANT") {
+       result = "failed";
+@@ -259,6 +338,40 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
+   return { action: actionRows[0], confirmation_run: confirmationRun };
+ }
+ 
++/**
++ * Prompt 28, Deliverable 5 — expiry_date's reconcile action: submits a
++ * destroy_request approval rather than mutating Vault directly. Disposition
++ * deliberately does NOT move to RECONCILED here — that only happens once a
++ * LATER sweep observes the key genuinely inactive (destroyed), which can
++ * only occur after the approval is actually granted and executed elsewhere
++ * (routes/approvals.js / provisioner/key.js) — this action's job is only
++ * to submit the request, honestly, not to pretend the drift is already
++ * resolved.
++ */
++async function reconcileExpiryDate(runId, desiredStateRow, { actor, actorGroups }) {
++  let result = "applied";
++  let detail =
++    "destroy_request approval submitted — awaiting four-eyes authorization before any Vault mutation";
++  let approval = null;
++  try {
++    const keyName = desiredStateRow.vault_path
++      ? desiredStateRow.vault_path.split("/").pop()
++      : desiredStateRow.key_name;
++    approval = await requestKeyDestroy(keyName, actor ?? "arcanium");
++  } catch (err) {
++    result = "failed";
++    detail = err.message;
++  }
++
++  const { rows: actionRows } = await query(
++    `INSERT INTO reconciliation_actions (run_id, action, actor, actor_groups, result, reason)
++     VALUES ($1,'reconcile',$2,$3,$4,$5)
++     RETURNING *`,
++    [runId, actor, actorGroups ?? [], result, detail],
++  );
++  return { action: actionRows[0], confirmation_run: null, approval };
++}
++
+ /**
+  * Accept-exception: records the exception only — does NOT touch Vault.
+  * `reason` and `expires_at` are both required (input/36 — no open-ended
+diff --git a/arcanium/api/src/reconciliation/observe.js b/arcanium/api/src/reconciliation/observe.js
+index 5fee159..e092e9b 100644
+--- a/arcanium/api/src/reconciliation/observe.js
++++ b/arcanium/api/src/reconciliation/observe.js
+@@ -63,6 +63,58 @@ export async function observeRotationPeriod(vaultPath, namespace = null) {
+   }
+ }
+ 
++/**
++ * Prompt 28, Deliverable 5 — live-reads whether a Transit key still exists
++ * (Vault has no separate "active" flag; a destroyed key is simply gone).
++ * A 404 specifically means "destroyed" (a real, known outcome — never
++ * treated as UNKNOWN, unlike an actual Vault-unreachable/auth failure).
++ *
++ * @param {string} vaultPath  e.g. 'transit/keys/payments-api-key'
++ * @param {string|null} namespace  supplier's vault_namespace, or null for root.
++ */
++export async function observeExpiryDate(vaultPath, namespace = null) {
++  const observed_at = new Date().toISOString();
++  if (!vaultPath) {
++    return {
++      value: null,
++      status: "UNKNOWN",
++      detail: "no Transit key on record for this application (crypto_profiles)",
++      observed_at,
++      source: "vault-live",
++    };
++  }
++  try {
++    if (namespace) {
++      await vaultRequestNs("GET", vaultPath, null, getProvisionerToken(), namespace);
++    } else {
++      await vaultRequest("GET", vaultPath, null, getProvisionerToken());
++    }
++    return {
++      value: { active: true, observed_date: observed_at.slice(0, 10) },
++      status: "OK",
++      observed_at,
++      source: "vault-live",
++    };
++  } catch (err) {
++    if (err.vaultStatus === 404) {
++      // Destroyed — a real, positively-observed outcome, not an unreachable read.
++      return {
++        value: { active: false, observed_date: observed_at.slice(0, 10) },
++        status: "OK",
++        observed_at,
++        source: "vault-live",
++      };
++    }
++    return {
++      value: null,
++      status: "UNKNOWN",
++      detail: err.message,
++      observed_at,
++      source: "vault-live",
++    };
++  }
++}
++
+ /**
+  * Writes the desired rotation period back to Vault (the "reconcile" side
+  * effect) — POST transit/keys/:name/config, same duration-string convention
+diff --git a/arcanium/api/src/routes/applications.js b/arcanium/api/src/routes/applications.js
+index edb3f79..0743600 100644
+--- a/arcanium/api/src/routes/applications.js
++++ b/arcanium/api/src/routes/applications.js
+@@ -8,6 +8,7 @@ import { tenantScope } from "../auth/index.js";
+ import { authorize, roleVerdict } from "../auth/authorize.js";
+ import { teamReadScope, scopedReadDenied } from "../auth/scope.js";
+ import { getApplicationIntent } from "../aggregation/intent.js";
++import { initiateOffboarding } from "../offboarding.js";
+ 
+ export const applicationsRouter = Router();
+ 
+@@ -470,3 +471,45 @@ applicationsRouter.post("/:id/classify", async (req, res, next) => {
+     next(err);
+   }
+ });
++
++// POST /api/v1/applications/:id/offboard — Prompt 28, Deliverable 6.
++// A governed workflow (real destroy_request approvals, tombstoned
++// desired_state, no hard deletes), not a cascade delete — see offboarding.js.
++applicationsRouter.post("/:id/offboard", async (req, res, next) => {
++  try {
++    validateUuid(req.params.id);
++    const app = await applicationTenant(req.params.id);
++    if (!app) return next(notFound());
++    const scope = await tenantScope(req);
++    if (scope.scoped && !scope.supplierIds.includes(app.supplier_id))
++      return next(notFound());
++    const decision = authorize({
++      identity: req.identity,
++      action: "destroy_request",
++      tenant: app.vault_namespace,
++      env: app.environment,
++    });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({
++        error: "forbidden",
++        action: "destroy_request",
++        reason: decision.reason,
++      });
++
++    const result = await initiateOffboarding(req.params.id, req.identity?.user);
++    await query(
++      `INSERT INTO lifecycle_events (resource_type, resource_id, event, detail, source)
++       VALUES ('application', $1, 'offboarding.initiated', $2, 'local')`,
++      [
++        req.params.id,
++        JSON.stringify({
++          destroy_requests_submitted: result.destroy_requests_submitted.length,
++        }),
++      ],
++    ).catch(() => {});
++    res.status(202).json(result);
++  } catch (err) {
++    if (err.status) return res.status(err.status).json({ error: err.message });
++    next(err);
++  }
++});
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index f53fdea..cb79d7e 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -232,6 +232,47 @@ export async function createTransitKey(name, type = "aes256-gcm96") {
+   return { name, type };
+ }
+ 
++// Prompt 28, Deliverable 3 — webhook signing secrets need to be genuinely
++// reversible (Arcanium computes an HMAC signature with them on every
++// outgoing delivery, unlike a service-account token, which is only ever
++// verified by comparing hashes). A dedicated Transit key, encrypted at
++// rest, same discipline every other stored secret in this codebase already
++// uses — never a home-rolled reversible scheme. Lazily created on first use.
++const WEBHOOK_SIGNING_KEY = "arcanium-webhook-signing";
++
++async function ensureWebhookSigningKey() {
++  try {
++    await getTransitKey(WEBHOOK_SIGNING_KEY);
++  } catch (err) {
++    if (err.vaultStatus === 404) {
++      await createTransitKey(WEBHOOK_SIGNING_KEY, "aes256-gcm96");
++    } else {
++      throw err;
++    }
++  }
++}
++
++export async function encryptWebhookSecret(plaintext) {
++  await ensureWebhookSigningKey();
++  const res = await vaultRequest(
++    "POST",
++    `transit/encrypt/${WEBHOOK_SIGNING_KEY}`,
++    { plaintext: Buffer.from(plaintext, "utf8").toString("base64") },
++    state.token,
++  );
++  return res.data.ciphertext;
++}
++
++export async function decryptWebhookSecret(ciphertext) {
++  const res = await vaultRequest(
++    "POST",
++    `transit/decrypt/${WEBHOOK_SIGNING_KEY}`,
++    { ciphertext },
++    state.token,
++  );
++  return Buffer.from(res.data.plaintext, "base64").toString("utf8");
++}
++
+ export async function getPkiCaChain() {
+   return vaultRequest("GET", "pki-int/ca/pem", null, state.token);
+ }
+diff --git a/arcanium/api/src/worker.js b/arcanium/api/src/worker.js
+index 567c4f9..b3bb494 100644
+--- a/arcanium/api/src/worker.js
++++ b/arcanium/api/src/worker.js
+@@ -8,6 +8,7 @@ import { runMigrations } from "./migrations.js";
+ import { dispatchJob } from "./provisioner/dispatch.js";
+ import { ingestAuditLog } from "./evidence/ingest.js";
+ import { runSweep } from "./reconciliation/engine.js";
++import { sweepOffboarding } from "./offboarding.js";
+ 
+ const POLL_MS = Number(process.env.WORKER_POLL_MS || 3000);
+ // Prompt 20 — Deliverable 3: runs on a schedule, reusing this existing job
+@@ -69,6 +70,23 @@ async function main() {
+         } catch (e) {
+           console.error(`[worker] reconciliation sweep error: ${e.message}`);
+         }
++        // Prompt 28, Deliverable 6 — same tick as the reconciliation
++        // sweep: checks every in-progress offboarding for whether all its
++        // destroy_request approvals have since been resolved (via the
++        // normal approve/deny routes, unrelated to this tick), finalizing
++        // (tombstone + offboarded_at) the ones that have. This is how an
++        // approval resolved minutes or days after POST /:id/offboard
++        // eventually completes the workflow without any offboarding-aware
++        // logic in routes/approvals.js itself.
++        try {
++          const ob = await sweepOffboarding();
++          if (ob.completed)
++            console.log(
++              `[worker] offboarding sweep: ${ob.checked} in progress, ${ob.completed} completed`,
++            );
++        } catch (e) {
++          console.error(`[worker] offboarding sweep error: ${e.message}`);
++        }
+       }
+ 
+       if (!rows.length) {
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index de4900a..1cef52a 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -631,6 +631,53 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/api/v1/applications/{id}/offboard": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path: {
++                id: string;
++            };
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        /** Initiate offboarding (Prompt 28) — submits destroy_request approvals, never a cascade delete */
++        post: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description Accepted (workflow initiated — nothing destroyed yet) */
++                202: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                403: components["responses"]["Forbidden"];
++                404: components["responses"]["NotFound"];
++                /** @description Application already offboarded */
++                409: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++            };
++        };
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/api/v1/applications/{id}/intent": {
+         parameters: {
+             query?: never;
+@@ -1454,6 +1501,397 @@ export interface paths {
+         };
+         trace?: never;
+     };
++    "/api/v1/service-accounts": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /** List service accounts (estate-wide read only) — never token material */
++        get: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path?: never;
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description OK */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/json": components["schemas"]["ServiceAccount"][];
++                    };
++                };
++                401: components["responses"]["Unauthorized"];
++                403: components["responses"]["Forbidden"];
++            };
++        };
++        put?: never;
++        /** Create a service account (estate-wide provision only) — machines don't self-issue */
++        post: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path?: never;
++                cookie?: never;
++            };
++            requestBody?: {
++                content: {
++                    "application/json": {
++                        name: string;
++                        description?: string | null;
++                        roles: string[];
++                        tenant_scopes?: string[] | null;
++                    };
++                };
++            };
++            responses: {
++                /** @description Created */
++                201: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/json": components["schemas"]["ServiceAccount"];
++                    };
++                };
++                400: components["responses"]["BadRequest"];
++                403: components["responses"]["Forbidden"];
++                /** @description Name already registered */
++                409: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++            };
++        };
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/service-accounts/{id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path: {
++                id: string;
++            };
++            cookie?: never;
++        };
++        /** Service account detail, including non-secret token metadata */
++        get: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description OK */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                404: components["responses"]["NotFound"];
++            };
++        };
++        put?: never;
++        post?: never;
++        /** Revoke a service account (tombstone, not a hard delete) */
++        delete: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description Revoked */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                403: components["responses"]["Forbidden"];
++                404: components["responses"]["NotFound"];
++                /** @description Already revoked */
++                409: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++            };
++        };
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/service-accounts/{id}/tokens": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path: {
++                id: string;
++            };
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        /** Issue a new token — plaintext returned exactly once, never again */
++        post: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description Created */
++                201: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/json": {
++                            /** Format: uuid */
++                            token_id?: string;
++                            /** @description Plaintext — present in THIS response only */
++                            token?: string;
++                            /** Format: date-time */
++                            expires_at?: string;
++                            warning?: string;
++                        };
++                    };
++                };
++                403: components["responses"]["Forbidden"];
++                404: components["responses"]["NotFound"];
++                /** @description Service account is revoked */
++                409: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++            };
++        };
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/service-accounts/{id}/tokens/{token_id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path: {
++                id: string;
++                token_id: string;
++            };
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        post?: never;
++        /** Revoke one token without revoking the whole service account */
++        delete: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                    token_id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description Revoked */
++                204: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                403: components["responses"]["Forbidden"];
++                404: components["responses"]["NotFound"];
++            };
++        };
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/webhooks": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /** List webhook endpoints (estate-wide read only) — never secret material */
++        get: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path?: never;
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description OK */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/json": components["schemas"]["WebhookEndpoint"][];
++                    };
++                };
++                401: components["responses"]["Unauthorized"];
++                403: components["responses"]["Forbidden"];
++            };
++        };
++        put?: never;
++        /** Register a webhook endpoint — signing secret returned exactly once */
++        post: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path?: never;
++                cookie?: never;
++            };
++            requestBody?: {
++                content: {
++                    "application/json": {
++                        url: string;
++                        events: ("reconciliation.drifted" | "reconciliation.compliant" | "key.expiry_approaching")[];
++                    };
++                };
++            };
++            responses: {
++                /** @description Created */
++                201: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                400: components["responses"]["BadRequest"];
++                403: components["responses"]["Forbidden"];
++            };
++        };
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/webhooks/{id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path: {
++                id: string;
++            };
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        post?: never;
++        /** Remove a webhook endpoint (hard delete — operational config, not evidence) */
++        delete: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description Deleted */
++                204: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                403: components["responses"]["Forbidden"];
++                404: components["responses"]["NotFound"];
++            };
++        };
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/webhooks/{id}/deliveries": {
++        parameters: {
++            query?: {
++                status?: "failed";
++            };
++            header?: never;
++            path: {
++                id: string;
++            };
++            cookie?: never;
++        };
++        /** Delivery attempts for this endpoint — failures surfaced, never silently dropped */
++        get: {
++            parameters: {
++                query?: {
++                    status?: "failed";
++                };
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description OK */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                403: components["responses"]["Forbidden"];
++            };
++        };
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/api/v1/approvals": {
+         parameters: {
+             query?: never;
+@@ -2629,6 +3067,33 @@ export interface components {
+             /** Format: date-time */
+             created_at: string;
+         };
++        ServiceAccount: {
++            /** Format: uuid */
++            id: string;
++            name: string;
++            description?: string | null;
++            roles: string[];
++            /** @description null = estate-wide */
++            tenant_scopes?: string[] | null;
++            created_by: string;
++            /** Format: date-time */
++            created_at: string;
++            /** Format: date-time */
++            last_used_at?: string | null;
++            /** Format: date-time */
++            revoked_at?: string | null;
++            revoked_by?: string | null;
++        };
++        WebhookEndpoint: {
++            /** Format: uuid */
++            id: string;
++            url: string;
++            events: string[];
++            enabled: boolean;
++            created_by: string;
++            /** Format: date-time */
++            created_at: string;
++        };
+         TransitKey: {
+             name?: string;
+             type?: string;
+diff --git a/arcanium/ui/server/routes/gateway/[...path].ts b/arcanium/ui/server/routes/gateway/[...path].ts
+index 5e7cac6..50dbc30 100644
+--- a/arcanium/ui/server/routes/gateway/[...path].ts
++++ b/arcanium/ui/server/routes/gateway/[...path].ts
+@@ -1,22 +1,26 @@
+ // Transport only: a fixed upstream, allowlisted API paths and no Vault credentials.
+ export default defineEventHandler(async (event) => {
+   const path = getRouterParam(event, 'path') || ''
+-  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation|controls|teams)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
++  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation|controls|teams|service-accounts|webhooks)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me|deliveries))?)$/.test(path)
+   const write =
+     (event.method === 'POST' && (
+-      /^api\/v1\/(approvals(\/[a-zA-Z0-9_-]+\/(approve|deny|authorize))?|suppliers|applications|keys|teams)$/.test(path)
+-      || /^api\/v1\/applications\/[a-f0-9-]+\/(provision|classify)$/.test(path)
++      /^api\/v1\/(approvals(\/[a-zA-Z0-9_-]+\/(approve|deny|authorize))?|suppliers|applications|keys|teams|service-accounts|webhooks)$/.test(path)
++      || /^api\/v1\/applications\/[a-f0-9-]+\/(provision|classify|offboard)$/.test(path)
+       || /^api\/v1\/keys\/[a-zA-Z0-9_-]+\/(rotate|rewrap|destroy)$/.test(path)
+       || /^api\/v1\/keymgmt\/[a-zA-Z0-9_.-]+\/(rotate|sync)$/.test(path)
+       || /^api\/v1\/auth\/(logout|demo-persona)$/.test(path)
+       // Prompt 20 — reconciliation sweep + governed actions.
+       || /^api\/v1\/reconciliation\/run$/.test(path)
+       || /^api\/v1\/reconciliation\/[a-zA-Z0-9_-]+\/(reconcile|accept-exception)$/.test(path)
++      // Prompt 28 — issuing a new service-account token.
++      || /^api\/v1\/service-accounts\/[a-f0-9-]+\/tokens$/.test(path)
+     ))
+-    || (['PATCH', 'DELETE'].includes(event.method) && /^api\/v1\/(suppliers|applications|teams)\/[a-f0-9-]+$/.test(path))
++    || (['PATCH', 'DELETE'].includes(event.method) && /^api\/v1\/(suppliers|applications|teams|service-accounts|webhooks)\/[a-f0-9-]+$/.test(path))
+     // Prompt 20 — editing the desired value itself (input/36's "who changed
+     // the intent, when, why").
+     || (event.method === 'PATCH' && /^api\/v1\/reconciliation\/desired-state\/[a-zA-Z0-9_-]+$/.test(path))
++    // Prompt 28 — revoking one service-account token.
++    || (event.method === 'DELETE' && /^api\/v1\/service-accounts\/[a-f0-9-]+\/tokens\/[a-f0-9-]+$/.test(path))
+   if (!(event.method === 'GET' && read) && !write) {
+     throw createError({ statusCode: 404, statusMessage: 'Route unavailable' })
+   }
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 5259716..73a4656 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -152,6 +152,36 @@ components:
+         created_at: { type: string, format: date-time }
+       required: [id, name, created_by, created_at]
+ 
++    # ── Service accounts / webhooks (Prompt 28) ──────────────────────────
++    ServiceAccount:
++      type: object
++      properties:
++        id: { type: string, format: uuid }
++        name: { type: string }
++        description: { type: ["string", "null"] }
++        roles: { type: array, items: { type: string } }
++        tenant_scopes:
++          type: ["array", "null"]
++          items: { type: string }
++          description: "null = estate-wide"
++        created_by: { type: string }
++        created_at: { type: string, format: date-time }
++        last_used_at: { type: ["string", "null"], format: date-time }
++        revoked_at: { type: ["string", "null"], format: date-time }
++        revoked_by: { type: ["string", "null"] }
++      required: [id, name, roles, created_by, created_at]
++
++    WebhookEndpoint:
++      type: object
++      properties:
++        id: { type: string, format: uuid }
++        url: { type: string }
++        events: { type: array, items: { type: string } }
++        enabled: { type: boolean }
++        created_by: { type: string }
++        created_at: { type: string, format: date-time }
++      required: [id, url, events, enabled, created_by, created_at]
++
+     # ── Transit keys ──────────────────────────────────────────────────────
+     TransitKey:
+       type: object
+@@ -767,6 +797,17 @@ paths:
+               schema: { $ref: "#/components/schemas/Application" }
+         "400": { $ref: "#/components/responses/BadRequest" }
+         "404": { $ref: "#/components/responses/NotFound" }
++  /api/v1/applications/{id}/offboard:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    post:
++      summary: Initiate offboarding (Prompt 28) — submits destroy_request approvals, never a cascade delete
++      responses:
++        "202":
++          description: Accepted (workflow initiated — nothing destroyed yet)
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { description: Application already offboarded }
+   /api/v1/applications/{id}/intent:
+     parameters:
+       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+@@ -1036,6 +1077,132 @@ paths:
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "404": { $ref: "#/components/responses/NotFound" }
+ 
++  # ── Service accounts (Prompt 28 — machine-to-machine) ────────────────
++  /api/v1/service-accounts:
++    get:
++      summary: List service accounts (estate-wide read only) — never token material
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { type: array, items: { $ref: "#/components/schemas/ServiceAccount" } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++    post:
++      summary: Create a service account (estate-wide provision only) — machines don't self-issue
++      requestBody:
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                name: { type: string }
++                description: { type: ["string", "null"] }
++                roles: { type: array, items: { type: string } }
++                tenant_scopes: { type: ["array", "null"], items: { type: string } }
++              required: [name, roles]
++      responses:
++        "201":
++          description: Created
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/ServiceAccount" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "409": { description: Name already registered }
++  /api/v1/service-accounts/{id}:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    get:
++      summary: Service account detail, including non-secret token metadata
++      responses:
++        "200": { description: OK }
++        "404": { $ref: "#/components/responses/NotFound" }
++    delete:
++      summary: Revoke a service account (tombstone, not a hard delete)
++      responses:
++        "200": { description: Revoked }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { description: Already revoked }
++  /api/v1/service-accounts/{id}/tokens:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    post:
++      summary: Issue a new token — plaintext returned exactly once, never again
++      responses:
++        "201":
++          description: Created
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  token_id: { type: string, format: uuid }
++                  token: { type: string, description: "Plaintext — present in THIS response only" }
++                  expires_at: { type: string, format: date-time }
++                  warning: { type: string }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { description: Service account is revoked }
++  /api/v1/service-accounts/{id}/tokens/{token_id}:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++      - { name: token_id, in: path, required: true, schema: { type: string, format: uuid } }
++    delete:
++      summary: Revoke one token without revoking the whole service account
++      responses:
++        "204": { description: Revoked }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
++  # ── Webhooks (Prompt 28) ─────────────────────────────────────────────
++  /api/v1/webhooks:
++    get:
++      summary: List webhook endpoints (estate-wide read only) — never secret material
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { type: array, items: { $ref: "#/components/schemas/WebhookEndpoint" } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++    post:
++      summary: Register a webhook endpoint — signing secret returned exactly once
++      requestBody:
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                url: { type: string }
++                events: { type: array, items: { type: string, enum: [reconciliation.drifted, reconciliation.compliant, key.expiry_approaching] } }
++              required: [url, events]
++      responses:
++        "201": { description: Created }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++  /api/v1/webhooks/{id}:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    delete:
++      summary: Remove a webhook endpoint (hard delete — operational config, not evidence)
++      responses:
++        "204": { description: Deleted }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++  /api/v1/webhooks/{id}/deliveries:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++      - { name: status, in: query, schema: { type: string, enum: [failed] } }
++    get:
++      summary: Delivery attempts for this endpoint — failures surfaced, never silently dropped
++      responses:
++        "200": { description: OK }
++        "403": { $ref: "#/components/responses/Forbidden" }
++
+   # ── Approvals ─────────────────────────────────────────────────────────
+   /api/v1/approvals:
+     get:
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index f6f8588..5412824 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -172,6 +172,110 @@ else
+   ok "API explorer not reachable by default (HTTP $EXPLORER_STATUS) — default-off gate intact"
+ fi
+ 
++# ── Prompt 28, Deliverable 8 ──────────────────────────────────────────────
++psqlc() {
++  podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA -c "$1" 2>/dev/null
++}
++
++# The earlier EXCEPTION_ACCEPTED check above already removed its own $JAR —
++# a fresh session (demo-architect: provision=true, same as demo-operator)
++# is needed for these checks, not a reuse of that deleted cookie jar.
++JAR=$(mktemp)
++if ! ($STACK_UP && oidc_login "demo-architect" "$JAR" "Arcanium-arch-2026"); then
++  rm -f "$JAR"
++  JAR=""
++fi
++
++# (a) — a service-account token value is never echoed back anywhere except
++# the single POST /:id/tokens response that issued it.
++if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
++  SA_CREATE=$(curl -s -b "$JAR" -X POST "$API/api/v1/service-accounts" \
++    -H 'Content-Type: application/json' \
++    -d '{"name":"fitness-test-sa","description":"scenario 13 fitness check","roles":["auditor"]}')
++  SA_ID=$(echo "$SA_CREATE" | jq -r '.id // empty')
++  if [ -n "$SA_ID" ]; then
++    TOKEN_RESP=$(curl -s -b "$JAR" -X POST "$API/api/v1/service-accounts/$SA_ID/tokens" \
++      -H 'Content-Type: application/json' -d '{"description":"fitness test token"}')
++    TOKEN_VALUE=$(echo "$TOKEN_RESP" | jq -r '.token // empty')
++    if [ -n "$TOKEN_VALUE" ]; then
++      DETAIL_BODY=$(curl -s -b "$JAR" "$API/api/v1/service-accounts/$SA_ID")
++      LIST_BODY=$(curl -s -b "$JAR" "$API/api/v1/service-accounts")
++      if echo "$DETAIL_BODY$LIST_BODY" | grep -qF "$TOKEN_VALUE"; then
++        bad "service-account token value leaked outside its single POST /tokens issuance response"
++      else
++        ok "service-account token value appears ONLY in its one-time POST /tokens response, never in GET detail/list"
++      fi
++    else
++      unk "service-account token leak check — token issuance did not return a token value"
++    fi
++    curl -s -b "$JAR" -X DELETE "$API/api/v1/service-accounts/$SA_ID" >/dev/null
++  else
++    unk "service-account token leak check — could not create a test service account"
++  fi
++else
++  unk "service-account token leak check — identity stack/API/jq not reachable"
++fi
++
++# (b) — every webhook delivery attempt is recorded in webhook_deliveries,
++# never a silent drop, even when the endpoint is unreachable.
++if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
++  WH_CREATE=$(curl -s -b "$JAR" -X POST "$API/api/v1/webhooks" \
++    -H 'Content-Type: application/json' \
++    -d '{"url":"http://127.0.0.1:1/unreachable-fitness-sink","events":["reconciliation.drifted"],"description":"fitness test sink (deliberately unreachable)"}')
++  WH_ID=$(echo "$WH_CREATE" | jq -r '.id // empty')
++  DS_ID=$(psqlc "SELECT id FROM desired_state WHERE requirement='rotation_period' AND archived_at IS NULL LIMIT 1" | tr -d '[:space:]')
++  if [ -n "$WH_ID" ] && [ -n "$DS_ID" ]; then
++    BEFORE=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
++    CUR_DAYS=$(psqlc "SELECT desired_value->>'days' FROM desired_state WHERE id='$DS_ID'" | tr -d '[:space:]')
++    NEXT_DAYS=$([ "$CUR_DAYS" = "30" ] && echo 45 || echo 30)
++    curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
++      -H 'Content-Type: application/json' \
++      -d "{\"desired_value\":{\"days\":$NEXT_DAYS},\"reason\":\"fitness test — force a drift for webhook delivery proof\"}" >/dev/null
++    curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" >/dev/null
++    sleep 2
++    AFTER=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
++    if [ "${AFTER:-0}" -gt "${BEFORE:-0}" ]; then
++      ok "a real reconciliation.drifted transition produced a recorded row in webhook_deliveries (even for an unreachable endpoint)"
++    else
++      bad "no webhook_deliveries row was recorded for a genuine reconciliation.drifted transition"
++    fi
++    curl -s -b "$JAR" -X DELETE "$API/api/v1/webhooks/$WH_ID" >/dev/null
++  else
++    unk "webhook delivery recording check — could not create endpoint/fixture"
++  fi
++else
++  unk "webhook delivery recording check — identity stack/API/jq not reachable"
++fi
++[ -n "${JAR:-}" ] && rm -f "$JAR"
++
++# (c) — the Terraform provider skeleton's HTTP client authenticates with
++# Authorization: Bearer, never a Cookie header (the M2M surface, not the
++# human session path). Static check here; scenario-terraform-provider
++# proves this dynamically against a real terraform apply.
++PROVIDER_CLIENT="terraform/arcanium-provider/internal/provider/client.go"
++if [ -f "$PROVIDER_CLIENT" ]; then
++  if grep -q '"Authorization", "Bearer "' "$PROVIDER_CLIENT" && ! grep -qi '"Cookie"' "$PROVIDER_CLIENT"; then
++    ok "terraform-provider-arcanium's client sends Authorization: Bearer, never a Cookie header"
++  else
++    bad "terraform-provider-arcanium's client does not match the expected Bearer-only auth pattern"
++  fi
++else
++  unk "terraform provider Bearer-auth check — $PROVIDER_CLIENT not found"
++fi
++
++# (d) — no hard DELETE of desired_state, evidence, reconciliation_runs, or
++# control_assessments rows anywhere in a route handler. Tombstone
++# (archived_at) discipline, not a cascade delete, for anything that is
++# itself an audit/evidence trail — applications and approval_requests rows
++# are NOT in this list; those are registry/workflow rows, not evidence.
++HITS=$(grep -rniE "DELETE FROM (desired_state|evidence|reconciliation_runs|control_assessments)\b" \
++  arcanium/api/src/routes arcanium/api/src/offboarding.js arcanium/api/src/reconciliation 2>/dev/null || true)
++if [ -z "$HITS" ]; then
++  ok "no hard DELETE of desired_state/evidence/reconciliation_runs/control_assessments rows in any route handler"
++else
++  bad "a hard DELETE of an evidence/history table was found: $HITS"
++fi
++
+ echo
+ TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index 092d7d2..e3b1f02 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -635,6 +635,60 @@ capture_multitenancy() {
+   fi
+ }
+ 
++# ------------------------------------------------ lifecycle completion (28) --
++# Prompt 28, Deliverable 9 — service accounts, expiry_date coverage/drift,
++# and offboarding progress. Same "count what's true right now, never a
++# static/assumed number" discipline every other capture_* function follows.
++capture_lifecycle_completion() {
++  local d="$TMP/components/lifecycle_completion"
++  mkdir -p "$d"
++
++  if ! running arcanium-postgres; then
++    jq -n '{service_accounts: {active: null, revoked: null},
++            expiry_date: {tracked: null, drifted: null},
++            offboarding: {initiated: null, completed: null}}' \
++      >"$d/lifecycle_completion.json"
++  else
++    local sa_active sa_revoked exp_tracked exp_drifted ob_initiated ob_completed
++    sa_active=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from service_accounts where revoked_at is null;" 2>/dev/null | tr -d '[:space:]')
++    sa_revoked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from service_accounts where revoked_at is not null;" 2>/dev/null | tr -d '[:space:]')
++    exp_tracked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from desired_state where requirement='expiry_date' and archived_at is null;" 2>/dev/null | tr -d '[:space:]')
++    # Counted from the latest reconciliation_runs row per desired_state, not
++    # a stale/cached flag — matches how every other DRIFTED count in this
++    # script (e.g. capture_persistence's own reconciliation figures) is
++    # derived: from the most recent observed run per row, live.
++    exp_drifted=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from (
++         select distinct on (rr.desired_state_id) rr.desired_state_id, rr.status
++           from reconciliation_runs rr
++           join desired_state ds on ds.id = rr.desired_state_id
++          where ds.requirement = 'expiry_date' and ds.archived_at is null
++          order by rr.desired_state_id, rr.observed_at desc
++       ) latest where status = 'DRIFTED';" 2>/dev/null | tr -d '[:space:]')
++    ob_initiated=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from applications where offboarding_initiated_at is not null;" 2>/dev/null | tr -d '[:space:]')
++    ob_completed=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from applications where offboarded_at is not null;" 2>/dev/null | tr -d '[:space:]')
++    jq -n \
++      --arg saa "${sa_active:-0}" --arg sar "${sa_revoked:-0}" \
++      --arg ext "${exp_tracked:-0}" --arg exd "${exp_drifted:-0}" \
++      --arg obi "${ob_initiated:-0}" --arg obc "${ob_completed:-0}" \
++      '{service_accounts: {active: ($saa | tonumber), revoked: ($sar | tonumber)},
++        expiry_date: {tracked: ($ext | tonumber), drifted: ($exd | tonumber)},
++        offboarding: {initiated: ($obi | tonumber), completed: ($obc | tonumber)}}' \
++      >"$d/lifecycle_completion.json"
++  fi
++
++  if running arcanium-postgres; then
++    set_status lifecycle_completion CAPTURED
++  else
++    set_status lifecycle_completion UNKNOWN
++  fi
++}
++
+ # ------------------------------------------------------------- verification --
+ capture_verification() {
+   local results="[]"
+@@ -813,7 +867,7 @@ echo "Capturing baseline: $FINAL"
+ echo "  purpose: $PURPOSE"
+ echo
+ 
+-for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_multitenancy capture_verification; do
++for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_multitenancy capture_lifecycle_completion capture_verification; do
+   echo "-> ${fn#capture_}"
+   "$fn"
+ done
+diff --git a/terraform/vault-platform/policies.tf b/terraform/vault-platform/policies.tf
+index 24eca06..515d80c 100644
+--- a/terraform/vault-platform/policies.tf
++++ b/terraform/vault-platform/policies.tf
+@@ -133,6 +133,22 @@ resource "vault_policy" "arcanium_transit" {
+     path "transit/keys/*" {
+       capabilities = ["read"]
+     }
++    # Prompt 28, Deliverable 3 — ensureWebhookSigningKey() lazily provisions its
++    # own dedicated Transit key on first use. This exact-path rule is a
++    # narrower, more specific match than "transit/keys/*" above, so Vault's
++    # resultant ACL applies THIS grant (not the broader read-only one) for
++    # this one key name specifically — verified live: a broader "transit/*"
++    # create grant from arcanium-admin does NOT flow through here, because
++    # Vault always prefers the most specific matching path per-request over
++    # a wider glob from another attached policy, even a more privileged one.
++    # "update" is required (not just "create"): confirmed live via the audit
++    # log that Vault's transit key-write path has no existence check, so it
++    # classifies this request as an UpdateOperation even the very first time
++    # the key is written, when the key doesn't exist yet.
++    # Least-privilege: every other transit key stays read-only for this role.
++    path "transit/keys/arcanium-webhook-signing" {
++      capabilities = ["create", "read", "update"]
++    }
+   EOT
+ }
+ 

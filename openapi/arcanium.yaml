@@ -152,6 +152,36 @@ components:
         created_at: { type: string, format: date-time }
       required: [id, name, created_by, created_at]
 
+    # ── Service accounts / webhooks (Prompt 28) ──────────────────────────
+    ServiceAccount:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: ["string", "null"] }
+        roles: { type: array, items: { type: string } }
+        tenant_scopes:
+          type: ["array", "null"]
+          items: { type: string }
+          description: "null = estate-wide"
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: ["string", "null"], format: date-time }
+        revoked_at: { type: ["string", "null"], format: date-time }
+        revoked_by: { type: ["string", "null"] }
+      required: [id, name, roles, created_by, created_at]
+
+    WebhookEndpoint:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string }
+        events: { type: array, items: { type: string } }
+        enabled: { type: boolean }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+      required: [id, url, events, enabled, created_by, created_at]
+
     # ── Transit keys ──────────────────────────────────────────────────────
     TransitKey:
       type: object
@@ -767,6 +797,17 @@ paths:
               schema: { $ref: "#/components/schemas/Application" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/applications/{id}/offboard:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Initiate offboarding (Prompt 28) — submits destroy_request approvals, never a cascade delete
+      responses:
+        "202":
+          description: Accepted (workflow initiated — nothing destroyed yet)
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Application already offboarded }
   /api/v1/applications/{id}/intent:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1035,6 +1076,132 @@ paths:
         "204": { description: Deleted }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Service accounts (Prompt 28 — machine-to-machine) ────────────────
+  /api/v1/service-accounts:
+    get:
+      summary: List service accounts (estate-wide read only) — never token material
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ServiceAccount" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Create a service account (estate-wide provision only) — machines don't self-issue
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: ["string", "null"] }
+                roles: { type: array, items: { type: string } }
+                tenant_scopes: { type: ["array", "null"], items: { type: string } }
+              required: [name, roles]
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceAccount" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Name already registered }
+  /api/v1/service-accounts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Service account detail, including non-secret token metadata
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Revoke a service account (tombstone, not a hard delete)
+      responses:
+        "200": { description: Revoked }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Already revoked }
+  /api/v1/service-accounts/{id}/tokens:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Issue a new token — plaintext returned exactly once, never again
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token_id: { type: string, format: uuid }
+                  token: { type: string, description: "Plaintext — present in THIS response only" }
+                  expires_at: { type: string, format: date-time }
+                  warning: { type: string }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Service account is revoked }
+  /api/v1/service-accounts/{id}/tokens/{token_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: token_id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      summary: Revoke one token without revoking the whole service account
+      responses:
+        "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Webhooks (Prompt 28) ─────────────────────────────────────────────
+  /api/v1/webhooks:
+    get:
+      summary: List webhook endpoints (estate-wide read only) — never secret material
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/WebhookEndpoint" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Register a webhook endpoint — signing secret returned exactly once
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string }
+                events: { type: array, items: { type: string, enum: [reconciliation.drifted, reconciliation.compliant, key.expiry_approaching] } }
+              required: [url, events]
+      responses:
+        "201": { description: Created }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/webhooks/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      summary: Remove a webhook endpoint (hard delete — operational config, not evidence)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/webhooks/{id}/deliveries:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: status, in: query, schema: { type: string, enum: [failed] } }
+    get:
+      summary: Delivery attempts for this endpoint — failures surfaced, never silently dropped
+      responses:
+        "200": { description: OK }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   # ── Approvals ─────────────────────────────────────────────────────────
   /api/v1/approvals:
