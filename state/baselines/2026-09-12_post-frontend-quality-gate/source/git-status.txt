@@ -1,0 +1,19 @@
+ M .gitignore
+ M arcanium/ui/app/assets/css/main.css
+ M arcanium/ui/app/layouts/default.vue
+ M arcanium/ui/app/pages/login.vue
+ M arcanium/ui/package-lock.json
+ M arcanium/ui/package.json
+ M compose/identity/keycloak/setup_keycloak.sh
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M scripts/ui-rebuild.sh
+?? .agents/
+?? .claude/
+?? .codex/
+?? .github/agents/
+?? .github/hooks/
+?? .github/skills/
+?? arcanium/ui/.agents/
+?? arcanium/ui/.claude/
+?? docs/frontend/
+?? skills-lock.json

@@ -1,0 +1,31 @@
+{
+  "postgres": {
+    "volume_present": true,
+    "schema_version": "022"
+  },
+  "vault": {
+    "raft_storage_present": {
+      "main_1": true,
+      "main_2": true,
+      "main_3": true,
+      "seal_provider": true
+    },
+    "cluster_id": "2ed37e68-0eca-25df-677b-5928bc727157"
+  },
+  "identity": {
+    "ldap_directory_present": true,
+    "keycloak_data_present": true
+  },
+  "hsm": {
+    "softhsm_token_store_present": true,
+    "vault_hsm_storage_present": true
+  },
+  "workloads": {
+    "credential_bootstrap_ready": true,
+    "detail": "verify-all PASS"
+  },
+  "restart_persistence": {
+    "result": "FAIL",
+    "detail": "from scenarios/pre_24_persistence/test_restart_persistence.sh's last run"
+  }
+}

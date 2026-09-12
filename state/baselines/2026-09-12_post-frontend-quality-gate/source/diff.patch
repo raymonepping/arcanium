@@ -1,0 +1,309 @@
+diff --git a/.gitignore b/.gitignore
+index cd4aae5..531f553 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -245,3 +245,14 @@ compose/observability/prometheus/vault-token
+ # state/baselines/ once validated). Never a finalized baseline; must never
+ # be swept into a commit by accident.
+ state/.capture-*.tmp/
++
++########################################
++# 🎨 Prompt 00 — frontend design toolchain / quality gate
++########################################
++# Playwright CLI's own session/snapshot/console-log working files and
++# generated visual-development artifacts (before/after screenshots) — never
++# durable configuration or reports, regenerated on every run.
++arcanium/ui/.playwright-cli/
++arcanium/ui/.artifacts/
++arcanium/ui/test-results/
++arcanium/ui/playwright-report/
+diff --git a/arcanium/ui/app/assets/css/main.css b/arcanium/ui/app/assets/css/main.css
+index 45d8a3a..87ed78b 100644
+--- a/arcanium/ui/app/assets/css/main.css
++++ b/arcanium/ui/app/assets/css/main.css
+@@ -1344,4 +1344,21 @@ a:hover { color: var(--arc-focus); }
+   .arc-main { padding: 20px 16px; }
+   .arc-grid-2, .arc-grid-3 { grid-template-columns: 1fr; }
+   .arc-kpi-strip { grid-template-columns: repeat(2, 1fr); }
++  /* Baseline audit finding (docs/frontend/UI_AUDIT.md) — the cryptographic
++     lifecycle rail (dashboard) was the one grid in this file with no
++     responsive column count at all: repeat(6, 1fr), unlike every other
++     grid on this page. Confirmed live via Playwright at 390x844: columns
++     04-06 were pushed off the right edge of the viewport entirely.
++     Below 900px it drops the horizontal "flow rail" motif (which assumes
++     six same-row neighbors) rather than let it wrap into a broken
++     multi-row shape — each stage becomes its own fully-rounded card. */
++  .arc-kml { grid-template-columns: repeat(3, 1fr); gap: 8px; }
++  .arc-kml__stage,
++  .arc-kml__stage:first-child,
++  .arc-kml__stage:last-child { border-radius: var(--arc-radius); border-right: 1px solid var(--arc-glass-border); }
++  .arc-kml__stage--on + .arc-kml__stage--on::before { display: none; }
++}
++
++@media (max-width: 560px) {
++  .arc-kml { grid-template-columns: 1fr; }
+ }
+diff --git a/arcanium/ui/app/layouts/default.vue b/arcanium/ui/app/layouts/default.vue
+index 959cc09..82fcd42 100644
+--- a/arcanium/ui/app/layouts/default.vue
++++ b/arcanium/ui/app/layouts/default.vue
+@@ -81,7 +81,7 @@
+               <line x1="8" y1="4" x2="8" y2="9" stroke="#ffaa00" stroke-width="1.5" stroke-linecap="round"/>
+               <circle cx="8" cy="11.5" r="0.8" fill="#ffaa00"/>
+             </svg>
+-            <span>{{ pendingCount }} pending</span>
++            <span>{{ pendingCount }}<span class="pending-pill__label"> pending</span></span>
+           </button>
+ 
+           <a
+@@ -587,7 +587,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+   flex-shrink: 0;
+ }
+ .topbar-left { flex: 0 1 auto; min-width: 0; }
+-.page-title { font-size: 15px; font-weight: 600; color: var(--arc-text-primary); margin: 0; white-space: nowrap; }
++.page-title { font-size: 15px; font-weight: 600; color: var(--arc-text-primary); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ .topbar-centre { flex: 1 1 auto; min-width: 120px; max-width: 360px; }
+ .topbar-right { flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+ .topbar-right > * { white-space: nowrap; flex-shrink: 0; }
+@@ -722,6 +722,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+   .env-badge, .vault-link span, .persona { display: none; }
+ }
+ 
++/* Baseline audit finding (docs/frontend/UI_AUDIT.md) — below ~640px the
++   topbar had no further narrowing beyond the 1180px step above, so the
++   search trigger, cluster status text, and pending-count label collided
++   with the (now-truncating) page title and were clipped at the viewport
++   edge. Confirmed live via Playwright at 390x844 on every route. */
++@media (max-width: 640px) {
++  .arc-topbar { gap: 8px; padding: 0 14px; }
++  .topbar-centre { display: none; }
++  .cluster-label { display: none; }
++  .cluster-pill { padding: 4px 8px; }
++  .pending-pill__label { display: none; }
++}
++
+ .pending-pill {
+   display: flex;
+   align-items: center;
+diff --git a/arcanium/ui/app/pages/login.vue b/arcanium/ui/app/pages/login.vue
+index 365921e..fed5295 100644
+--- a/arcanium/ui/app/pages/login.vue
++++ b/arcanium/ui/app/pages/login.vue
+@@ -79,6 +79,13 @@ function signIn() {
+ .login-brand { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 750; color: var(--arc-text-primary); }
+ .brand-icon { width: 26px; height: 26px; }
+ .login-sub { font-size: 12px; color: var(--arc-text-muted); margin: 6px 0 22px; text-transform: uppercase; letter-spacing: 0.08em; }
+-.login-note { font-size: 10.5px; color: var(--arc-text-dim); line-height: 1.5; margin: 16px 0 0; }
++/* Impeccable's live audit flagged this paragraph as low-contrast/tiny-text
++   at 10.5px on --arc-text-dim (docs/frontend/UI_AUDIT.md); manual WCAG
++   luminance math puts --arc-text-dim close to, but not safely above, the
++   4.5:1 AA floor against this card's composited glass background — bumped
++   to --arc-text-muted (already used one line up for .login-sub, no new
++   color introduced) and 12px, the accessible-floor size the tool itself
++   documents. */
++.login-note { font-size: 12px; color: var(--arc-text-muted); line-height: 1.5; margin: 16px 0 0; }
+ .inline-notice.error { margin-bottom: 12px; }
+ </style>
+diff --git a/arcanium/ui/package-lock.json b/arcanium/ui/package-lock.json
+index 1d68f1c..7f4e145 100644
+--- a/arcanium/ui/package-lock.json
++++ b/arcanium/ui/package-lock.json
+@@ -14,6 +14,7 @@
+         "vue-router": "^4.5.1"
+       },
+       "devDependencies": {
++        "@playwright/cli": "^0.1.19",
+         "@playwright/test": "^1.63.0",
+         "@tailwindcss/vite": "^4.3.3",
+         "@types/node": "^24.0.0",
+@@ -1624,6 +1625,52 @@
+         "node": ">=14"
+       }
+     },
++    "node_modules/@playwright/cli": {
++      "version": "0.1.19",
++      "resolved": "https://registry.npmjs.org/@playwright/cli/-/cli-0.1.19.tgz",
++      "integrity": "sha512-eGXIsYa5D+dC6wHGf+9uEislhPGip1djK+yiNAD7BVsXN3WzzR1J4ClFAhYhyu7wSEFqhcPrqXAYeBJF1dKJ7A==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "dependencies": {
++        "playwright": "1.63.0-alpha-2026-08-31",
++        "playwright-core": "1.63.0-alpha-2026-08-31"
++      },
++      "bin": {
++        "playwright-cli": "playwright-cli.js"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@playwright/cli/node_modules/playwright": {
++      "version": "1.63.0-alpha-2026-08-31",
++      "resolved": "https://registry.npmjs.org/playwright/-/playwright-1.63.0-alpha-2026-08-31.tgz",
++      "integrity": "sha512-3XAsuznfu8jBVJ4QxdGvBkt0+b8ZFwuwJYyOfiIw5ZjUOrNLNRhKxzLzLuydou3gJ9c6eMwVqgzdiOwhy54Kzw==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "dependencies": {
++        "playwright-core": "1.63.0-alpha-2026-08-31"
++      },
++      "bin": {
++        "playwright": "cli.js"
++      },
++      "engines": {
++        "node": ">=20"
++      }
++    },
++    "node_modules/@playwright/cli/node_modules/playwright-core": {
++      "version": "1.63.0-alpha-2026-08-31",
++      "resolved": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.63.0-alpha-2026-08-31.tgz",
++      "integrity": "sha512-1ek0Lyr12h6jcs/WTcNoVtzZkQp7D/90PsMuBW/Rm6h3AsWAbzpqj0geMv8+8Tzzr9CSUYvg9kznrVZINQMXXw==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "bin": {
++        "playwright-core": "cli.js"
++      },
++      "engines": {
++        "node": ">=20"
++      }
++    },
+     "node_modules/@playwright/test": {
+       "version": "1.63.0",
+       "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.63.0.tgz",
+diff --git a/arcanium/ui/package.json b/arcanium/ui/package.json
+index 896694b..3fe7e29 100644
+--- a/arcanium/ui/package.json
++++ b/arcanium/ui/package.json
+@@ -20,6 +20,7 @@
+     "vue-router": "^4.5.1"
+   },
+   "devDependencies": {
++    "@playwright/cli": "^0.1.19",
+     "@playwright/test": "^1.63.0",
+     "@tailwindcss/vite": "^4.3.3",
+     "@types/node": "^24.0.0",
+diff --git a/compose/identity/keycloak/setup_keycloak.sh b/compose/identity/keycloak/setup_keycloak.sh
+index 22f8ce7..8723186 100755
+--- a/compose/identity/keycloak/setup_keycloak.sh
++++ b/compose/identity/keycloak/setup_keycloak.sh
+@@ -128,6 +128,14 @@ ensure_client() {
+   # own port directly (that would break the same-origin BFF model every
+   # other part of Arcanium relies on).
+   local redirect="${ARCANIUM_API_CALLBACK_URL:-${ARCANIUM_BASE_URL:-http://localhost:3000}/gateway/api/v1/auth/callback}"
++  # 00_frontend_quality_gate.md, Gate 4 — found live via a real "click Sign
++  # out in the browser" pass: RP-initiated logout (auth/oidc.js's
++  # buildLogoutUrl(), used by default.vue's signOut()) sends
++  # post_logout_redirect_uri=$ARCANIUM_BASE_URL to Keycloak's end-session
++  # endpoint, but this client never declared that URI as allowed — Keycloak
++  # rejected it with 400 Bad Request. Must exactly match ARCANIUM_BASE_URL
++  # (the same value buildLogoutUrl() sends), not the callback path above.
++  local post_logout="${ARCANIUM_BASE_URL:-http://localhost:3000}"
+   if [ -n "$uuid" ]; then
+     echo "  = client exists: $CLIENT_ID ($uuid)"
+   else
+@@ -152,6 +160,13 @@ ensure_client() {
+         echo "  + client secret set from ARCANIUM_OIDC_CLIENT_SECRET"
+     fi
+   fi
++  # Runs on every invocation (fresh create AND an already-existing client) —
++  # an already-provisioned realm from before this fix would otherwise never
++  # pick it up on a re-run, since the branch above only runs once at
++  # creation time.
++  "$KC" update "clients/$uuid" -r "$REALM" \
++    -s "attributes.\"post.logout.redirect.uris\"=${post_logout}" >/dev/null 2>&1 &&
++    echo "  = post-logout redirect URI set: $post_logout"
+   echo "$uuid"
+ }
+ 
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index 5412824..dd07dde 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -191,7 +191,7 @@ fi
+ if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
+   SA_CREATE=$(curl -s -b "$JAR" -X POST "$API/api/v1/service-accounts" \
+     -H 'Content-Type: application/json' \
+-    -d '{"name":"fitness-test-sa","description":"scenario 13 fitness check","roles":["auditor"]}')
++    -d "{\"name\":\"fitness-test-sa-$(date +%s)\",\"description\":\"scenario 13 fitness check\",\"roles\":[\"auditor\"]}")
+   SA_ID=$(echo "$SA_CREATE" | jq -r '.id // empty')
+   if [ -n "$SA_ID" ]; then
+     TOKEN_RESP=$(curl -s -b "$JAR" -X POST "$API/api/v1/service-accounts/$SA_ID/tokens" \
+@@ -227,18 +227,57 @@ if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
+   if [ -n "$WH_ID" ] && [ -n "$DS_ID" ]; then
+     BEFORE=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
+     CUR_DAYS=$(psqlc "SELECT desired_value->>'days' FROM desired_state WHERE id='$DS_ID'" | tr -d '[:space:]')
+-    NEXT_DAYS=$([ "$CUR_DAYS" = "30" ] && echo 45 || echo 30)
++    # rotation_period's comparator (reconciliation/diff.js compare()) is a
++    # plain deep-equal between desired_value and the LIVE Vault key's own
++    # configured auto_rotate_period — not an age/threshold check. So
++    # COMPLIANT is only reachable by matching that real Vault-side value
++    # exactly; an arbitrarily "generous" desired value (e.g. 36500) is
++    # just as much a mismatch as any other and stays DRIFTED forever, and
++    # a blind 30<->45 (or fixed 1-day) toggle is not reliably a state
++    # TRANSITION either, since events only fire on priorStatus !=
++    # newStatus (engine.js) — both were real, confirmed sources of test
++    # flakiness (found live, not assumed). Read the key's REAL observed
++    # value first, match it exactly to force COMPLIANT, then diverge from
++    # it to force DRIFTED — the only way to guarantee a genuine
++    # transition regardless of this key's actual Vault configuration.
++    OBSERVED_DAYS=$(curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" |
++      jq -r --arg id "$DS_ID" '.[] | select(.desired_state_id==$id) | .observed_value.days // empty')
++    if [ -n "$OBSERVED_DAYS" ]; then
++      curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
++        -H 'Content-Type: application/json' \
++        -d "{\"desired_value\":{\"days\":$OBSERVED_DAYS},\"reason\":\"fitness test — match the real observed value to establish a known-COMPLIANT baseline\"}" >/dev/null
++      BASELINE=$(curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" |
++        jq -r --arg id "$DS_ID" '.[] | select(.desired_state_id==$id) | .status')
++    else
++      BASELINE=""
++    fi
++    if [ "$BASELINE" = "COMPLIANT" ]; then
++      DIVERGED_DAYS=$((OBSERVED_DAYS + 1))
++      curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
++        -H 'Content-Type: application/json' \
++        -d "{\"desired_value\":{\"days\":$DIVERGED_DAYS},\"reason\":\"fitness test — force a genuine COMPLIANT->DRIFTED transition\"}" >/dev/null
++      FLIPPED=$(curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" |
++        jq -r --arg id "$DS_ID" '.[] | select(.desired_state_id==$id) | .status')
++      sleep 2
++      AFTER=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
++      if [ "$FLIPPED" = "DRIFTED" ] && [ "${AFTER:-0}" -gt "${BEFORE:-0}" ]; then
++        ok "a real reconciliation.drifted transition produced a recorded row in webhook_deliveries (even for an unreachable endpoint)"
++      elif [ "$FLIPPED" != "DRIFTED" ]; then
++        unk "webhook delivery recording check — could not force a DRIFTED status even by diverging from a confirmed COMPLIANT baseline (got: $FLIPPED)"
++      else
++        bad "no webhook_deliveries row was recorded for a genuine reconciliation.drifted transition"
++      fi
++    else
++      unk "webhook delivery recording check — could not establish a known-COMPLIANT baseline by matching the real observed value (got: ${BASELINE:-empty})"
++    fi
++    # Restore the fixture's original desired_value — this is real, shared
++    # demo data (not a disposable test-only row), and leaving it pinned at
++    # a forced value would leave that key's rotation policy wrong in every
++    # future demo/screenshot/maturity score, not just for this test.
+     curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
+       -H 'Content-Type: application/json' \
+-      -d "{\"desired_value\":{\"days\":$NEXT_DAYS},\"reason\":\"fitness test — force a drift for webhook delivery proof\"}" >/dev/null
++      -d "{\"desired_value\":{\"days\":$CUR_DAYS},\"reason\":\"fitness test cleanup — restoring original rotation window\"}" >/dev/null
+     curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" >/dev/null
+-    sleep 2
+-    AFTER=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
+-    if [ "${AFTER:-0}" -gt "${BEFORE:-0}" ]; then
+-      ok "a real reconciliation.drifted transition produced a recorded row in webhook_deliveries (even for an unreachable endpoint)"
+-    else
+-      bad "no webhook_deliveries row was recorded for a genuine reconciliation.drifted transition"
+-    fi
+     curl -s -b "$JAR" -X DELETE "$API/api/v1/webhooks/$WH_ID" >/dev/null
+   else
+     unk "webhook delivery recording check — could not create endpoint/fixture"
+diff --git a/scripts/ui-rebuild.sh b/scripts/ui-rebuild.sh
+index 86935b3..a47efa6 100755
+--- a/scripts/ui-rebuild.sh
++++ b/scripts/ui-rebuild.sh
+@@ -20,7 +20,7 @@ for arg in "$@"; do
+ done
+ ARCHIVE=$(mktemp /tmp/arcanium-ui-build.XXXXXX)
+ trap 'rm -f "$ARCHIVE"' EXIT HUP INT TERM
+-tar -C "$UI_DIR" --exclude=node_modules --exclude=.nuxt --exclude=.output --exclude=test-results --exclude=playwright-report --exclude=.env -czf "$ARCHIVE" .
++tar -C "$UI_DIR" --exclude=node_modules --exclude=.nuxt --exclude=.output --exclude=test-results --exclude=playwright-report --exclude=.env --exclude=.playwright-cli --exclude=.artifacts --exclude=.claude --exclude=.agents -czf "$ARCHIVE" .
+ echo 'Building arcanium-ui:local…'
+ podman build --format docker --platform "linux/$(uname -m | sed 's/x86_64/amd64/')" -t arcanium-ui:local -f Containerfile - <"$ARCHIVE"
+ echo 'Recreating arcanium-ui…'

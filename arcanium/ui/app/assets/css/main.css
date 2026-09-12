@@ -1344,4 +1344,21 @@ a:hover { color: var(--arc-focus); }
   .arc-main { padding: 20px 16px; }
   .arc-grid-2, .arc-grid-3 { grid-template-columns: 1fr; }
   .arc-kpi-strip { grid-template-columns: repeat(2, 1fr); }
+  /* Baseline audit finding (docs/frontend/UI_AUDIT.md) — the cryptographic
+     lifecycle rail (dashboard) was the one grid in this file with no
+     responsive column count at all: repeat(6, 1fr), unlike every other
+     grid on this page. Confirmed live via Playwright at 390x844: columns
+     04-06 were pushed off the right edge of the viewport entirely.
+     Below 900px it drops the horizontal "flow rail" motif (which assumes
+     six same-row neighbors) rather than let it wrap into a broken
+     multi-row shape — each stage becomes its own fully-rounded card. */
+  .arc-kml { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .arc-kml__stage,
+  .arc-kml__stage:first-child,
+  .arc-kml__stage:last-child { border-radius: var(--arc-radius); border-right: 1px solid var(--arc-glass-border); }
+  .arc-kml__stage--on + .arc-kml__stage--on::before { display: none; }
+}
+
+@media (max-width: 560px) {
+  .arc-kml { grid-template-columns: 1fr; }
 }

@@ -128,6 +128,14 @@ ensure_client() {
   # own port directly (that would break the same-origin BFF model every
   # other part of Arcanium relies on).
   local redirect="${ARCANIUM_API_CALLBACK_URL:-${ARCANIUM_BASE_URL:-http://localhost:3000}/gateway/api/v1/auth/callback}"
+  # 00_frontend_quality_gate.md, Gate 4 — found live via a real "click Sign
+  # out in the browser" pass: RP-initiated logout (auth/oidc.js's
+  # buildLogoutUrl(), used by default.vue's signOut()) sends
+  # post_logout_redirect_uri=$ARCANIUM_BASE_URL to Keycloak's end-session
+  # endpoint, but this client never declared that URI as allowed — Keycloak
+  # rejected it with 400 Bad Request. Must exactly match ARCANIUM_BASE_URL
+  # (the same value buildLogoutUrl() sends), not the callback path above.
+  local post_logout="${ARCANIUM_BASE_URL:-http://localhost:3000}"
   if [ -n "$uuid" ]; then
     echo "  = client exists: $CLIENT_ID ($uuid)"
   else
@@ -152,6 +160,13 @@ ensure_client() {
         echo "  + client secret set from ARCANIUM_OIDC_CLIENT_SECRET"
     fi
   fi
+  # Runs on every invocation (fresh create AND an already-existing client) —
+  # an already-provisioned realm from before this fix would otherwise never
+  # pick it up on a re-run, since the branch above only runs once at
+  # creation time.
+  "$KC" update "clients/$uuid" -r "$REALM" \
+    -s "attributes.\"post.logout.redirect.uris\"=${post_logout}" >/dev/null 2>&1 &&
+    echo "  = post-logout redirect URI set: $post_logout"
   echo "$uuid"
 }
 

@@ -81,7 +81,7 @@
               <line x1="8" y1="4" x2="8" y2="9" stroke="#ffaa00" stroke-width="1.5" stroke-linecap="round"/>
               <circle cx="8" cy="11.5" r="0.8" fill="#ffaa00"/>
             </svg>
-            <span>{{ pendingCount }} pending</span>
+            <span>{{ pendingCount }}<span class="pending-pill__label"> pending</span></span>
           </button>
 
           <a
@@ -587,7 +587,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   flex-shrink: 0;
 }
 .topbar-left { flex: 0 1 auto; min-width: 0; }
-.page-title { font-size: 15px; font-weight: 600; color: var(--arc-text-primary); margin: 0; white-space: nowrap; }
+.page-title { font-size: 15px; font-weight: 600; color: var(--arc-text-primary); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar-centre { flex: 1 1 auto; min-width: 120px; max-width: 360px; }
 .topbar-right { flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .topbar-right > * { white-space: nowrap; flex-shrink: 0; }
@@ -720,6 +720,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 @media (max-width: 1180px) {
   .env-badge, .vault-link span, .persona { display: none; }
+}
+
+/* Baseline audit finding (docs/frontend/UI_AUDIT.md) — below ~640px the
+   topbar had no further narrowing beyond the 1180px step above, so the
+   search trigger, cluster status text, and pending-count label collided
+   with the (now-truncating) page title and were clipped at the viewport
+   edge. Confirmed live via Playwright at 390x844 on every route. */
+@media (max-width: 640px) {
+  .arc-topbar { gap: 8px; padding: 0 14px; }
+  .topbar-centre { display: none; }
+  .cluster-label { display: none; }
+  .cluster-pill { padding: 4px 8px; }
+  .pending-pill__label { display: none; }
 }
 
 .pending-pill {

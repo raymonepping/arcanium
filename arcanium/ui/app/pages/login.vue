@@ -79,6 +79,13 @@ function signIn() {
 .login-brand { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 750; color: var(--arc-text-primary); }
 .brand-icon { width: 26px; height: 26px; }
 .login-sub { font-size: 12px; color: var(--arc-text-muted); margin: 6px 0 22px; text-transform: uppercase; letter-spacing: 0.08em; }
-.login-note { font-size: 10.5px; color: var(--arc-text-dim); line-height: 1.5; margin: 16px 0 0; }
+/* Impeccable's live audit flagged this paragraph as low-contrast/tiny-text
+   at 10.5px on --arc-text-dim (docs/frontend/UI_AUDIT.md); manual WCAG
+   luminance math puts --arc-text-dim close to, but not safely above, the
+   4.5:1 AA floor against this card's composited glass background — bumped
+   to --arc-text-muted (already used one line up for .login-sub, no new
+   color introduced) and 12px, the accessible-floor size the tool itself
+   documents. */
+.login-note { font-size: 12px; color: var(--arc-text-muted); line-height: 1.5; margin: 16px 0 0; }
 .inline-notice.error { margin-bottom: 12px; }
 </style>

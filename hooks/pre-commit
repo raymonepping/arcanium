@@ -4,8 +4,17 @@
 # passes even though `sanity_check --fix` itself exits non-zero on success.
 set -uo pipefail
 
+# Prompt 00 — vendored, third-party skill installs (Impeccable's bundled
+# JS, Playwright CLI's own skill files, etc.) are not our source, must
+# never be reformatted by our own tooling, and a large bundled/minified
+# file among them (found live: .agents/skills/impeccable/scripts/
+# live-browser.js, 522 KB) made sanity_check's JS formatter hang
+# indefinitely rather than just run slowly — confirmed with a bounded
+# `timeout`, not assumed. Exclude every agent/skill install directory
+# from the pattern below, regardless of which harness it lives under.
 STAGED=$(git diff --cached --name-only --diff-filter=ACM \
-  | grep -E '\.(sh|py|js|tf)$|Dockerfile$' || true)
+  | grep -E '\.(sh|py|js|tf)$|Dockerfile$' \
+  | grep -vE '(^|/)\.(claude|agents|github|codex)/(skills|agents)/' || true)
 [ -z "$STAGED" ] && exit 0
 
 echo "🔍 pre-commit: sanity_check --fix on $(echo "$STAGED" | wc -l | tr -d ' ') staged file(s)"

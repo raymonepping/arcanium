@@ -20,7 +20,7 @@ for arg in "$@"; do
 done
 ARCHIVE=$(mktemp /tmp/arcanium-ui-build.XXXXXX)
 trap 'rm -f "$ARCHIVE"' EXIT HUP INT TERM
-tar -C "$UI_DIR" --exclude=node_modules --exclude=.nuxt --exclude=.output --exclude=test-results --exclude=playwright-report --exclude=.env -czf "$ARCHIVE" .
+tar -C "$UI_DIR" --exclude=node_modules --exclude=.nuxt --exclude=.output --exclude=test-results --exclude=playwright-report --exclude=.env --exclude=.playwright-cli --exclude=.artifacts --exclude=.claude --exclude=.agents -czf "$ARCHIVE" .
 echo 'Building arcanium-ui:local…'
 podman build --format docker --platform "linux/$(uname -m | sed 's/x86_64/amd64/')" -t arcanium-ui:local -f Containerfile - <"$ARCHIVE"
 echo 'Recreating arcanium-ui…'

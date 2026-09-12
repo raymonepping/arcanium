@@ -191,7 +191,7 @@ fi
 if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
   SA_CREATE=$(curl -s -b "$JAR" -X POST "$API/api/v1/service-accounts" \
     -H 'Content-Type: application/json' \
-    -d '{"name":"fitness-test-sa","description":"scenario 13 fitness check","roles":["auditor"]}')
+    -d "{\"name\":\"fitness-test-sa-$(date +%s)\",\"description\":\"scenario 13 fitness check\",\"roles\":[\"auditor\"]}")
   SA_ID=$(echo "$SA_CREATE" | jq -r '.id // empty')
   if [ -n "$SA_ID" ]; then
     TOKEN_RESP=$(curl -s -b "$JAR" -X POST "$API/api/v1/service-accounts/$SA_ID/tokens" \
@@ -227,18 +227,57 @@ if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
   if [ -n "$WH_ID" ] && [ -n "$DS_ID" ]; then
     BEFORE=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
     CUR_DAYS=$(psqlc "SELECT desired_value->>'days' FROM desired_state WHERE id='$DS_ID'" | tr -d '[:space:]')
-    NEXT_DAYS=$([ "$CUR_DAYS" = "30" ] && echo 45 || echo 30)
+    # rotation_period's comparator (reconciliation/diff.js compare()) is a
+    # plain deep-equal between desired_value and the LIVE Vault key's own
+    # configured auto_rotate_period — not an age/threshold check. So
+    # COMPLIANT is only reachable by matching that real Vault-side value
+    # exactly; an arbitrarily "generous" desired value (e.g. 36500) is
+    # just as much a mismatch as any other and stays DRIFTED forever, and
+    # a blind 30<->45 (or fixed 1-day) toggle is not reliably a state
+    # TRANSITION either, since events only fire on priorStatus !=
+    # newStatus (engine.js) — both were real, confirmed sources of test
+    # flakiness (found live, not assumed). Read the key's REAL observed
+    # value first, match it exactly to force COMPLIANT, then diverge from
+    # it to force DRIFTED — the only way to guarantee a genuine
+    # transition regardless of this key's actual Vault configuration.
+    OBSERVED_DAYS=$(curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" |
+      jq -r --arg id "$DS_ID" '.[] | select(.desired_state_id==$id) | .observed_value.days // empty')
+    if [ -n "$OBSERVED_DAYS" ]; then
+      curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
+        -H 'Content-Type: application/json' \
+        -d "{\"desired_value\":{\"days\":$OBSERVED_DAYS},\"reason\":\"fitness test — match the real observed value to establish a known-COMPLIANT baseline\"}" >/dev/null
+      BASELINE=$(curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" |
+        jq -r --arg id "$DS_ID" '.[] | select(.desired_state_id==$id) | .status')
+    else
+      BASELINE=""
+    fi
+    if [ "$BASELINE" = "COMPLIANT" ]; then
+      DIVERGED_DAYS=$((OBSERVED_DAYS + 1))
+      curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
+        -H 'Content-Type: application/json' \
+        -d "{\"desired_value\":{\"days\":$DIVERGED_DAYS},\"reason\":\"fitness test — force a genuine COMPLIANT->DRIFTED transition\"}" >/dev/null
+      FLIPPED=$(curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" |
+        jq -r --arg id "$DS_ID" '.[] | select(.desired_state_id==$id) | .status')
+      sleep 2
+      AFTER=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
+      if [ "$FLIPPED" = "DRIFTED" ] && [ "${AFTER:-0}" -gt "${BEFORE:-0}" ]; then
+        ok "a real reconciliation.drifted transition produced a recorded row in webhook_deliveries (even for an unreachable endpoint)"
+      elif [ "$FLIPPED" != "DRIFTED" ]; then
+        unk "webhook delivery recording check — could not force a DRIFTED status even by diverging from a confirmed COMPLIANT baseline (got: $FLIPPED)"
+      else
+        bad "no webhook_deliveries row was recorded for a genuine reconciliation.drifted transition"
+      fi
+    else
+      unk "webhook delivery recording check — could not establish a known-COMPLIANT baseline by matching the real observed value (got: ${BASELINE:-empty})"
+    fi
+    # Restore the fixture's original desired_value — this is real, shared
+    # demo data (not a disposable test-only row), and leaving it pinned at
+    # a forced value would leave that key's rotation policy wrong in every
+    # future demo/screenshot/maturity score, not just for this test.
     curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
       -H 'Content-Type: application/json' \
-      -d "{\"desired_value\":{\"days\":$NEXT_DAYS},\"reason\":\"fitness test — force a drift for webhook delivery proof\"}" >/dev/null
+      -d "{\"desired_value\":{\"days\":$CUR_DAYS},\"reason\":\"fitness test cleanup — restoring original rotation window\"}" >/dev/null
     curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" >/dev/null
-    sleep 2
-    AFTER=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
-    if [ "${AFTER:-0}" -gt "${BEFORE:-0}" ]; then
-      ok "a real reconciliation.drifted transition produced a recorded row in webhook_deliveries (even for an unreachable endpoint)"
-    else
-      bad "no webhook_deliveries row was recorded for a genuine reconciliation.drifted transition"
-    fi
     curl -s -b "$JAR" -X DELETE "$API/api/v1/webhooks/$WH_ID" >/dev/null
   else
     unk "webhook delivery recording check — could not create endpoint/fixture"

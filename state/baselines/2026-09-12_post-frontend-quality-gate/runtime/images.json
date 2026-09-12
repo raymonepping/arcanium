@@ -1,0 +1,1024 @@
+[
+  {
+    "repository": "localhost/arcanium-ui:local",
+    "id": "5bf8624cb658a5305cf1fae2a9b524fb93aafd85e0c353331d7836cb16196381",
+    "digest": "sha256:dd2be785934cb9caf06aeb28b9944285ed549fc5b6039b62cdb87c9fabdd1bf9",
+    "size": 257534016,
+    "created": "2026-09-12T18:25:06Z"
+  },
+  {
+    "repository": "none",
+    "id": "a50635815a4198d775d3f40c5927f976f3fbb0069c87f8fdb65da5c6200ab026",
+    "digest": "sha256:9ca1c5ed7d99ab41d7b71a1261f16abcb7544dd94bb16d2c1fcaca8e99695114",
+    "size": 684326487,
+    "created": "2026-09-12T18:25:01Z"
+  },
+  {
+    "repository": "none",
+    "id": "ef2c339378c3fd63647d4e40e766661e53e0c97d9b63073a777ef55ee42d9c53",
+    "digest": "sha256:c3dca6808a680c4032e0880247301915e8e775dd847c1bcc50697acd99f32413",
+    "size": 257534017,
+    "created": "2026-09-12T18:12:42Z"
+  },
+  {
+    "repository": "none",
+    "id": "0bae2274fe7fa84f5aa67c74b2e7c8d2cbd862816e8511c75c064104092063be",
+    "digest": "sha256:989a45a2b47359cf5d5511a141426ccb8d7684a81c1e7e031b8ba430f49b1963",
+    "size": 684321879,
+    "created": "2026-09-12T18:12:40Z"
+  },
+  {
+    "repository": "localhost/arcanium-api:local",
+    "id": "cea958e678e02454b0202e1e16da797a97e240f37540dcff479d6e62bb689675",
+    "digest": "sha256:3662d7ea12a0bcfdb934ebfe9a1d71fb66582b18bb5fed6f67defa3abc2b3d1f",
+    "size": 183746151,
+    "created": "2026-09-12T17:52:27Z"
+  },
+  {
+    "repository": "none",
+    "id": "f81f07ea8c1fb545753bac9125450350d1b98bf19489152c0092b6a4befbb095",
+    "digest": "sha256:ae7c11b3fc180b1eaa0c985dc2e225e01bb088f8a73c11e4fb6e5405d5dd3543",
+    "size": 257532991,
+    "created": "2026-09-12T17:52:22Z"
+  },
+  {
+    "repository": "none",
+    "id": "63858587056d455f060499d3851c4938d7811d5c06994381dad658fea70e3ddb",
+    "digest": "sha256:503859e412a3c6604b017131fcdef6435b1540893eb351974dab4453b1b91f86",
+    "size": 661360213,
+    "created": "2026-09-12T17:52:20Z"
+  },
+  {
+    "repository": "none",
+    "id": "bac0eaea9898592498ad2e9b67679341be023b0830c717b851c07757aadda2b4",
+    "digest": "sha256:c49f5ced2e0505b2fb04526ac35bd7f63ee50c930c2f121c5d0e75b37b898cd0",
+    "size": 183745638,
+    "created": "2026-09-12T13:00:43Z"
+  },
+  {
+    "repository": "none",
+    "id": "0b171e642afbdfa4a4f09187321abc41c1599c3ac5c358e95c41fe3fa3d1b873",
+    "digest": "sha256:3428fb5b5b3b7f906ca4ed9de4683bc1ed3a9c5f7a022eff07acda2dd5a5eea2",
+    "size": 183677030,
+    "created": "2026-09-12T12:36:54Z"
+  },
+  {
+    "repository": "none",
+    "id": "ce2e177c268f0d4730bb88ef7b8e06d2c7b52625dba3cfcada512bad1b1a2c6a",
+    "digest": "sha256:0bfa60e321284b55892f93346a24fb1e8379ac687d2924850c110c27250616ed",
+    "size": 257532479,
+    "created": "2026-09-12T12:34:15Z"
+  },
+  {
+    "repository": "none",
+    "id": "f3e96a051c882f52ebad1bd55dd5bf2b5b443a01f433e2559108e947ef6fa7ad",
+    "digest": "sha256:83e892283b2c50f5169bab6ed266f0b1d517c395a1a1fc27f5750f75fea78f56",
+    "size": 661426775,
+    "created": "2026-09-12T12:34:13Z"
+  },
+  {
+    "repository": "none",
+    "id": "da82d9bde6a08d3434f8ada349248656b2549067a1a3d46a1d3e40c39035849d",
+    "digest": "sha256:2f52621a25bb97620304994a91d7f096352558a83b915d10edd8251477eeeea8",
+    "size": 183673957,
+    "created": "2026-09-12T12:26:51Z"
+  },
+  {
+    "repository": "none",
+    "id": "756d3c1ff60c4d518162aa7b0dd401d393b6ee3e328ff2085cefcd2ae3b3dd1e",
+    "digest": "sha256:f617ef60d22e8d5b2a89c53560b822b86d8f2ab2383048749fac00e523242547",
+    "size": 183670375,
+    "created": "2026-09-12T12:25:17Z"
+  },
+  {
+    "repository": "none",
+    "id": "d891f1a7b03ccbcba8383b4a9078b6fc9be79263634b6255a9c08da6f281fb0b",
+    "digest": "sha256:a4018c47718f4a16b112195560d2a7dad46fb7ce2f8041b7905e5d2ad13c5e51",
+    "size": 257474625,
+    "created": "2026-09-12T12:10:00Z"
+  },
+  {
+    "repository": "none",
+    "id": "99120c9813cad5e36ec749ad26b0dc6c2bb9e391eb8e5f1c4e879c52ecfb2f5e",
+    "digest": "sha256:a170e70478a0d86abae05239a28326a11a05a4eadd9b5a9a0b2779ef630d4142",
+    "size": 661179989,
+    "created": "2026-09-12T12:09:58Z"
+  },
+  {
+    "repository": "none",
+    "id": "c1628ea9dbad815caccede3b960776a67c0560946f635fd485fa73f9ffaf1dad",
+    "digest": "sha256:579b281c7e08289cc6c8db774e66d8cf40bc9c8214ae58036b489ceb13717bab",
+    "size": 257460801,
+    "created": "2026-09-12T11:42:20Z"
+  },
+  {
+    "repository": "none",
+    "id": "ffc490a10977d92b0c83d848a8877505fca66044c17414cabd4a06bfdaa36a4f",
+    "digest": "sha256:dd2163aaed63fe72eb263b1c534b6dc9c14ad596275453614ae43413ff40a80f",
+    "size": 661103701,
+    "created": "2026-09-12T11:42:18Z"
+  },
+  {
+    "repository": "none",
+    "id": "251d753c6e54868bfa6aac9cb20c6c8a0468820db67dfe894e26e9a086eaf115",
+    "digest": "sha256:a2379cebaa67451b5a48d0c295bb392e41b189554f5cedeeab48686594ee6b6e",
+    "size": 183637094,
+    "created": "2026-09-12T11:37:22Z"
+  },
+  {
+    "repository": "none",
+    "id": "3dffc551ec287fce8242ff2936141e16e485b843996e427d2309e11655aa7b24",
+    "digest": "sha256:874c4f7211cc451a3db6db70871066c0599ba0c2a2cfe8dc349009870137f572",
+    "size": 257452096,
+    "created": "2026-09-12T11:37:18Z"
+  },
+  {
+    "repository": "none",
+    "id": "aa5f6cf6787689f8fbcf0176662fd65b2e574c2e39915676fea48502f841965b",
+    "digest": "sha256:fa5d5547d7dc7e795188e2a65f9d1995e9f5820d514cc653277f6183d61f28fc",
+    "size": 660999253,
+    "created": "2026-09-12T11:37:14Z"
+  },
+  {
+    "repository": "none",
+    "id": "fc5069efad412a10a309212476db388148bf560c937b7e31e0e36ea659cd23c5",
+    "digest": "sha256:6d7add68131a80e22c0c1469356d634dda504fffb710d5793cb824bca810e3d4",
+    "size": 641155702,
+    "created": "2026-09-12T11:32:22Z"
+  },
+  {
+    "repository": "none",
+    "id": "be50da80f7b3e3575d1cbc18da8e0c96402aa6ac5d47e181bc48ed268698c796",
+    "digest": "sha256:42e95395f332dd36fb9426536a2c63e002716ad335b2527c87d4bd799055eed1",
+    "size": 257452094,
+    "created": "2026-09-12T11:29:30Z"
+  },
+  {
+    "repository": "none",
+    "id": "9f8f60192736f2a79f3e2a7d847bb7788204c9c41b4f712be9dd5669b5e6725a",
+    "digest": "sha256:169a630f599ae0f81dfd86132b0a1f3fa7cc883429cbb7cfa92bb63a85285a51",
+    "size": 661080660,
+    "created": "2026-09-12T11:29:25Z"
+  },
+  {
+    "repository": "none",
+    "id": "85e8d1cd0bb6ed34ed5f3232782062dcfb1e03682eb7cce69a4546d68527a164",
+    "digest": "sha256:2a046851cdf9e491c10f630cbe88853873dc28d8fcb9e3979fba68016a9f62ce",
+    "size": 183631463,
+    "created": "2026-09-12T11:24:19Z"
+  },
+  {
+    "repository": "none",
+    "id": "0b60f77da9e258d05a74609c1ff1fa45775237fe10a3577695bfcabbe35a0f45",
+    "digest": "sha256:23753618432f1e2e6a8a9d112cf33bbfb94e163f2353d29a29223137b5e6ffeb",
+    "size": 183630438,
+    "created": "2026-09-12T11:22:42Z"
+  },
+  {
+    "repository": "localhost/arcanium-api:1.0.0",
+    "id": "bb9f55575063f725f7cb2cb0b5a2844123fc9411496f5b934bf4a8987c65ae8a",
+    "digest": "sha256:ddb9a92f3e3d5bfa8189fd9dddcb3043b179054e42fe809a8ef2192463d7e8ee",
+    "size": 183618149,
+    "created": "2026-09-11T20:49:48Z"
+  },
+  {
+    "repository": "localhost/arcanium-ui:1.0.1",
+    "id": "cc154559c5dcde547d72e288fb156fecd1317005f1be43fb11895fc9d99ac61c",
+    "digest": "sha256:39fd04128a3af5ec249a1dfa64d6c0e0ee750749ad6e5fe11dd269c361387bbc",
+    "size": 257407037,
+    "created": "2026-09-11T20:44:48Z"
+  },
+  {
+    "repository": "none",
+    "id": "68569efe38ac9d0ad1bfb0f34019b76e481c5997e051b5a7891403b600284a6a",
+    "digest": "sha256:046210c00bda986b1cc9e485fc2456c2db048d6330a539e3388da13ea3eb9627",
+    "size": 660776021,
+    "created": "2026-09-11T20:44:46Z"
+  },
+  {
+    "repository": "localhost/arcanium-api:1.0.1",
+    "id": "76718be550dea4274291ae0c7df72b53b2ad18d702e33d5c3f10b31d60377d53",
+    "digest": "sha256:f5789a5ae3996bbdb71153978533ff74226a11f009041e86cbb82b8382dbbf2b",
+    "size": 183618151,
+    "created": "2026-09-11T20:44:29Z"
+  },
+  {
+    "repository": "none",
+    "id": "84ceaecce281382cde996529a53aaf484d9afc0e86bea64ac84ed01cdb8c2fca",
+    "digest": "sha256:692acb838c12026eb0b81db91eca23c9600b436c6516de6fd0d6141f311099fa",
+    "size": 188776947,
+    "created": "2026-09-11T20:44:25Z"
+  },
+  {
+    "repository": "none",
+    "id": "56117d144a1fa520e5826f8cc7dc30fe39abde3f696471e58721a311bc8ceba9",
+    "digest": "sha256:6cb2ea5bc18e3d2e09584a13a47ad6c091bebbdd652556df96735bba9525024e",
+    "size": 183618150,
+    "created": "2026-09-11T19:20:35Z"
+  },
+  {
+    "repository": "none",
+    "id": "16ad1b94da25f84ca76796344c0a9086da197fcba5652b83f65d0523a6e75081",
+    "digest": "sha256:945079e750d49b0862d4e8bc2757e1d5eb76508c4fb77b0487853a55bc9a70e8",
+    "size": 183614566,
+    "created": "2026-09-11T18:55:14Z"
+  },
+  {
+    "repository": "localhost/arcanium-ui:1.0.0",
+    "id": "16e4de390475611d9cf44678bf07f4d2a33ef00140b7a137227136e6a15296a0",
+    "digest": "sha256:3302186739e47fe64062b98ff28f9571ec546d9d90cf56a042186170ac3000d7",
+    "size": 257407041,
+    "created": "2026-09-11T18:55:10Z"
+  },
+  {
+    "repository": "none",
+    "id": "92144a7eb2407a193829ce0fd2ce7a01e4852059602d662f25b3f7bb975df158",
+    "digest": "sha256:5c29828795926bd4745f385e1d8f9648d7e5960181b89d5cc9b70c56b7277332",
+    "size": 660776021,
+    "created": "2026-09-11T18:55:08Z"
+  },
+  {
+    "repository": "none",
+    "id": "49396b463e8a2351a250592aa9ab4eca141755016a38e91342c3b5b410534085",
+    "digest": "sha256:c08a33dd8304edd486fa5ff70e87846a963465e0b156febbcf8f4635941e7c10",
+    "size": 183608935,
+    "created": "2026-09-11T18:47:45Z"
+  },
+  {
+    "repository": "none",
+    "id": "a54fa93b7e51c523aa0ea4d372caf96e27b9efdaad42da61580cbdd4b007cf82",
+    "digest": "sha256:f8895211b4a8073ddf6d9294261de77a285d2558c8c4b1a61c80079ad256eec7",
+    "size": 183606375,
+    "created": "2026-09-11T18:46:22Z"
+  },
+  {
+    "repository": "none",
+    "id": "d92072c60f201afb75abae0eb02af75e96ecfb32a763e958977b57124fd2adde",
+    "digest": "sha256:d8a8fd0e4faf33f213a14146c157de8347e12886e685f193ba9b93fc1c1cc8aa",
+    "size": 257401408,
+    "created": "2026-09-11T18:46:17Z"
+  },
+  {
+    "repository": "none",
+    "id": "2833977dc64599e8214558e51b6058d6af9be5170d7b935a1424b13d87b1dbfa",
+    "digest": "sha256:0a49f9b270dfbb4eb417939dadfa4e80da54f9f61ea912656b0a6e1a30ca48f3",
+    "size": 660743253,
+    "created": "2026-09-11T18:46:15Z"
+  },
+  {
+    "repository": "none",
+    "id": "ba6fe93c7156f0e038ba9d8a4ed19f8519eaecfc25b393336fcc58cc59db5838",
+    "digest": "sha256:f9861fefa5f202ff3618bb419964ae937e03dcf15d2bdb71f30c27d80c02284a",
+    "size": 641049206,
+    "created": "2026-09-11T18:45:27Z"
+  },
+  {
+    "repository": "none",
+    "id": "96a760f04c61361caa7caabc60e5e8571730d1352da26b888d14272a8b2d9e81",
+    "digest": "sha256:44a6ca7b1e52e858e8ef0e172f71db8d8d562709c6186250b4a364a023dcc994",
+    "size": 183594599,
+    "created": "2026-09-11T17:58:59Z"
+  },
+  {
+    "repository": "localhost/arcanium-vault-hsm:local",
+    "id": "80f6e9d337b13e5e65610dab363c7a461a6cbc70956b16c355769d6444c0f768",
+    "digest": "sha256:177bc919fa5beb2801e00a400333321ed30d00ed0dd94eed857b2c4ef77db7c0",
+    "size": 712177565,
+    "created": "2026-09-11T17:55:01Z"
+  },
+  {
+    "repository": "localhost/arcanium-kmip-client:local",
+    "id": "5a59e677b07cb430df53832555f08b7383d3629060aa9ac316e9c1bee205f76a",
+    "digest": "sha256:45628bbf3938279939835c220e039f64eb55f55902d67a640b7bcc7462106928",
+    "size": 216121319,
+    "created": "2026-09-11T17:28:27Z"
+  },
+  {
+    "repository": "localhost/arcanium-pki-client:local",
+    "id": "5f86353cf7a9246f90e86b88bb14afc005cbdbe9e49da84a3bf33eebfaedb7f3",
+    "digest": "sha256:cc11b190bfb4f49cd7632a327eed7a5be36dce12c40d525582d99c4341308a23",
+    "size": 166279907,
+    "created": "2026-09-11T17:28:19Z"
+  },
+  {
+    "repository": "none",
+    "id": "995f77259f6b2dae8961169fe8b77ada30b72ee1ae1fddaec2cc2732522ceae1",
+    "digest": "sha256:e21c61414e28612ab47542ba0a476b2b16cb916ec143d8bf1e9a97a9aa290897",
+    "size": 169125492,
+    "created": "2026-09-11T17:28:17Z"
+  },
+  {
+    "repository": "localhost/arcanium-payments-api:local",
+    "id": "eae2672a87ca12b14b90fcef0644b47860dc1203b8c52ce73523752ccaccbc5e",
+    "digest": "sha256:4e6b39525edc39f7e6e91b3c03d1717796f0acd0d607cc56afb7f66409886a36",
+    "size": 166279394,
+    "created": "2026-09-11T17:28:14Z"
+  },
+  {
+    "repository": "none",
+    "id": "ab5f8d9d950d277b86d73e03e3b066c54ca9605f97fedcfba476f74a790241f4",
+    "digest": "sha256:cc6e9a9b298a5f388a6f7b4c62b0f7ed5bafcabd93b0aec504cad4f89926cacc",
+    "size": 169125492,
+    "created": "2026-09-11T17:28:12Z"
+  },
+  {
+    "repository": "localhost/arcanium-external-supplier:local",
+    "id": "357d7ef46776734ce0c369259b32a8d76924858fdf66c22791711e6feda7207b",
+    "digest": "sha256:814bd63bd1ebfe800a18d096ba3339d469ebdf3a12510b6a29ab75302a0896c9",
+    "size": 163473529,
+    "created": "2026-09-11T17:28:10Z"
+  },
+  {
+    "repository": "localhost/arcanium-document-signing:local",
+    "id": "15f5733ec9c91e4cde4b2f3cb6ab658bceae926a7a145bd2baa31a5ea09dc494",
+    "digest": "sha256:fd22544825d44c986b46236a47e80de99b776e05f2638e4b2bd8cc9636cc756c",
+    "size": 166279396,
+    "created": "2026-09-11T17:28:08Z"
+  },
+  {
+    "repository": "none",
+    "id": "c4e2129a760ddf0678ba338859ef2d43ea47e9ff00928955b6d992107add0a20",
+    "digest": "sha256:9a37cbafa9f2482ee54a45ec31c5e16d8202a0f3632f3183f1df455b02b80f51",
+    "size": 169125491,
+    "created": "2026-09-11T17:28:05Z"
+  },
+  {
+    "repository": "none",
+    "id": "e3c49f811465d911fff1970968647a9c120fabdd5e391895fad7df563db85475",
+    "digest": "sha256:2302316c2605b445dbbce219689ad6fff699ba222543530a842809698f06b59f",
+    "size": 183594086,
+    "created": "2026-09-11T17:15:09Z"
+  },
+  {
+    "repository": "none",
+    "id": "d0c4d3ec0ea7b1950eed9f39ca9bfdff9652a9f12335b0519ab82dda3e342438",
+    "digest": "sha256:86fc149dfce503b9530db567b0864de4dfe497302eb4d24712085730e6cc46ea",
+    "size": 188776948,
+    "created": "2026-09-11T17:15:05Z"
+  },
+  {
+    "repository": "none",
+    "id": "5e2935d49f589eab5e3785859b7efa0feed2802260b88a72529c61daa6a0c8ec",
+    "digest": "sha256:dc8a8e0726b76e821bce9d24379e038f31e01ced52a8623b51ade222e2eee90f",
+    "size": 257390145,
+    "created": "2026-09-11T17:15:02Z"
+  },
+  {
+    "repository": "none",
+    "id": "c88e2a3e13f654ad4d235dc822304393d77c767ad9721093ff8cf33fd1ee667c",
+    "digest": "sha256:ccd1cf9fd2d888196e85d42e0b4756bb8b2fd41512a08d89021037181ffc3635",
+    "size": 660661333,
+    "created": "2026-09-11T17:15:00Z"
+  },
+  {
+    "repository": "none",
+    "id": "f5731d56ed4dce3b7812d1dfe60054b33d5cf8b20281e1489d7f9bf1e2dada78",
+    "digest": "sha256:9480e49c55f0175155586c80cd8522458cd99078567f7688bbf0c5067eab9794",
+    "size": 257391169,
+    "created": "2026-09-11T15:11:04Z"
+  },
+  {
+    "repository": "none",
+    "id": "3f4fddd6007d2fca30a38262944e167709bf370a2676506bdbf8b433247fc5f2",
+    "digest": "sha256:08544acefb34564411bd92395b045e17c731a1246ac10f4d1c1f57b0fbbd9838",
+    "size": 660741717,
+    "created": "2026-09-11T15:11:02Z"
+  },
+  {
+    "repository": "none",
+    "id": "293ef25f64b2e53670d637dd8822877d312824c0a5be55830a97da28edb83ef1",
+    "digest": "sha256:768ed54c10fb9fde647ae5fc3661df47cfc8749b627db4d750db1db30d7f66c8",
+    "size": 183593062,
+    "created": "2026-09-11T15:00:20Z"
+  },
+  {
+    "repository": "none",
+    "id": "a4e4ec63ef405c69be198b400c1694fc4af82c50326154d6b2d326c8b1529a1a",
+    "digest": "sha256:1802253aa29f4c25941a7e988979639b6cd412f89058a95ddd54c0723bfcbf51",
+    "size": 188776946,
+    "created": "2026-09-11T15:00:14Z"
+  },
+  {
+    "repository": "none",
+    "id": "58ede2e7ac6f55508ae8907ec51b5f59f51b6e2d903df6a80f8addb746315b4e",
+    "digest": "sha256:e4ce506d66c2240f72186e45bcb70baa20e7a2919bff6342ffc097d4873b9008",
+    "size": 183593061,
+    "created": "2026-09-11T14:58:20Z"
+  },
+  {
+    "repository": "none",
+    "id": "65ca014ec191a2a13c36708823f81a6290438dd3bfd692f1464c4fe4a78e2e0b",
+    "digest": "sha256:8aec0d1ac85205a9599d602f86043ebdd3a319bc5dc9b28a8bf678aa0ccdd0e3",
+    "size": 183592551,
+    "created": "2026-09-11T14:42:59Z"
+  },
+  {
+    "repository": "none",
+    "id": "74932f7f1bae5a2de263a1cebc38ddda1993a7f052314ff2b7813a8effc09696",
+    "digest": "sha256:cf62b49615fbaba243987e5d8a0af1efaee92691b5f98c9bcbbeb36b41820141",
+    "size": 183592549,
+    "created": "2026-09-11T14:22:00Z"
+  },
+  {
+    "repository": "none",
+    "id": "794f420636f52faed0c2e2652b8d8ce07a9cf37ff6ac925d55059f8474dc0e66",
+    "digest": "sha256:0ab9163077c9d9103d82a39c5b96675df8dc7b97f5f58f5fd6adced2b3edcf41",
+    "size": 183592037,
+    "created": "2026-09-11T14:17:13Z"
+  },
+  {
+    "repository": "none",
+    "id": "f8ef436154f862309e3ae94ef501302d0035f30cf04c18428c082fe2bb64e2dd",
+    "digest": "sha256:a79eab65cd365a49dee74b12bfb638f5c3dee6e862bc85c7291e769391c3d830",
+    "size": 183591527,
+    "created": "2026-09-11T14:14:50Z"
+  },
+  {
+    "repository": "none",
+    "id": "332dde0aeeb5cc00441d58852fa09f915a8b12a0a020bccd32369a57f1e79b6a",
+    "digest": "sha256:54ca2ebdc64291fafe8917be5e501877b418744c94fdd18116d34ceda2518dd5",
+    "size": 183591526,
+    "created": "2026-09-11T14:12:49Z"
+  },
+  {
+    "repository": "none",
+    "id": "1d76bc2a26918a3742c6b182931f55b75916959b0331d055fcdb96e42ff2fedb",
+    "digest": "sha256:7d0129d8326c0b813607814afb29eb3711f88ea34ce6ed5242c0208456c5c085",
+    "size": 188776948,
+    "created": "2026-09-11T14:12:45Z"
+  },
+  {
+    "repository": "none",
+    "id": "1deebbbab1a4cee6ea3b9c48694d37cc56ed6378f4d58f92ee1dbb7353f98560",
+    "digest": "sha256:bc632ef59b77a23c090846a21ada684b9f854095fa93f8938a433bcd334bc3a6",
+    "size": 257390144,
+    "created": "2026-09-11T14:12:42Z"
+  },
+  {
+    "repository": "none",
+    "id": "acb10b92ef093babe99551fb740257c361c80beaa90151598e6408a97346c019",
+    "digest": "sha256:1a621d6315fc82134d693b80a87c9169ab9d29695a583747ca73a2752decbce9",
+    "size": 660660820,
+    "created": "2026-09-11T14:12:40Z"
+  },
+  {
+    "repository": "none",
+    "id": "86a0a94c0c9f8229850568648945e4c3568e73fba991338e11e226caed53efbc",
+    "digest": "sha256:3981b84e6111b5643b30a74cc8eba5065d29de3e3a5e8db95c034ae67d5bbc43",
+    "size": 173976677,
+    "created": "2026-09-11T14:05:15Z"
+  },
+  {
+    "repository": "none",
+    "id": "d1cc60160ae56f948e2db576f35f9607d3ccf7feca0999b9e26ab3b75c4cbe16",
+    "digest": "sha256:1ef5b6b3be7f5d22857839c93df9d4baf13f652c0e91186d2b9ea4f6399048ae",
+    "size": 257390145,
+    "created": "2026-09-11T14:05:07Z"
+  },
+  {
+    "repository": "none",
+    "id": "f96d7ba229356194fc6b46252d7d670f68c6f51348ab3764ac8c51ec8c77c9b5",
+    "digest": "sha256:e78042ce6c20979406313983e687e5e4d88f6b2e244d6b0747929fc2ea91ca63",
+    "size": 178378322,
+    "created": "2026-09-11T14:00:22Z"
+  },
+  {
+    "repository": "none",
+    "id": "52b2cfcc62bacd2181cfe78ab4d2b8fca961cf2c3ccc6e7b324f7b1d9c3727d2",
+    "digest": "sha256:8f6c57b4e1dab5f3475bf20f1f53ec3a43727780de650fc71169397438143212",
+    "size": 257390145,
+    "created": "2026-09-11T12:54:55Z"
+  },
+  {
+    "repository": "none",
+    "id": "71ab87bc185109f12f6a70e2f3b51b8d5fc6f890af887305823599ee90336d50",
+    "digest": "sha256:6063d0de0df93cf2ebed5ff97d91a052fcb48f36d5a9549553448dc03d2e0eeb",
+    "size": 190397910,
+    "created": "2026-09-11T08:08:50Z"
+  },
+  {
+    "repository": "none",
+    "id": "1d6ee6e83ee73ed13af700e635308330f79e9b772fabae7e2fbf6f6fa2b6deaf",
+    "digest": "sha256:ca616eaaa63da7ebe8b1b72c60d1b3cc23a83e59d3a1da8c6cf55aa9a993df97",
+    "size": 170122960,
+    "created": "2026-09-11T08:08:48Z"
+  },
+  {
+    "repository": "none",
+    "id": "517b151603107a517db0c0fee99166e32e146655dae2dd86ed1e0621f5ff24af",
+    "digest": "sha256:6bafe98cfb8b7a2694ca5739e1dcac8e1a8c5222c24a9bf8be8028a41bfe8f98",
+    "size": 170122447,
+    "created": "2026-09-11T08:08:37Z"
+  },
+  {
+    "repository": "none",
+    "id": "d2c0dbe070845338e9a414c381f09c435333d59faab980fecee0cd835918a12a",
+    "digest": "sha256:872feefc51c15f1fff0ed1219b54c967ea195bf7c3466582c29fb388c7494208",
+    "size": 731644827,
+    "created": "2026-09-11T07:50:16Z"
+  },
+  {
+    "repository": "none",
+    "id": "64279f888412c91b52699f177b55ae6ab25c523a7d593baa0ac90d22182fc5db",
+    "digest": "sha256:09656fb8dfc02771f797db0470baa508f3b743fdbf908364569cbb7683650512",
+    "size": 167316582,
+    "created": "2026-09-10T17:15:46Z"
+  },
+  {
+    "repository": "none",
+    "id": "e4d46606df45c027ecf90399afd4986a46d98aa0613394b8414c210db9cc180f",
+    "digest": "sha256:e9d64189850199e633ce0dee1e854c7c6d86ae1495c582c80bf3dfe2646ed587",
+    "size": 170122448,
+    "created": "2026-09-10T13:21:43Z"
+  },
+  {
+    "repository": "docker.io/vegardit/softhsm2-pkcs11-proxy:latest-debian",
+    "id": "50088129f1195e067c12b5fef3e2c31838563b1dd17a5e1ddb976da0a38e40da",
+    "digest": "sha256:5383b466c0cb4eaa6a8e63e5b95b3db30cb2991d4516ac9dae8eb178027ebd77",
+    "size": 154458563,
+    "created": "2026-09-09T20:07:43Z"
+  },
+  {
+    "repository": "none",
+    "id": "2f2c3b330ac88913b771452c798fb3084dc1a2ce1ced26732ceb9d810eb277da",
+    "digest": "sha256:5383b466c0cb4eaa6a8e63e5b95b3db30cb2991d4516ac9dae8eb178027ebd77",
+    "size": 128270274,
+    "created": "2026-09-09T19:36:03Z"
+  },
+  {
+    "repository": "docker.io/library/node:24-alpine",
+    "id": "5bfe35f50dd31a22d24f3944996f1b23ce483a4d2caa408950c9402f47cc7947",
+    "digest": "sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81",
+    "size": 165834181,
+    "created": "2026-09-09T19:24:52Z"
+  },
+  {
+    "repository": "docker.io/library/node:24-slim",
+    "id": "5c24c5d1bf4c19805b692346798c62097f27d1f60e2a9e24adc9368ea96cda4e",
+    "digest": "sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553",
+    "size": 253912761,
+    "created": "2026-09-09T18:47:43Z"
+  },
+  {
+    "repository": "docker.io/localstack/localstack:latest",
+    "id": "2b1e4e2cfa895d94c52506e1fc330a09bf43db827fa40342d64ccb6d121079ad",
+    "digest": "sha256:3fe5b51caec82b966a34485b5b43efd68075ff8161f9b0a34091fad9abb0ff82",
+    "size": 1335096439,
+    "created": "2026-09-09T05:06:47Z"
+  },
+  {
+    "repository": "docker.io/redhat/ubi9-minimal:latest",
+    "id": "572450986fa1a8fa1b9a687e35846bc6f6cd8098f93519bf2899f64cfd002821",
+    "digest": "sha256:6aa59f704742d12328aa43379048f951c052dfb684c22b79080baf34c1f92368",
+    "size": 108697085,
+    "created": "2026-09-09T01:57:32Z"
+  },
+  {
+    "repository": "docker.io/otel/opentelemetry-collector-contrib:latest",
+    "id": "704223617b69052abb31544e96e76be5a2462499c49acf626805faa9a5291451",
+    "digest": "sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6",
+    "size": 370212312,
+    "created": "2026-09-02T22:52:55Z"
+  },
+  {
+    "repository": "docker.io/library/python:3.10-slim",
+    "id": "db825c749364f7f06c8fb165b360d9de94ba5c14727e2e446c1b4202a30224e7",
+    "digest": "sha256:fd76ade0c607f27677bc04be3c60749f400eedc941d9e72967e19a4cedff80c2",
+    "size": 134989206,
+    "created": "2026-09-01T00:16:49Z"
+  },
+  {
+    "repository": "docker.io/library/python:3.12-slim",
+    "id": "4f8d1afed6d58037c680221ca6dd9fb4737b7ecfa7d4809ca809fdc0c7d9b786",
+    "digest": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea",
+    "size": 156644956,
+    "created": "2026-08-31T23:50:54Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/vault-enterprise:2.1.0-ent.hsm",
+    "id": "52e4ea2f3081d9aed8ceb9c205e17f0bf8637ff704387a7b00e4ad6725ab3cce",
+    "digest": "sha256:e0830d3d5959487852bf054e0752419adecee9f3fa6819d980e82edbc458a76f",
+    "size": 711864225,
+    "created": "2026-08-31T14:14:01Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "id": "c00ac898e23113506ed91a6d959290749759f7113783090a42441ac21ddf4ff5",
+    "digest": "sha256:12c3ac1469d11da17747927128ed11bce825a012d3ce13b066d0442d0105df0a",
+    "size": 561813429,
+    "created": "2026-08-31T14:10:17Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/vault-enterprise:2.1-ent",
+    "id": "3bf31bb04d1739d6088b468fca5220ce66caf4bdad51d0e6fa34ddcc1276e326",
+    "digest": "sha256:12c3ac1469d11da17747927128ed11bce825a012d3ce13b066d0442d0105df0a",
+    "size": 593668542,
+    "created": "2026-08-31T14:07:19Z"
+  },
+  {
+    "repository": "docker.io/library/adminer:latest",
+    "id": "0dce2c44718230ebb60934637d71fcd2f4dcaeaff3fcedc78fb436390ff20957",
+    "digest": "sha256:f742dcf1b6ca95733b54c4e020488ce78f3e774d73543a6ded9b4eaea8974f3d",
+    "size": 118469970,
+    "created": "2026-08-27T20:28:28Z"
+  },
+  {
+    "repository": "docker.io/prom/prometheus:latest",
+    "id": "deeef2470dab312d1cade441c2ed31ccbd72c8e78e2fdd51d835e0b740af2b98",
+    "digest": "sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+    "size": 246878615,
+    "created": "2026-08-18T07:38:32Z"
+  },
+  {
+    "repository": "docker.io/library/postgres:16-alpine",
+    "id": "c05eced0bdb41ea9b95a656472a6aa4d50cad0d8a2e33d14eb1c53fd6204f2ae",
+    "digest": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "size": 290935696,
+    "created": "2026-08-13T19:18:20Z"
+  },
+  {
+    "repository": "docker.io/library/node:22-alpine",
+    "id": "828963118f6838ebdaf6b01b9b24d10c5dffe2f4aaf3ebca33d0d3f74366833e",
+    "digest": "sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32",
+    "size": 163457587,
+    "created": "2026-07-29T17:57:56Z"
+  },
+  {
+    "repository": "docker.io/keycloak/keycloak:26.6.4",
+    "id": "954a180d6eade217de0df8ae784d64ff7323276275f7a14d21a50c0aabe42d38",
+    "digest": "sha256:0aae0de7fca85525f727d3354df17896092de8bb26ae4c12d89c77e5df8cbce4",
+    "size": 479125827,
+    "created": "2026-07-01T08:51:20Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/vault-enterprise:2.0.3-ent.hsm",
+    "id": "5bf6607a11dd38dcf43507f651835541b86283f1012ffebedf088e06e2727aff",
+    "digest": "sha256:0e5e89cb4e1fa1f5db16680bd53200fe89a4c6a036c5d4f0c04475f114bb9fd8",
+    "size": 741899583,
+    "created": "2026-06-17T01:43:34Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/vault-enterprise:2.0.3-ent",
+    "id": "7de3abda064a11a5770348a91001cb2f635e3cebd2ba4451b1e9b820a8672f55",
+    "digest": "sha256:6a8d8ed44b40ca67cf14177a87d7c0591230ee9bc5dd261dd8cc7801b7a7c35e",
+    "size": 586555843,
+    "created": "2026-06-17T01:42:06Z"
+  },
+  {
+    "repository": "localhost/infra_whatsapp_bridge_social_agent:latest",
+    "id": "4892ab1094466ffbf360c6a055897c2b01ffe828eb49e1947b5904697baf117c",
+    "digest": "sha256:a48f6ee128aa4e351d0ad0507fbd92b29c34e062930728a3db885091eacbc957",
+    "size": 767962053,
+    "created": "2026-05-16T12:29:35Z"
+  },
+  {
+    "repository": "localhost/infra_agent_api_social_agent:latest",
+    "id": "896f7edd758ee90d2665365ad6cd97565f1161713b6650fced5f06758137d6f6",
+    "digest": "sha256:d52a0a508c53eea68c9bbe78cd21d881fda12f4ac12e0a42af3c8a6ccd965ca5",
+    "size": 488770406,
+    "created": "2026-05-16T12:29:31Z"
+  },
+  {
+    "repository": "localhost/infra_couchbase_init_social_agent:latest",
+    "id": "05f1cc6734a592d51d1f3c158e500afe0e89dc0ea4a2e8a98f503f9fe7abab2f",
+    "digest": "sha256:c6ed19cde0a2135bd9cee95d1e69890706a1b52e2addfcd857ff3bf0041e0234",
+    "size": 385993570,
+    "created": "2026-05-16T10:20:08Z"
+  },
+  {
+    "repository": "docker.io/grafana/loki:latest",
+    "id": "0ba9300c423b1448b9b30f022e39ed2f4b9c8816f499a979b7a9d39316978e00",
+    "digest": "sha256:191d4fdfb7264f16989f0a57f320872620a5a7c2ceeec6229212c4190ec49b86",
+    "size": 142669000,
+    "created": "2026-05-13T08:53:39Z"
+  },
+  {
+    "repository": "docker.io/library/busybox:latest",
+    "id": "e0e8b3cbfed68a90084781e2962f9c0deead51c5a3f11a488eef0283a4284bc2",
+    "digest": "sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616",
+    "size": 4424672,
+    "created": "2026-05-13T02:21:49Z"
+  },
+  {
+    "repository": "docker.io/grafana/grafana:latest",
+    "id": "f8a787bf16008e4416d00bb8194957d63df85cb6a2e6a190085b53dcac8fa724",
+    "digest": "sha256:2d1f9ae67c1778d33e291d4c3c759cd8b650e67491f02533499eb950e075eeb5",
+    "size": 1020639778,
+    "created": "2026-05-12T07:59:04Z"
+  },
+  {
+    "repository": "docker.io/library/python:3.11-slim",
+    "id": "58f0ddd1dc7f5b7a35bbd5614b526f2d0cd3629a1da68a66a9fdecd8888d7c91",
+    "digest": "sha256:9a7765b36773a37061455b332f18e265e7f58f6fea9c419a550d2a8b0e9db834",
+    "size": 154304419,
+    "created": "2026-05-08T20:15:00Z"
+  },
+  {
+    "repository": "docker.io/library/node:20-slim",
+    "id": "6ced300970b1919c3ff96f482c6a342f2bca746922fcdc825e84e3b8f5ab3740",
+    "digest": "sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+    "size": 227401564,
+    "created": "2026-04-22T01:48:20Z"
+  },
+  {
+    "repository": "docker.io/library/zero_trust-boundary-ssh:latest",
+    "id": "4b44f0ec2fef527ba8b28f05c47c9f4a354021291651cf2c437a1a65023e4dd0",
+    "digest": "sha256:ab288afeae77d59c230c436738f6c6bb8b5f2cc8f22d16bcfbbf17ff62f66437",
+    "size": 262070260,
+    "created": "2026-04-17T20:16:08Z"
+  },
+  {
+    "repository": "docker.io/couchbase/server:latest",
+    "id": "334966b324369062fff34581706e0b33305f25752ebe3bd105ff525b8d2e3348",
+    "digest": "sha256:5e4f1d6ff71d3bfac8ad113d1de782ddce6d8a8584188017702b645b74e3f7e2",
+    "size": 1976247957,
+    "created": "2026-04-17T15:55:01Z"
+  },
+  {
+    "repository": "docker.io/library/alpine:3.20",
+    "id": "bf8527eb54c3680e728d5b4b383a8ba730d72dae7236fbc8dff97ed6b224a731",
+    "digest": "sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc",
+    "size": 8104044,
+    "created": "2026-04-16T23:53:26Z"
+  },
+  {
+    "repository": "docker.io/library/nginx:1.30.0-alpine",
+    "id": "6f36ead05a3b3ab76409c5d9591d61507ccf1cdf57c0c6d1cf416f944e2469d0",
+    "digest": "sha256:f60d139a69209d4340f6621fc6a50c9843702214231522a3390432f8db0ed870",
+    "size": 62971358,
+    "created": "2026-04-15T21:34:04Z"
+  },
+  {
+    "repository": "quay.io/keycloak/keycloak:26.6.1",
+    "id": "6f6134a026a67a32751e7c069992770cbecf9cc6073a9abe91f3a0cf9b65011b",
+    "digest": "sha256:26ae26445475f7fac5f90ee138b1bdb64324f5815fb16133ffdbdb122d97c4d8",
+    "size": 477691701,
+    "created": "2026-04-15T14:00:53Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/vault-enterprise:2.0.0-ent",
+    "id": "50676f915ccf3e0dd40471dd3d851b0392477d7fb50b6bfc4be9915a6daf1870",
+    "digest": "sha256:d28c0f5f739303c2424b878d3160edab242cfb35c131712ccb2d5930b0ef65c8",
+    "size": 553082310,
+    "created": "2026-04-14T15:20:09Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/vault:latest",
+    "id": "91269baab732b6945d752ee83164ba64ddf1981001275c211e12905d03c4e601",
+    "digest": "sha256:e40c741ed95bb271425e3e6ca6c222d620cf8682f6f7a1b1e7c9d49d0aba484b",
+    "size": 518535733,
+    "created": "2026-04-13T22:57:17Z"
+  },
+  {
+    "repository": "docker.io/library/ubuntu:26.04",
+    "id": "a69b8eb8766dd3508215deba122278706db7945ee228e6550a8b3594b0ea1902",
+    "digest": "sha256:5e275723f82c67e387ba9e3c24baa0abdcb268917f276a0561c97bef9450d0b4",
+    "size": 131257635,
+    "created": "2026-04-13T03:43:20Z"
+  },
+  {
+    "repository": "docker.io/linuxserver/openssh-server:latest",
+    "id": "242663ba55d7bcc4b5a42b647dc2e3b3e2e90fa1df47528ebf50923b615299ca",
+    "digest": "sha256:969edac1221e0f211d86dc5a94ee9337340c9c585527f73e5fabf2dae7bb8de3",
+    "size": 51854367,
+    "created": "2026-04-12T19:29:58Z"
+  },
+  {
+    "repository": "docker.io/repping/zero-trust-frontend:1.8.18",
+    "id": "d7da2fee1aabdd301596d0473a786eede164948c5902294ead1b73b378858515",
+    "digest": "sha256:28944ad72700d329d88db857688921dbc5347111aa7b78db64ac5e469353e510",
+    "size": 232411848,
+    "created": "2026-04-10T12:27:27Z"
+  },
+  {
+    "repository": "docker.io/repping/zero-trust-backend:1.8.18",
+    "id": "5a97ad6ffa969459084f24ea5a418920473e13eef19b1d533293a3f6c84176e3",
+    "digest": "sha256:c667c46f45a3e3ed8918eec58cb7b97619f1c3eb5e9840abf6907f94187aff1a",
+    "size": 188914864,
+    "created": "2026-04-10T12:27:00Z"
+  },
+  {
+    "repository": "docker.io/repping/zero-trust-frontend:1.8.17",
+    "id": "7853487008a2f45da33c38c122087c5a48173293153affcb46467e985b706026",
+    "digest": "sha256:de4075462ef65d032be3a914c7bb33825291db957103603983a13745db1a6d78",
+    "size": 232411850,
+    "created": "2026-04-10T12:02:57Z"
+  },
+  {
+    "repository": "docker.io/repping/zero-trust-backend:1.8.17",
+    "id": "5be51f67a97b9fbdddc21885393e2c5d960e16049456281fce6d0358b5a4cce9",
+    "digest": "sha256:0e8b6fa3ef547077bda82775c7762a1a259c3debfa16dc16ca0b370adc718d0e",
+    "size": 188914864,
+    "created": "2026-04-10T12:02:33Z"
+  },
+  {
+    "repository": "docker.io/repping/zero-trust-frontend:1.8.16",
+    "id": "aef35c8129fda8243bba20696227797a3f5285e578f5270e76e3ba5c04ca38a6",
+    "digest": "sha256:db09e6dd6a687508ee3cce2ff94e706f6894d611c903b58f828f306d6616fca5",
+    "size": 232397512,
+    "created": "2026-04-09T15:05:44Z"
+  },
+  {
+    "repository": "docker.io/repping/zero-trust-backend:1.8.16",
+    "id": "f2bf7dcfd78864594c48dec6def798b9be7cc2ee494f9b5f8a12551f331ceec3",
+    "digest": "sha256:7ee50f12645b46ff3e1494822499948c37090324ceb175183272a2609505e2a8",
+    "size": 188866224,
+    "created": "2026-04-09T15:05:20Z"
+  },
+  {
+    "repository": "docker.io/library/nginx:alpine",
+    "id": "cb3fe4a86f7647b754c92bd801b0fb36571ae56bdad7be2ac7838dfc9850af3e",
+    "digest": "sha256:582c496ccf79d8aa6f8203a79d32aaf7ffd8b13362c60a701a2f9ac64886c93d",
+    "size": 62989841,
+    "created": "2026-04-07T17:32:22Z"
+  },
+  {
+    "repository": "docker.io/library/postgres:16.13",
+    "id": "a4d9e5792c182f63bcf7de4f8a3bd179caa7457581433f9c6c9a396bcb5f29b0",
+    "digest": "sha256:5a65324fe84dc41709ff914e90b07f3e2f577073ed27bf917d4873aca0c9ec51",
+    "size": 480819194,
+    "created": "2026-04-07T01:42:36Z"
+  },
+  {
+    "repository": "docker.io/library/postgres:16.13",
+    "id": "a4d9e5792c182f63bcf7de4f8a3bd179caa7457581433f9c6c9a396bcb5f29b0",
+    "digest": "sha256:5a65324fe84dc41709ff914e90b07f3e2f577073ed27bf917d4873aca0c9ec51",
+    "size": 480819194,
+    "created": "2026-04-07T01:42:36Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/boundary-enterprise:0.21.2-ent",
+    "id": "eea62249948aaa8024bf752a921483734975dd7bea2a233d40af704e3c370a59",
+    "digest": "sha256:c8b244e75bcee5d0d9317e8a0ee2e45739aa206aea9c591a1fa7213e26e9d1ef",
+    "size": 280243222,
+    "created": "2026-04-07T00:13:33Z"
+  },
+  {
+    "repository": "quay.io/keycloak/keycloak:26.5.7",
+    "id": "24f454aa75c7381948fdcc83e8d8ba739e58de7e359080527d7649ab42be127a",
+    "digest": "sha256:45ae20191531eb608ddb0b775d012b40d3e4f942697f3214694887dd7c108d13",
+    "size": 467991352,
+    "created": "2026-04-02T14:50:02Z"
+  },
+  {
+    "repository": "docker.io/raymonepping/zero-trust-backend:1.0.0",
+    "id": "959295a0d39c3186f1ad8d5d0153f095622264ef8d0ccdc21e41ebb2a08fa229",
+    "digest": "sha256:8c724982db909d6083816372b5e274fa670e1e54e23dc82b86f0538cf278e3b0",
+    "size": 193595006,
+    "created": "2026-04-01T09:00:34Z"
+  },
+  {
+    "repository": "docker.io/raymonepping/zero-trust-frontend:1.0.0",
+    "id": "c1059c89107338658fc549102c672cb144ee9599f6b89ecbdbe2b045250ef114",
+    "digest": "sha256:3e5c781727c2c1939a395196a7eb1467ea9b9e57081d36048f714b985fe93ac7",
+    "size": 379540615,
+    "created": "2026-04-01T08:04:47Z"
+  },
+  {
+    "repository": "docker.io/library/zero_trust-ollama:latest",
+    "id": "886a99b2cfa0c2a6c0443f5efab0d1a50f1583efa8d3189dbca9e6f132fcad56",
+    "digest": "sha256:3cb6ac3a95697fbecc0c66cc6e3dcb75163e2bb0ae32674540c57613cfa9fba2",
+    "size": 5546600184,
+    "created": "2026-04-01T07:09:47Z"
+  },
+  {
+    "repository": "docker.io/moby/buildkit:buildx-stable-1",
+    "id": "192ca72e69e8c1d69a72ea56007007c6aba99d3f3bc86ead7951207b8f71ec3d",
+    "digest": "sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5",
+    "size": 241074244,
+    "created": "2026-03-31T10:42:53Z"
+  },
+  {
+    "repository": "docker.io/ollama/ollama:latest",
+    "id": "11677ea5783e8c79db8cd43504d1f424714f9812fa4792aedfbe60924eea632d",
+    "digest": "sha256:bf240c2847a8bc7b2c630b85dab5d1dedcba257b551d5fc9b290ce544d59272a",
+    "size": 5539002050,
+    "created": "2026-03-30T02:53:20Z"
+  },
+  {
+    "repository": "docker.io/grafana/promtail:latest",
+    "id": "9e9c0145954c155637b25a5ab0bee0db5672e84e97766c11d53746185038bfa4",
+    "digest": "sha256:6cfa64ec432b24a912d640e2edb940eeae2666f61861a66c121d763dd7241381",
+    "size": 223881941,
+    "created": "2026-03-25T13:15:13Z"
+  },
+  {
+    "repository": "docker.io/gitlab/gitlab-ee:latest",
+    "id": "a509db8e4138ea4e958b932450089280be4e3d23637d8b8e421c71b52d95ccc3",
+    "digest": "sha256:1d4f55209efda97f6303ce0cb3044410b092a9babfb86c4818a49c3e5be11451",
+    "size": 4435518734,
+    "created": "2026-03-24T17:20:35Z"
+  },
+  {
+    "repository": "docker.io/library/hello-world:latest",
+    "id": "eb84fdc6f2a3a064445bb2a2fbc89c515666c428d6c96b6ab68a4cd218819688",
+    "digest": "sha256:452a468a4bf985040037cb6d5392410206e47db9bf5b7278d281f94d1c2d0931",
+    "size": 22026,
+    "created": "2026-03-23T21:34:00Z"
+  },
+  {
+    "repository": "quay.io/keycloak/keycloak:latest",
+    "id": "d497e6a372928ce3c12eee401a7691b90f0a11e7308801811d496f516d6de4d3",
+    "digest": "sha256:8d44614c74798322c4e07fbe0ecb15cfbb5879d69b484628555f58ade06f0d8c",
+    "size": 467908900,
+    "created": "2026-03-19T06:48:31Z"
+  },
+  {
+    "repository": "docker.io/hashicorp/vault-enterprise:1.21.3-ent",
+    "id": "f701c8517313363055d0a3c39a113e427f5d52009c233847c9a0545cd32b7686",
+    "digest": "sha256:f7d6b9690d9da5caf61cf50910426727e1d6b47e8caab6cdec29e7051838d83b",
+    "size": 526614295,
+    "created": "2026-02-03T23:50:53Z"
+  },
+  {
+    "repository": "docker.io/library/alpine:latest",
+    "id": "1ab49c19c53ebca95c787b482aeda86d1d681f58cdf19278c476bcaf37d96de1",
+    "digest": "sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659",
+    "size": 8994423,
+    "created": "2026-01-28T01:18:09Z"
+  },
+  {
+    "repository": "docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z-cpuv1",
+    "id": "00604968bf8c858abfa59b475fbc514421916d11e94b3b88b525d4fa8ab39192",
+    "digest": "sha256:13582eff79c6605a2d315bdd0e70164142ea7e98fc8411e9e10d089502a6d883",
+    "size": 166309410,
+    "created": "2025-09-07T18:48:42Z"
+  },
+  {
+    "repository": "docker.io/minio/minio:latest",
+    "id": "8f08aee614800a237906bd48114d733e5ac5bfac4ccdf731f141b0e880d7a253",
+    "digest": "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+    "size": 167871816,
+    "created": "2025-09-07T18:44:27Z"
+  },
+  {
+    "repository": "docker.io/library/ubuntu:20.04",
+    "id": "674fd86895a6dffb4ee9bb0ffb45a993e135df0f9e6c6956460f305a8f540d9d",
+    "digest": "sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214",
+    "size": 68143226,
+    "created": "2025-04-08T10:46:45Z"
+  },
+  {
+    "repository": "docker.io/library/postgres:17.4",
+    "id": "080717a8e92f6fb92dee4464d9a859c9408939715eafb66a4324e91bef269e3c",
+    "digest": "sha256:304ab813518754228f9f792f79d6da36359b82d8ecf418096c636725f8c930ad",
+    "size": 466927429,
+    "created": "2025-02-27T00:53:12Z"
+  },
+  {
+    "repository": "docker.io/library/zero_trust-db:latest",
+    "id": "4d43ba38559b7f86ce36722d7f1e298bc63732d69e47dda19859ec06bc191d10",
+    "digest": "sha256:2f1fb7f688ee748cee29490661656c5a1e980929e014f7322ceb5c6b34e56670",
+    "size": 466916241,
+    "created": "2025-02-27T00:53:12Z"
+  },
+  {
+    "repository": "docker.io/library/node:22.14.0-alpine",
+    "id": "c7a06707ef82a79b71aa545cf7d27362e066af1dd9b903e113b056f532f1f83e",
+    "digest": "sha256:9bef0ef1e268f60627da9ba7d7605e8831d5b56ad07487d24d1aa386336d1944",
+    "size": 158011567,
+    "created": "2025-02-13T05:05:05Z"
+  },
+  {
+    "repository": "docker.io/localstack/localstack:3.8",
+    "id": "5966ecddea63d941db8f5119aeb685b560368be970f225f3ce8f331d1373c835",
+    "digest": "sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7",
+    "size": 1336996818,
+    "created": "2024-10-08T11:22:45Z"
+  },
+  {
+    "repository": "docker.io/cremuzzi/softhsm2:latest",
+    "id": "892b291601c85a11f0ec7a0332bfaa17bcab1ddc54fa49c9c900aab5fc1cb8f4",
+    "digest": "sha256:fe756588090aefe71a55fcfa818db86c3dc2b38dc90d7b51fb4c9c14910721c3",
+    "size": 57987110,
+    "created": "2021-07-31T22:42:08Z"
+  },
+  {
+    "repository": "docker.io/osixia/openldap:1.5.0",
+    "id": "450f12cad7aaa65b464e7b0c5b6243ad0112f34538f53cf96dccbab79acbd7bf",
+    "digest": "sha256:18742e9c449c9c1afe129d3f2f3ee15fb34cc43e5f940a20f3399728f41d7c28",
+    "size": 263002413,
+    "created": "2021-02-19T13:02:54Z"
+  },
+  {
+    "repository": "docker.io/osixia/phpldapadmin:0.9.0",
+    "id": "d409f50256f25363e741770992633edb027baae57383095a64a8b6134055e31d",
+    "digest": "sha256:d112b82be1336f91e028b0348755133fda333992355b533419355a65c32ff9ad",
+    "size": 304148171,
+    "created": "2019-11-05T18:10:36Z"
+  },
+  {
+    "repository": "docker.io/library/ubuntu:18.10",
+    "id": "6b562d43ba8f13b8bd2f3db53bfc554f0ad0999f523422868f0dd255b2ae3f70",
+    "digest": "sha256:7d657275047118bb77b052c4c0ae43e8a289ca2879ebfa78a703c93aa8fd686c",
+    "size": 63307740,
+    "created": "2019-07-23T15:45:37Z"
+  },
+  {
+    "repository": "docker.io/rastasheep/ubuntu-sshd:18.04",
+    "id": "08f01ce8fd9f39a3668146ffc9e62a94317a100007b9ddfebc6267a870f541ae",
+    "digest": "sha256:1df808ccf95c13b8e62548ad434829bc28ee701a65624e5c0440fc24482e4a62",
+    "size": 242264673,
+    "created": "2018-05-20T11:53:10Z"
+  }
+]

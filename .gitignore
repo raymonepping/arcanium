@@ -142,6 +142,21 @@ crash.log
 # 🛠️ Prompt 28 — Terraform provider skeleton build output
 ########################################
 terraform/arcanium-provider/terraform-provider-arcanium
+
+########################################
+# 🎨 Prompt 00 — Impeccable's platform-specific compiled binary.
+# SKILL.md / reference/*.md / the bundled JS are portable and committed
+# so the skill works for any collaborator without re-running the
+# installer; the native darwin-arm64 (or any other platform's) binary
+# would not even run on a different OS/arch and is re-fetched by
+# `npx impeccable install` on any machine that needs it, same reasoning
+# as the Terraform provider binary above.
+########################################
+**/skills/impeccable/scripts/bin/
+
+# Claude Code's own convention: settings.local.json is per-developer/
+# per-machine, never the shared/committed settings.json.
+.claude/settings.local.json
 justfile
 # tfvars often carry real credentials — commit .tfvars.example instead
 *.tfvars
@@ -245,3 +260,14 @@ compose/observability/prometheus/vault-token
 # state/baselines/ once validated). Never a finalized baseline; must never
 # be swept into a commit by accident.
 state/.capture-*.tmp/
+
+########################################
+# 🎨 Prompt 00 — frontend design toolchain / quality gate
+########################################
+# Playwright CLI's own session/snapshot/console-log working files and
+# generated visual-development artifacts (before/after screenshots) — never
+# durable configuration or reports, regenerated on every run.
+arcanium/ui/.playwright-cli/
+arcanium/ui/.artifacts/
+arcanium/ui/test-results/
+arcanium/ui/playwright-report/
