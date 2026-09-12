@@ -377,6 +377,11 @@ scenario-security-foundation: ## Prompt 18 — hostile negative-auth suite (401/
 	@chmod +x scenarios/11_security_foundation/test_negative_auth.sh
 	@./scenarios/11_security_foundation/test_negative_auth.sh
 
+.PHONY: scenario-scope-isolation
+scenario-scope-isolation: ## Prompt 27, Deliverable 6 — scoped env/team grant isolation (real LDAP-backed sessions)
+	@chmod +x scenarios/16_multitenancy/test_scope_isolation.sh
+	@./scenarios/16_multitenancy/test_scope_isolation.sh
+
 # ── Prompt 20 — Desired State + Reconciliation ──────────────────────────────
 .PHONY: scenario-reconciliation
 

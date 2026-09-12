@@ -582,6 +582,59 @@ capture_backup() {
   fi
 }
 
+# ------------------------------------------------------------ multitenancy --
+# Prompt 27, Deliverable 8 — team count, environment-tag coverage, and the
+# last scenarios/16_multitenancy/ scope-isolation result. Direct DB reads
+# (no API auth needed), same style as capture_persistence()'s schema_version
+# read — the API-based checks elsewhere in this file all report UNKNOWN
+# under ARCANIUM_AUTH_ENABLED=true precisely because they're anonymous;
+# this data is just as reliably available with a plain, non-secret count.
+capture_multitenancy() {
+  local d="$TMP/components/multitenancy"
+  mkdir -p "$d"
+
+  if ! running arcanium-postgres; then
+    jq -n '{teams_count: null, applications: {total: null, with_environment_tag: null}}' \
+      >"$d/multitenancy.json"
+  else
+    local teams_count total_apps tagged_apps
+    teams_count=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from teams;" 2>/dev/null | tr -d '[:space:]')
+    total_apps=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from applications;" 2>/dev/null | tr -d '[:space:]')
+    # environment is NOT NULL with a DEFAULT (migration 018) — every
+    # application, past and future, is backfilled/defaulted automatically,
+    # so this gap is expected to be 0 by design, not merely by luck. A
+    # non-zero value here would mean the column itself somehow allowed a
+    # NULL to slip through — a real finding, not routine drift.
+    tagged_apps=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from applications where environment is not null;" 2>/dev/null | tr -d '[:space:]')
+    jq -n \
+      --arg tc "${teams_count:-0}" --arg ta "${total_apps:-0}" --arg tg "${tagged_apps:-0}" \
+      '{teams_count: ($tc | tonumber),
+        applications: {total: ($ta | tonumber), with_environment_tag: ($tg | tonumber)}}' \
+      >"$d/multitenancy.json"
+  fi
+
+  local scope_result="UNKNOWN" scope_detail="scenarios/16_multitenancy/test_scope_isolation.sh has not been run"
+  if [ -f state/.last-scope-isolation-result ]; then
+    scope_result=$(cat state/.last-scope-isolation-result)
+    local mtime
+    mtime=$(stat -f '%Sm' -t '%Y-%m-%dT%H:%M:%SZ' state/.last-scope-isolation-result 2>/dev/null ||
+      stat -c '%y' state/.last-scope-isolation-result 2>/dev/null || echo unknown)
+    scope_detail="last run: $mtime"
+  fi
+  jq --arg r "$scope_result" --arg d "$scope_detail" \
+    '. + {scope_isolation: {last_result: $r, detail: $d}}' \
+    "$d/multitenancy.json" >"$d/multitenancy.json.tmp" && mv "$d/multitenancy.json.tmp" "$d/multitenancy.json"
+
+  if running arcanium-postgres; then
+    set_status multitenancy CAPTURED
+  else
+    set_status multitenancy UNKNOWN
+  fi
+}
+
 # ------------------------------------------------------------- verification --
 capture_verification() {
   local results="[]"
@@ -760,7 +813,7 @@ echo "Capturing baseline: $FINAL"
 echo "  purpose: $PURPOSE"
 echo
 
-for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_verification; do
+for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_multitenancy capture_verification; do
   echo "-> ${fn#capture_}"
   "$fn"
 done
@@ -869,13 +922,30 @@ fi
     echo "  status: UNKNOWN"
   fi
   echo
+  echo "# Prompt 27, Deliverable 8 — team count, environment-tag coverage, and"
+  echo "# the last scenarios/16_multitenancy/test_scope_isolation.sh result."
+  echo "multitenancy:"
+  if [ -s "$TMP/components/multitenancy/multitenancy.json" ]; then
+    jq -r '
+      "  teams_count: \(.teams_count // "null")",
+      "  applications:",
+      "    total: \(.applications.total // "null")",
+      "    with_environment_tag: \(.applications.with_environment_tag // "null")",
+      "  scope_isolation:",
+      "    last_result: \(.scope_isolation.last_result)",
+      "    detail: \"\(.scope_isolation.detail)\""
+    ' "$TMP/components/multitenancy/multitenancy.json"
+  else
+    echo "  status: UNKNOWN"
+  fi
+  echo
   echo "verification:"
   jq -r '.results[] | "  \(.check): \(.result)"' "$TMP/verification/results.json"
   echo
   echo "capture:"
   echo "  overall: ${overall}"
   echo "  checks:"
-  for c in source runtime arcanium vault hsm identity infra kms observability workloads persistence backup verification; do
+  for c in source runtime arcanium vault hsm identity infra kms observability workloads persistence backup multitenancy verification; do
     echo "    ${c}: ${STATUS[$c]:-UNKNOWN}"
   done
 } >"$TMP/manifest.yaml"

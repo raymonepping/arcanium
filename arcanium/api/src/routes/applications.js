@@ -5,7 +5,8 @@ import { query } from "../db.js";
 import { createJob, runOrQueue } from "../provisioner/steps.js";
 import { provisionApplication } from "../provisioner/application.js";
 import { tenantScope } from "../auth/index.js";
-import { authorize } from "../auth/authorize.js";
+import { authorize, roleVerdict } from "../auth/authorize.js";
+import { teamReadScope, scopedReadDenied } from "../auth/scope.js";
 import { getApplicationIntent } from "../aggregation/intent.js";
 
 export const applicationsRouter = Router();
@@ -29,17 +30,35 @@ function notFound() {
 }
 
 // GET /api/v1/applications
+// Prompt 27, Deliverable 5/6 — team-scoped read (Configuration C): an
+// identity with no estate-wide read role but a scoped grant like
+// "arcanium-auditor:team:platform" sees exactly that team's applications —
+// filtered, not a 403 ("read is allowed but scoped" per this prompt's own
+// spec). Composed with, not replacing, the existing tenantScope() path.
 applicationsRouter.get("/", async (req, res, next) => {
   try {
     const scope = await tenantScope(req);
-    const { rows } = scope.scoped
-      ? await query(
-          "SELECT id, name, description, supplier_id, category, registered_at FROM applications WHERE supplier_id = ANY($1) ORDER BY registered_at DESC",
-          [scope.supplierIds],
-        )
-      : await query(
-          "SELECT id, name, description, supplier_id, category, registered_at FROM applications ORDER BY registered_at DESC",
-        );
+    let supplierIdFilter = null; // null = unscoped (see everything)
+    if (scope.scoped) {
+      supplierIdFilter = scope.supplierIds;
+    } else {
+      const estateWideRead = (req.identity?.roles || []).some(
+        (r) => roleVerdict(r, "read") === true,
+      );
+      if (!estateWideRead) {
+        const team = await teamReadScope(req.identity);
+        if (team.scoped) supplierIdFilter = team.supplierIds; // null here still means "this team covers everything"
+      }
+    }
+    const { rows } =
+      supplierIdFilter !== null
+        ? await query(
+            "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications WHERE supplier_id = ANY($1) ORDER BY registered_at DESC",
+            [supplierIdFilter],
+          )
+        : await query(
+            "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications ORDER BY registered_at DESC",
+          );
     res.json(rows);
   } catch (err) {
     next(err);
@@ -50,6 +69,19 @@ applicationsRouter.get("/", async (req, res, next) => {
 applicationsRouter.post("/", async (req, res, next) => {
   try {
     const { name, description, supplier_id } = req.body ?? {};
+    // Prompt 27, Deliverable 3 — explicitly recorded, never silently
+    // defaulted: an absent `environment` in the request body is set to
+    // 'production' HERE (visible in this route's own code), not left to
+    // the column's DB-level DEFAULT alone to paper over.
+    const environment =
+      req.body?.environment !== undefined && req.body?.environment !== null
+        ? String(req.body.environment)
+        : "production";
+    if (!/^[a-z0-9_-]{1,64}$/i.test(environment))
+      return res.status(400).json({
+        error: "environment must match /^[a-z0-9_-]{1,64}$/i",
+        field: "environment",
+      });
     // Prompt 19 — authorize()'s "limited" (supplier-admin) verdict only
     // ALLOWs when `tenant` is passed and matches identity.tenantScopes; the
     // original call here never passed one, so a supplier-admin could never
@@ -64,10 +96,15 @@ applicationsRouter.post("/", async (req, res, next) => {
       );
       tenant = rows[0]?.vault_namespace ?? null;
     }
+    // Prompt 27, Deliverable 3 — the resource being created doesn't exist
+    // yet, so its "env" is the environment being declared for it: a scoped
+    // operator:env:staging grant may create staging applications but not
+    // production ones.
     const decision = authorize({
       identity: req.identity,
       action: "provision",
       tenant,
+      env: environment,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
@@ -96,8 +133,8 @@ applicationsRouter.post("/", async (req, res, next) => {
         .json({ error: "supplier_id must be a UUID", field: "supplier_id" });
 
     const { rows } = await query(
-      "INSERT INTO applications (name, description, supplier_id) VALUES ($1, $2, $3) RETURNING id, name, description, supplier_id, registered_at",
-      [name, description ?? null, supplier_id ?? null],
+      "INSERT INTO applications (name, description, supplier_id, environment) VALUES ($1, $2, $3, $4) RETURNING id, name, description, supplier_id, environment, registered_at",
+      [name, description ?? null, supplier_id ?? null, environment],
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -112,7 +149,7 @@ applicationsRouter.get("/:id", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
     const { rows: apps } = await query(
-      "SELECT id, name, description, supplier_id, category, registered_at FROM applications WHERE id = $1",
+      "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications WHERE id = $1",
       [req.params.id],
     );
     if (!apps.length) return next(notFound());
@@ -122,6 +159,17 @@ applicationsRouter.get("/:id", async (req, res, next) => {
     // cross-tenant. GET / already scoped correctly; this did not.
     const scope = await tenantScope(req);
     if (scope.scoped && !scope.supplierIds.includes(apps[0].supplier_id)) {
+      return next(notFound());
+    }
+    // Prompt 27, Deliverable 5 — same fix, same reasoning, for the scoped
+    // (team/env) grant path: GET / already narrows by it; a direct-by-id
+    // fetch had not, until this audit found it.
+    if (
+      await scopedReadDenied(req.identity, {
+        supplierId: apps[0].supplier_id,
+        env: apps[0].environment,
+      })
+    ) {
       return next(notFound());
     }
 
@@ -144,13 +192,22 @@ applicationsRouter.get("/:id/intent", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
     const { rows: apps } = await query(
-      "SELECT id, supplier_id FROM applications WHERE id = $1",
+      "SELECT id, supplier_id, environment FROM applications WHERE id = $1",
       [req.params.id],
     );
     if (!apps.length) return next(notFound());
 
     const scope = await tenantScope(req);
     if (scope.scoped && !scope.supplierIds.includes(apps[0].supplier_id)) {
+      return next(notFound());
+    }
+    // Prompt 27, Deliverable 5 — same scoped-grant fix as GET /:id above.
+    if (
+      await scopedReadDenied(req.identity, {
+        supplierId: apps[0].supplier_id,
+        env: apps[0].environment,
+      })
+    ) {
       return next(notFound());
     }
 
@@ -180,7 +237,7 @@ applicationsRouter.get("/:id/intent", async (req, res, next) => {
 // existence + supplier_id lookup PATCH/DELETE need anyway.
 async function applicationTenant(id) {
   const { rows } = await query(
-    `SELECT a.supplier_id, s.vault_namespace
+    `SELECT a.supplier_id, a.environment, s.vault_namespace
        FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
       WHERE a.id = $1`,
     [id],
@@ -206,6 +263,7 @@ applicationsRouter.patch("/:id", async (req, res, next) => {
       identity: req.identity,
       action: "provision",
       tenant: app.vault_namespace,
+      env: app.environment,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
@@ -254,6 +312,7 @@ applicationsRouter.delete("/:id", async (req, res, next) => {
       identity: req.identity,
       action: "destroy_request",
       tenant: app.vault_namespace,
+      env: app.environment,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
@@ -301,6 +360,7 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
       identity: req.identity,
       action: "provision",
       tenant: tenantInfo?.vault_namespace ?? null,
+      env: tenantInfo?.environment ?? null,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
@@ -365,6 +425,7 @@ applicationsRouter.post("/:id/classify", async (req, res, next) => {
       identity: req.identity,
       action: "provision",
       tenant: app.vault_namespace,
+      env: app.environment,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({

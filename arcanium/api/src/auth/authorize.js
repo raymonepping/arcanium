@@ -22,6 +22,17 @@ const ROLE_GROUPS = {
 
 const TENANT_GROUP_PREFIX = "arcanium-tenant-";
 
+// Prompt 27 — scoped-role group naming: "arcanium-<role>:env:<env>" or
+// "arcanium-<role>:team:<team>". Deliberately excludes supplier-admin (its
+// own tenant-scope mechanism above is unchanged and is not extended here —
+// see this prompt's own design rule: "The supplier-admin role is unchanged.
+// This prompt addresses operator-side and audit-side scoping, not
+// supplier-side"). Matches "arcanium-operator" (not "arcanium-supplier-admin",
+// which contains no ":" and never matches this pattern anyway) against the
+// same role names ROLE_GROUPS already recognizes.
+const SCOPED_GROUP_RE = /^arcanium-([a-z-]+):(env|team):(.+)$/;
+const SCOPABLE_ROLES = new Set(["ciso", "architect", "operator", "auditor"]);
+
 // Display precedence only (e.g. for a single `persona` badge in the UI /
 // GET /auth/me) — authorization itself checks the full `roles` set, not
 // just this one value.
@@ -38,9 +49,47 @@ export function groupsToIdentity(groups = []) {
   const tenantScopes = groups
     .filter((g) => g.startsWith(TENANT_GROUP_PREFIX))
     .map((g) => `suppliers/${g.slice(TENANT_GROUP_PREFIX.length)}`);
+
+  // Prompt 27, Deliverable 1b — one scopes[] entry per scoped role, merging
+  // every env/team tag that role was granted (an identity can hold
+  // "arcanium-operator:env:staging" AND "arcanium-operator:env:production"
+  // — one scoped operator grant covering both, not two separate entries).
+  const scopedByRole = new Map();
+  for (const g of groups) {
+    const m = SCOPED_GROUP_RE.exec(g);
+    if (!m) continue;
+    const [, role, dim, value] = m;
+    if (!SCOPABLE_ROLES.has(role)) continue; // unknown/non-scopable role — ignored, not an error
+    if (!scopedByRole.has(role)) {
+      scopedByRole.set(role, {
+        role,
+        envScopes: new Set(),
+        teamScopes: new Set(),
+      });
+    }
+    const entry = scopedByRole.get(role);
+    (dim === "env" ? entry.envScopes : entry.teamScopes).add(value);
+  }
+  const scopes = [...scopedByRole.values()].map((e) => ({
+    role: e.role,
+    envScopes: [...e.envScopes],
+    teamScopes: [...e.teamScopes],
+  }));
+
+  // Deliberately NOT falling back to a scoped role's name here (e.g.
+  // scopes[0]?.role): primaryRole is persisted as `sessions.persona`, and
+  // requireSession (auth/index.js) treats `[persona]` as an ESTATE-WIDE
+  // role for authorize()'s step-1 check — falling back to a scoped-only
+  // role name would silently promote "arcanium-operator:env:production"
+  // (restricted) into unrestricted estate-wide "operator" the moment a
+  // session was reconstructed on the next request. A scoped-only identity
+  // is still allowed to log in (see auth/index.js's own callback handler,
+  // which checks `scopes.length` as the alternate condition) with
+  // primaryRole left null here; auth/index.js gives that case a distinct
+  // sentinel persona value that MATRIX has no entry for.
   const primaryRole =
     ROLE_PRECEDENCE.find((r) => roles.includes(r)) || roles[0] || null;
-  return { roles, tenantScopes, primaryRole };
+  return { roles, tenantScopes, primaryRole, scopes };
 }
 
 // The exact matrix from input/35 — enforced, not documented.
@@ -98,6 +147,14 @@ const MATRIX = {
   },
 };
 
+// Prompt 27 — one read-only lookup into MATRIX, for list-filtering helpers
+// (auth/scope.js's teamReadScope) that need to know whether a role could
+// ever perform an action WITHOUT re-deciding a specific resource — they
+// still call authorize() itself for the actual per-request decision.
+export function roleVerdict(role, action) {
+  return MATRIX[role]?.[action] ?? false;
+}
+
 export const ACTIONS = Object.freeze([
   "read",
   "provision",
@@ -109,14 +166,24 @@ export const ACTIONS = Object.freeze([
 ]);
 
 /**
- * authorize({ identity, action, tenant }) -> { decision: 'ALLOW'|'DENY', reason, role? }
+ * authorize({ identity, action, tenant, env, team }) -> { decision: 'ALLOW'|'DENY', reason, role? }
  *
- * identity: req.identity as set by requireSession — { roles, tenantScopes, persona, ... }
+ * identity: req.identity as set by requireSession — { roles, tenantScopes, scopes, persona, ... }
  * action:   one of ACTIONS
  * tenant:   the resource's tenant scope, e.g. "suppliers/pepsi" — required
  *           whenever a 'limited' rule could apply; omit for estate-wide resources.
+ * env:      Prompt 27 — the resource's environment tag (e.g. "production"),
+ *           checked against a scoped grant's envScopes. Omit for resources
+ *           with no environment concept (estate-level resources).
+ * team:     Prompt 27 — the resource's team name (resolved by the caller via
+ *           the team registry, Deliverable 2), checked against a scoped
+ *           grant's teamScopes. Omit for resources with no team concept.
+ *
+ * Callers that omit env/team, or whose identity has no scoped grants
+ * (identity.scopes is empty/absent), get exactly today's estate-wide
+ * behavior — this is purely additive.
  */
-export function authorize({ identity, action, tenant }) {
+export function authorize({ identity, action, tenant, env, team }) {
   if (!ACTIONS.includes(action)) {
     return { decision: "DENY", reason: `unknown action: ${action}` };
   }
@@ -128,6 +195,7 @@ export function authorize({ identity, action, tenant }) {
     ? identity.roles
     : [identity.persona].filter(Boolean);
 
+  // Step 1 — estate-wide roles (unchanged behavior).
   for (const role of roles) {
     const rule = MATRIX[role];
     if (!rule) continue;
@@ -150,12 +218,51 @@ export function authorize({ identity, action, tenant }) {
     }
   }
 
+  // Step 2 — scoped grants (Prompt 27). Only reached when no estate-wide
+  // role already allowed the action above — a scoped grant never widens
+  // what an estate-wide role already permits, it only ever narrows.
+  for (const grant of identity.scopes || []) {
+    const rule = MATRIX[grant.role];
+    if (!rule) continue;
+    const verdict = rule[action];
+    if (verdict !== true && verdict !== "limited") continue; // false — this role can never do this action, scoped or not
+
+    // envScopes/teamScopes empty = "all" for that dimension (Deliverable 1c).
+    if (grant.envScopes.length && (!env || !grant.envScopes.includes(env))) {
+      continue;
+    }
+    if (
+      grant.teamScopes.length &&
+      (!team || !grant.teamScopes.includes(team))
+    ) {
+      continue;
+    }
+    // A 'limited' verdict still respects the identity's own tenantScopes
+    // (only ever non-empty for supplier-admin in practice, since the new
+    // scoped-group syntax deliberately excludes it — see groupsToIdentity)
+    // — this generalizes correctly without a supplier-admin special case.
+    if (verdict === "limited") {
+      const tScopes = identity.tenantScopes || [];
+      if (tScopes.length && (!tenant || !tScopes.includes(tenant))) continue;
+    }
+
+    return {
+      decision: "ALLOW",
+      role: grant.role,
+      scoped: true,
+      env: env ?? null,
+      team: team ?? null,
+    };
+  }
+
   return {
     decision: "DENY",
     reason: "no matching allow rule",
     roles,
     action,
     tenant,
+    env,
+    team,
   };
 }
 

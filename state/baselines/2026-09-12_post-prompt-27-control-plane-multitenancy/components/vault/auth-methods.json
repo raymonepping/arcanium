@@ -1,0 +1,62 @@
+{
+  "approle/": {
+    "uuid": "cdeb00bb-d64a-68a8-0338-9589a38022a4",
+    "type": "approle",
+    "description": "",
+    "accessor": "auth_approle_a6ce2c96",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false,
+      "token_type": "default-service"
+    },
+    "options": null,
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": "supported"
+  },
+  "token/": {
+    "uuid": "54409c28-6f21-8dfb-5e94-827a9480cdf4",
+    "type": "token",
+    "description": "token based credentials",
+    "accessor": "auth_token_373d033d",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false,
+      "token_type": "default-service"
+    },
+    "options": null,
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": ""
+  },
+  "userpass/": {
+    "uuid": "7fac40f3-57cc-27e8-d2a4-8cd7e7145209",
+    "type": "userpass",
+    "description": "",
+    "accessor": "auth_userpass_65a2a5e0",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false,
+      "token_type": "default-service"
+    },
+    "options": null,
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": "supported"
+  }
+}

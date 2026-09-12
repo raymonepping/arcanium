@@ -1,0 +1,386 @@
+[
+  {
+    "name": "arcanium-vault_s",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18190,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-vault_1",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 5696,
+        "host_port": 15696,
+        "range": 1,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18200,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-vault_2",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18201,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-vault_3",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18202,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-softhsm_server",
+    "image": "docker.io/vegardit/softhsm2-pkcs11-proxy:latest-debian",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-vault_hsm",
+    "image": "localhost/arcanium-vault-hsm:local",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8200,
+        "host_port": 18300,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-prometheus",
+    "image": "docker.io/prom/prometheus:latest",
+    "state": "running",
+    "status": "Up About an hour",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 9090,
+        "host_port": 9090,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-otel-collector",
+    "image": "docker.io/otel/opentelemetry-collector-contrib:latest",
+    "state": "running",
+    "status": "Up About an hour",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 4317,
+        "host_port": 4317,
+        "range": 2,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-grafana",
+    "image": "docker.io/grafana/grafana:latest",
+    "state": "running",
+    "status": "Up About an hour",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3000,
+        "host_port": 3010,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-postgres",
+    "image": "docker.io/library/postgres:16-alpine",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 5432,
+        "host_port": 5432,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-adminer",
+    "image": "docker.io/library/adminer:latest",
+    "state": "running",
+    "status": "Up About an hour",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8080,
+        "host_port": 5050,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-openldap",
+    "image": "docker.io/osixia/openldap:1.5.0",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-keycloak",
+    "image": "docker.io/keycloak/keycloak:26.6.4",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 8080,
+        "host_port": 8083,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-payments-api",
+    "image": "localhost/arcanium-payments-api:local",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3002,
+        "host_port": 3002,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-pki-client",
+    "image": "localhost/arcanium-pki-client:local",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3003,
+        "host_port": 3003,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-kmip-client",
+    "image": "localhost/arcanium-kmip-client:local",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3007,
+        "host_port": 3007,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-document-signing",
+    "image": "localhost/arcanium-document-signing:local",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3004,
+        "host_port": 3004,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-external-supplier",
+    "image": "localhost/arcanium-external-supplier:local",
+    "state": "running",
+    "status": "Up About an hour (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3005,
+        "host_port": 3005,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-api",
+    "image": "localhost/arcanium-api:local",
+    "state": "running",
+    "status": "Up 5 minutes (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3001,
+        "host_port": 3001,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-api-dev",
+    "image": "localhost/arcanium-api:local",
+    "state": "running",
+    "status": "Up 5 minutes (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3001,
+        "host_port": 3050,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-ui",
+    "image": "localhost/arcanium-ui:local",
+    "state": "running",
+    "status": "Up 5 minutes (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3000,
+        "host_port": 3000,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-worker",
+    "image": "localhost/arcanium-api:local",
+    "state": "running",
+    "status": "Up 5 minutes (healthy)",
+    "ports": [],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "teams_count": 1,
+  "applications": {
+    "total": 5,
+    "with_environment_tag": 5
+  },
+  "scope_isolation": {
+    "last_result": "PASS",
+    "detail": "last run: 2026-09-12T14:43:46Z"
+  }
+}

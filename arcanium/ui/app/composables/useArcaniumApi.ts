@@ -3,7 +3,7 @@
 
 import type {
   Supplier, Application, TransitKey, ApprovalRecord, ApiHealth, ClusterNode, MaturityReport, ProvisioningJob,
-  ReconciliationRow, ReconciliationDetail, ApplicationIntent
+  ReconciliationRow, ReconciliationDetail, ApplicationIntent, Team
 } from '~/types/arcanium'
 // Prompt 22, Deliverable 2 — openapi/arcanium.yaml is the one authoritative
 // contract; these return types are generated from it (`make openapi-generate`
@@ -58,7 +58,7 @@ export function useArcaniumApi() {
     // Sign-in is a full-page navigation to /gateway/api/v1/auth/login, not a
     // fetch call — see app/pages/login.vue. There is no username/password
     // API call any more; Express is the OIDC client end-to-end.
-    me: () => $get<{ enabled: boolean; user: string; persona: string; namespaces: string[]; groups?: string[]; demoSwitch?: boolean }>('/api/v1/auth/me'),
+    me: () => $get<{ enabled: boolean; user: string; persona: string; namespaces: string[]; groups?: string[]; scopes?: import('~/types/arcanium').IdentityScope[]; demoSwitch?: boolean }>('/api/v1/auth/me'),
     logout: () => $post<{ ok: boolean; logoutUrl: string | null }>('/api/v1/auth/logout'),
     setDemoPersona: (persona: string) => $post<{ persona: string }>('/api/v1/auth/demo-persona', { persona }),
 
@@ -81,6 +81,13 @@ export function useArcaniumApi() {
     createSupplier: (body: Pick<Supplier, 'name' | 'vault_namespace' | 'sla_tier'>) => $post<Supplier>('/api/v1/suppliers', body),
     updateSupplier: (id: string, body: Partial<Supplier>) => $patch<Supplier>(`/api/v1/suppliers/${encodeURIComponent(id)}`, body),
     deleteSupplier: (id: string) => $delete<void>(`/api/v1/suppliers/${encodeURIComponent(id)}`),
+
+    // ── Teams (Prompt 27) ──────────────────────────────────
+    teams: () => $get<Team[]>('/api/v1/teams'),
+    team: (id: string) => $get<Team>(`/api/v1/teams/${encodeURIComponent(id)}`),
+    createTeam: (body: Pick<Team, 'name'> & Partial<Team>) => $post<Team>('/api/v1/teams', body),
+    updateTeam: (id: string, body: Partial<Team>) => $patch<Team>(`/api/v1/teams/${encodeURIComponent(id)}`, body),
+    deleteTeam: (id: string) => $delete<void>(`/api/v1/teams/${encodeURIComponent(id)}`),
     // ── Reconciliation (Prompt 20) ────────────────────────
     reconciliationList: (opts?: { status?: string; disposition?: string }) => {
       const q = new URLSearchParams(Object.entries(opts ?? {}).filter(([, v]) => v) as [string, string][]).toString()

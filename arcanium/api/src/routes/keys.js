@@ -15,8 +15,32 @@ import {
   requestKeyDestroy,
 } from "../provisioner/key.js";
 import { authorize } from "../auth/authorize.js";
+import { query } from "../db.js";
 
 export const keysRouter = Router();
+
+// Prompt 27, Deliverable 3 — these routes operate on a bare Vault key name,
+// with no application_id in the URL, so resolving the owning application's
+// tenant/environment needs a join through crypto_profiles (vault_path's
+// trailing segment is the key name). Found live while wiring this in: these
+// three routes previously passed NO tenant at all — meaning a
+// supplier-admin's 'limited' verdict on rotate/destroy_request could never
+// succeed even for their own tenant's key (the same missing-tenant-param
+// bug already fixed elsewhere in Prompts 18/19). Resolving it here fixes
+// that gap as a direct byproduct of adding the env lookup this prompt
+// requires, not a separate, deferred fix.
+async function ownerOfKey(name) {
+  const { rows } = await query(
+    `SELECT s.vault_namespace, a.environment
+       FROM crypto_profiles cp
+       JOIN applications a ON a.id = cp.application_id
+       LEFT JOIN suppliers s ON s.id = a.supplier_id
+      WHERE cp.vault_path LIKE '%/' || $1
+      LIMIT 1`,
+    [name],
+  );
+  return rows[0] ?? null; // null = key exists in Vault but isn't tracked by any crypto_profile
+}
 
 const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
 
@@ -164,7 +188,13 @@ keysRouter.post("/:name/rotate", async (req, res, next) => {
     const { name } = req.params;
     if (!KEY_NAME_RE.test(name))
       return res.status(400).json({ error: "invalid key name" });
-    const decision = authorize({ identity: req.identity, action: "rotate" });
+    const owner = await ownerOfKey(name);
+    const decision = authorize({
+      identity: req.identity,
+      action: "rotate",
+      tenant: owner?.vault_namespace ?? null,
+      env: owner?.environment ?? null,
+    });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
         error: "forbidden",
@@ -200,7 +230,13 @@ keysRouter.post("/:name/rewrap", async (req, res, next) => {
     // architect (the previous inline check incorrectly allowed both; that
     // was a real gap, not a stylistic difference — see
     // scenarios/11_security_foundation/test_negative_auth.sh).
-    const decision = authorize({ identity: req.identity, action: "rewrap" });
+    const owner = await ownerOfKey(name);
+    const decision = authorize({
+      identity: req.identity,
+      action: "rewrap",
+      tenant: owner?.vault_namespace ?? null,
+      env: owner?.environment ?? null,
+    });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
         error: "forbidden",
@@ -222,9 +258,12 @@ keysRouter.post("/:name/destroy", async (req, res, next) => {
     const { name } = req.params;
     if (!KEY_NAME_RE.test(name))
       return res.status(400).json({ error: "invalid key name" });
+    const owner = await ownerOfKey(name);
     const decision = authorize({
       identity: req.identity,
       action: "destroy_request",
+      tenant: owner?.vault_namespace ?? null,
+      env: owner?.environment ?? null,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({

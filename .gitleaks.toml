@@ -13,4 +13,13 @@ paths = [
   # a real secret. Scoped to this one file, not a broad allowlist
   # (feedback_gitleaks_test_fixtures.md).
   "compose/identity/ldap/bootstrap.ldif",
+  # Prompt 27 — state/scripts/capture-state.sh snapshots the working tree's
+  # git diff into every baseline as source/diff.patch. When that diff
+  # happens to touch an already-allowlisted file (bootstrap.ldif, above),
+  # the SAME synthetic values reappear inside diff.patch, which isn't
+  # covered by a path-scoped allow on the source file itself. This mirrors
+  # that same, already-accepted risk (still local-POC-only demo
+  # credentials) — not a new category of leniency, and still scoped to
+  # this one generated-artifact path, not a broad allowlist.
+  "state/baselines/.*/source/diff\\.patch",
 ]

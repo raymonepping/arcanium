@@ -61,14 +61,18 @@ async function approvalTenant({ supplier_id, app_id }) {
       "SELECT id, vault_namespace FROM suppliers WHERE id = $1",
       [supplier_id],
     );
+    // Prompt 27 — a supplier-only-scoped approval (no app_id) has no single
+    // application to read an environment tag from; environment stays null,
+    // same as any other estate-level resource this prompt doesn't tag.
     return {
       supplierId: rows[0]?.id ?? null,
       vaultNamespace: rows[0]?.vault_namespace ?? null,
+      environment: null,
     };
   }
   if (app_id && UUID_RE.test(app_id)) {
     const { rows } = await query(
-      `SELECT s.id, s.vault_namespace
+      `SELECT s.id, s.vault_namespace, a.environment
          FROM applications a JOIN suppliers s ON s.id = a.supplier_id
         WHERE a.id = $1`,
       [app_id],
@@ -76,9 +80,31 @@ async function approvalTenant({ supplier_id, app_id }) {
     return {
       supplierId: rows[0]?.id ?? null,
       vaultNamespace: rows[0]?.vault_namespace ?? null,
+      environment: rows[0]?.environment ?? null,
     };
   }
-  return { supplierId: null, vaultNamespace: null };
+  return { supplierId: null, vaultNamespace: null, environment: null };
+}
+
+// Prompt 27, Deliverable 3 — same env/tenant resolution as approvalTenant()
+// above, but keyed by an EXISTING approval_requests row (approve/deny act on
+// an id, not a fresh app_id/supplier_id pair from the request body).
+async function approvalContext(id) {
+  const { rows } = await query(
+    `SELECT ar.supplier_id AS ar_supplier_id, a.environment,
+            COALESCE(s.vault_namespace, s2.vault_namespace) AS vault_namespace
+       FROM approval_requests ar
+       LEFT JOIN applications a ON a.id = ar.app_id
+       LEFT JOIN suppliers s ON s.id = ar.supplier_id
+       LEFT JOIN suppliers s2 ON s2.id = a.supplier_id
+      WHERE ar.id = $1`,
+    [id],
+  );
+  if (!rows.length) return null;
+  return {
+    vaultNamespace: rows[0].vault_namespace ?? null,
+    environment: rows[0].environment ?? null,
+  };
 }
 
 // GET /api/v1/approvals
@@ -137,7 +163,7 @@ approvalsRouter.post("/", async (req, res, next) => {
     // check: any authenticated session could create an approval request
     // against any application, cross-tenant.
     const scope = await tenantScope(req);
-    const { supplierId, vaultNamespace } = await approvalTenant({
+    const { supplierId, vaultNamespace, environment } = await approvalTenant({
       supplier_id,
       app_id,
     });
@@ -148,6 +174,7 @@ approvalsRouter.post("/", async (req, res, next) => {
       identity: req.identity,
       action: resolveApprovalAction(action),
       tenant: vaultNamespace,
+      env: environment,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
@@ -202,7 +229,13 @@ approvalsRouter.post("/", async (req, res, next) => {
 approvalsRouter.post("/:id/approve", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
-    const decision = authorize({ identity: req.identity, action: "approve" });
+    const ctx = await approvalContext(req.params.id);
+    const decision = authorize({
+      identity: req.identity,
+      action: "approve",
+      tenant: ctx?.vaultNamespace ?? null,
+      env: ctx?.environment ?? null,
+    });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
         error: "forbidden",
@@ -249,7 +282,13 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
 approvalsRouter.post("/:id/deny", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
-    const decision = authorize({ identity: req.identity, action: "approve" });
+    const ctx = await approvalContext(req.params.id);
+    const decision = authorize({
+      identity: req.identity,
+      action: "approve",
+      tenant: ctx?.vaultNamespace ?? null,
+      env: ctx?.environment ?? null,
+    });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
         error: "forbidden",
@@ -293,7 +332,7 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
     // action as POST /:id/approve, but was reachable by any authenticated
     // session with no role or tenant check.
     const { rows } = await query(
-      `SELECT ar.id, ar.status, ar.supplier_id, s.vault_namespace
+      `SELECT ar.id, ar.status, ar.supplier_id, s.vault_namespace, a.environment
          FROM approval_requests ar
          LEFT JOIN applications a ON a.id = ar.app_id
          LEFT JOIN suppliers s ON s.id = COALESCE(ar.supplier_id, a.supplier_id)
@@ -315,6 +354,7 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
       identity: req.identity,
       action: "approve",
       tenant: record.vault_namespace ?? null,
+      env: record.environment ?? null,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({

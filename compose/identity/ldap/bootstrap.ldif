@@ -76,6 +76,29 @@ givenName: Demo
 mail: demo-cocacola@arcanium.local
 userPassword: Arcanium-cocacola-2026
 
+# Prompt 27 — scoped-role demo accounts (Control-Plane Multi-Tenancy).
+# Neither account holds a BARE arcanium-operator/arcanium-auditor group —
+# only the scoped variant — so scenarios/16_multitenancy/test_scope_isolation.sh
+# can prove the scoped-grant path actually restricts access, not merely that
+# it's additive on top of an already-unrestricted estate-wide role.
+dn: uid=demo-operator-prod,ou=people,dc=arcanium,dc=local
+objectClass: inetOrgPerson
+uid: demo-operator-prod
+cn: Demo Operator Production
+sn: Production
+givenName: Demo
+mail: demo-operator-prod@arcanium.local
+userPassword: Arcanium-opprod-2026
+
+dn: uid=demo-auditor-platform,ou=people,dc=arcanium,dc=local
+objectClass: inetOrgPerson
+uid: demo-auditor-platform
+cn: Demo Auditor Platform
+sn: Platform
+givenName: Demo
+mail: demo-auditor-platform@arcanium.local
+userPassword: Arcanium-auditplat-2026
+
 # ── Groups ───────────────────────────────────────────────────────────────
 
 dn: cn=arcanium-ciso,ou=groups,dc=arcanium,dc=local
@@ -115,3 +138,18 @@ dn: cn=arcanium-tenant-cocacola,ou=groups,dc=arcanium,dc=local
 objectClass: groupOfNames
 cn: arcanium-tenant-cocacola
 member: uid=demo-cocacola,ou=people,dc=arcanium,dc=local
+
+# Prompt 27 — scoped-role groups (env/team dimensions). Each of these two
+# demo accounts is a member of ONLY the scoped variant below, never the
+# bare "arcanium-operator"/"arcanium-auditor" groups above — that's what
+# makes them useful for proving the scoped path actually restricts, not
+# just that it's additive.
+dn: cn=arcanium-operator:env:production,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-operator:env:production
+member: uid=demo-operator-prod,ou=people,dc=arcanium,dc=local
+
+dn: cn=arcanium-auditor:team:platform,ou=groups,dc=arcanium,dc=local
+objectClass: groupOfNames
+cn: arcanium-auditor:team:platform
+member: uid=demo-auditor-platform,ou=people,dc=arcanium,dc=local

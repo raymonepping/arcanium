@@ -220,9 +220,21 @@ const persona = ref('operator')
 const username = ref('')
 const authGroups = ref<string[]>([])
 const tenantScopeNs = ref<string[]>([])
-const personaLabel = computed(() =>
-  persona.value ? persona.value.charAt(0).toUpperCase() + persona.value.slice(1).replace('-', ' ') : 'Operator',
-)
+// Prompt 27, Deliverable 4 — a scoped-only identity has no estate-wide
+// role (persona is the "scoped" sentinel — see auth/index.js's own
+// callback handler comment for why); the real display role comes from
+// scopes[0].role in that case, with an "(env only)"/"(team only)" suffix
+// so "Operator" never silently reads as unrestricted when it isn't.
+const scopes = ref<{ role: string, envScopes: string[], teamScopes: string[] }[]>([])
+const personaLabel = computed(() => {
+  const label = (role: string) => role.charAt(0).toUpperCase() + role.slice(1).replace('-', ' ')
+  if (persona.value === 'scoped' && scopes.value.length) {
+    const g = scopes.value[0]!
+    const dims = [...g.envScopes, ...g.teamScopes]
+    return `${label(g.role)} (${dims.join(', ') || 'scoped'} only)`
+  }
+  return persona.value ? label(persona.value) : 'Operator'
+})
 onMounted(async () => {
   try {
     const m = await me()
@@ -231,6 +243,7 @@ onMounted(async () => {
     username.value = m.user || ''
     authGroups.value = m.groups || []
     tenantScopeNs.value = m.namespaces || []
+    scopes.value = m.scopes || []
   } catch { /* not signed in — global middleware handles the redirect */ }
 })
 async function signOut() {
@@ -313,6 +326,7 @@ const NAV_ICONS = {
   maturity: `<svg viewBox="0 0 16 16" fill="none"><polyline points="2,12 6,7 9,10 14,4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   observability: `<svg viewBox="0 0 16 16" fill="none"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/></svg>`,
   reconciliation: `<svg viewBox="0 0 16 16" fill="none"><path d="M13 4a5 5 0 0 0-8.9-1.6M3 12a5 5 0 0 0 8.9 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M13 1.5V4h-2.5M3 14.5V12h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  teams: `<svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.3" stroke="currentColor" stroke-width="1.2"/><circle cx="11" cy="6.5" r="1.8" stroke="currentColor" stroke-width="1.1" opacity=".6"/><path d="M1.5 14c0-2.8 1.8-5 4-5s4 2.2 4 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M9.7 9.5c1.8.2 3 1.9 3 4.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity=".6"/></svg>`,
 }
 
 const isSupplierAdmin = computed(() => persona.value === 'supplier-admin')
@@ -338,6 +352,7 @@ const navItems = computed(() => {
     { to: '/cluster', label: 'Cluster', icon: NAV_ICONS.cluster, platform: true },
     { to: '/maturity', label: 'Maturity', icon: NAV_ICONS.maturity },
     { to: '/observability', label: 'Observability', icon: NAV_ICONS.observability, platform: true },
+    { to: '/teams', label: 'Teams', icon: NAV_ICONS.teams, platform: true },
   ]
   return isSupplierAdmin.value ? all.filter((i) => !i.platform) : all
 })
@@ -362,6 +377,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/cluster': 'Cluster Health',
   '/maturity': 'Maturity',
   '/observability': 'Observability',
+  '/teams': 'Teams',
 }
 const currentTitle = computed(() => {
   // Exact match first
@@ -393,6 +409,7 @@ const ALL_CMDS = [
   { to: '/cluster', label: 'Cluster Health', category: 'Page', icon: NAV_ICONS.cluster },
   { to: '/maturity', label: 'Maturity', category: 'Page', icon: NAV_ICONS.maturity },
   { to: '/observability', label: 'Observability', category: 'Page', icon: NAV_ICONS.observability },
+  { to: '/teams', label: 'Teams', category: 'Page', icon: NAV_ICONS.teams },
 ]
 
 const cmdResults = computed(() => {

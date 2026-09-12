@@ -9,7 +9,8 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { tenantScope } from "../auth/index.js";
-import { authorize } from "../auth/authorize.js";
+import { authorize, roleVerdict } from "../auth/authorize.js";
+import { teamReadScope, scopedReadDenied } from "../auth/scope.js";
 import {
   runSweep,
   reconcileRun,
@@ -51,11 +52,58 @@ reconciliationRouter.get("/", async (req, res, next) => {
   try {
     const scope = await tenantScope(req);
     const params = [];
-    let where = "";
+    const clauses = [];
     if (scope.scoped) {
       params.push(scope.supplierIds);
-      where = `WHERE a.supplier_id = ANY($${params.length})`;
+      clauses.push(`a.supplier_id = ANY($${params.length})`);
+    } else {
+      // Prompt 27, Deliverable 3/6 — no estate-wide read role: narrow by
+      // whatever scoped grants the identity actually has (env and/or
+      // team), never a 403 for a read that's merely scoped rather than
+      // denied outright. An identity with an estate-wide read role (the
+      // common case today) is left completely unrestricted, exactly as
+      // before this prompt.
+      const estateWideRead = (req.identity?.roles || []).some(
+        (r) => roleVerdict(r, "read") === true,
+      );
+      if (!estateWideRead) {
+        const grants = req.identity?.scopes || [];
+        const envUnion = new Set();
+        let envRestricted = false;
+        for (const g of grants) {
+          const v = roleVerdict(g.role, "read");
+          if (v !== true && v !== "limited") continue;
+          if (g.envScopes.length) {
+            envRestricted = true;
+            for (const e of g.envScopes) envUnion.add(e);
+          }
+        }
+        if (envRestricted) {
+          params.push([...envUnion]);
+          clauses.push(`a.environment = ANY($${params.length})`);
+        }
+        const team = await teamReadScope(req.identity);
+        if (team.scoped && team.supplierIds !== null) {
+          params.push(team.supplierIds);
+          clauses.push(`a.supplier_id = ANY($${params.length})`);
+        }
+        // Neither env- nor team-restricted, and no estate-wide read role
+        // either: no scoped grant applies at all — see nothing (deny-safe
+        // empty list, not an error, matching the same "scoped, not denied"
+        // shape as the cases above).
+        if (!envRestricted && !(team.scoped && team.supplierIds !== null)) {
+          clauses.push("false");
+        }
+      }
     }
+    // Optional ?env= query filter, intersected with (not a bypass of) the
+    // scope narrowing above — any caller may ask to see only one
+    // environment; it can only ever narrow further, never widen access.
+    if (typeof req.query.env === "string" && req.query.env) {
+      params.push(req.query.env);
+      clauses.push(`a.environment = $${params.length}`);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const { rows } = await query(
       `SELECT ds.id, ds.application_id, a.name AS application_name, a.supplier_id,
               s.vault_namespace, ds.key_name, ds.requirement, ds.desired_value,
@@ -135,7 +183,7 @@ reconciliationRouter.post("/run", async (req, res, next) => {
     if (desired_state_id) {
       validateUuid(desired_state_id);
       const { rows } = await query(
-        `SELECT a.supplier_id, s.vault_namespace
+        `SELECT a.supplier_id, a.environment, s.vault_namespace
            FROM desired_state ds
            JOIN applications a ON a.id = ds.application_id
            LEFT JOIN suppliers s ON s.id = a.supplier_id
@@ -149,6 +197,7 @@ reconciliationRouter.post("/run", async (req, res, next) => {
         identity: req.identity,
         action: "read",
         tenant: rows[0].vault_namespace ?? null,
+        env: rows[0].environment ?? null,
       });
       if (decision.decision !== "ALLOW")
         return res.status(403).json({
@@ -160,6 +209,19 @@ reconciliationRouter.post("/run", async (req, res, next) => {
       return res.json(results);
     }
 
+    // Prompt 27 — this bulk path has no single resource to check env/team
+    // against, so a scoped grant (which requires a specific env/team to
+    // match) can never satisfy it — only an estate-wide role can. Found
+    // live while wiring this prompt in: before this check, a scoped-only
+    // identity (persona "scoped", no MATRIX entry) would reach here with
+    // no gate at all and run an entirely unscoped sweep.
+    const decision = authorize({ identity: req.identity, action: "read" });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "read",
+        reason: decision.reason,
+      });
     // Estate-wide sweep, implicitly narrowed to the caller's own tenant(s)
     // when scoped — never a separate opt-in the caller could forget.
     const results = await runSweep(
@@ -183,7 +245,7 @@ reconciliationRouter.patch("/desired-state/:id", async (req, res, next) => {
     if (!existing) return next(notFound());
 
     const { rows: appRows } = await query(
-      `SELECT a.supplier_id, s.vault_namespace
+      `SELECT a.supplier_id, a.environment, s.vault_namespace
          FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
         WHERE a.id = $1`,
       [existing.application_id],
@@ -195,6 +257,7 @@ reconciliationRouter.patch("/desired-state/:id", async (req, res, next) => {
       identity: req.identity,
       action: "provision",
       tenant: appRows[0]?.vault_namespace ?? null,
+      env: appRows[0]?.environment ?? null,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
@@ -241,7 +304,7 @@ reconciliationRouter.get("/:run_id", async (req, res, next) => {
               rr.status, rr.observed_at, rr.detail,
               ds.application_id, ds.key_name, ds.requirement, ds.desired_value,
               ds.version, ds.source, ds.changed_by, ds.changed_groups, ds.changed_reason, ds.updated_at,
-              a.name AS application_name, a.supplier_id, s.vault_namespace
+              a.name AS application_name, a.supplier_id, a.environment, s.vault_namespace
          FROM reconciliation_runs rr
          JOIN desired_state ds ON ds.id = rr.desired_state_id
          JOIN applications a ON a.id = ds.application_id
@@ -255,6 +318,17 @@ reconciliationRouter.get("/:run_id", async (req, res, next) => {
     const scope = await tenantScope(req);
     if (scope.scoped && !scope.supplierIds.includes(r.supplier_id))
       return next(notFound());
+    // Prompt 27, Deliverable 5 — same scoped-grant (team/env) fix as
+    // applications.js's GET /:id above; found by this prompt's own
+    // required audit.
+    if (
+      await scopedReadDenied(req.identity, {
+        supplierId: r.supplier_id,
+        env: r.environment,
+      })
+    ) {
+      return next(notFound());
+    }
 
     const disposition = await getDispositionFor(r.desired_state_id, r.status);
     const history = await getDesiredStateHistory({
@@ -313,6 +387,7 @@ reconciliationRouter.post("/:run_id/reconcile", async (req, res, next) => {
       identity: req.identity,
       action: "reconcile",
       tenant: tenant.vault_namespace ?? null,
+      env: tenant.environment ?? null,
     });
     if (decision.decision !== "ALLOW")
       return res.status(403).json({
@@ -358,6 +433,7 @@ reconciliationRouter.post(
         identity: req.identity,
         action: "approve",
         tenant: tenant.vault_namespace ?? null,
+        env: tenant.environment ?? null,
       });
       if (decision.decision !== "ALLOW")
         return res.status(403).json({

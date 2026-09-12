@@ -320,7 +320,7 @@ export async function acceptException(
  * `tenant` param, the same two-step pattern every Phase 18+ route uses. */
 export async function runTenant(runId) {
   const { rows } = await query(
-    `SELECT a.supplier_id, s.vault_namespace
+    `SELECT a.supplier_id, a.environment, s.vault_namespace
        FROM reconciliation_runs rr
        JOIN desired_state ds ON ds.id = rr.desired_state_id
        JOIN applications a ON a.id = ds.application_id

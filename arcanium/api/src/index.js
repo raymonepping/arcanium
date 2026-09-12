@@ -19,6 +19,7 @@ import { applicationsRouter } from "./routes/applications.js";
 import { keysRouter } from "./routes/keys.js";
 import { pkiRouter } from "./routes/pki.js";
 import { suppliersRouter } from "./routes/suppliers.js";
+import { teamsRouter } from "./routes/teams.js";
 import { approvalsRouter } from "./routes/approvals.js";
 import { clusterRouter } from "./routes/cluster.js";
 import { jobsRouter } from "./routes/jobs.js";
@@ -123,6 +124,7 @@ async function main() {
   app.use("/api/v1/keys", keysRouter);
   app.use("/api/v1/pki", pkiRouter);
   app.use("/api/v1/suppliers", suppliersRouter);
+  app.use("/api/v1/teams", teamsRouter);
   app.use("/api/v1/approvals", approvalsRouter);
   app.use("/api/v1/cluster", clusterRouter);
   app.use("/api/v1/jobs", jobsRouter);

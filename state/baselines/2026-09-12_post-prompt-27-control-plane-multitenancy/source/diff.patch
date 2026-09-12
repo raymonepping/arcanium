@@ -1,0 +1,1726 @@
+diff --git a/Makefile b/Makefile
+index ef84c62..11ba119 100644
+--- a/Makefile
++++ b/Makefile
+@@ -377,6 +377,11 @@ scenario-security-foundation: ## Prompt 18 — hostile negative-auth suite (401/
+ 	@chmod +x scenarios/11_security_foundation/test_negative_auth.sh
+ 	@./scenarios/11_security_foundation/test_negative_auth.sh
+ 
++.PHONY: scenario-scope-isolation
++scenario-scope-isolation: ## Prompt 27, Deliverable 6 — scoped env/team grant isolation (real LDAP-backed sessions)
++	@chmod +x scenarios/16_multitenancy/test_scope_isolation.sh
++	@./scenarios/16_multitenancy/test_scope_isolation.sh
++
+ # ── Prompt 20 — Desired State + Reconciliation ──────────────────────────────
+ .PHONY: scenario-reconciliation
+ 
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 7b9ed4d..5259716 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -125,12 +125,33 @@ components:
+         description: { type: ["string", "null"] }
+         supplier_id: { type: ["string", "null"], format: uuid }
+         category: { type: string, enum: [platform, tenant, unscoped] }
++        environment:
++          type: string
++          description: "Prompt 27 — defaults to 'production' when omitted at registration; explicitly recorded, never left null."
+         registered_at: { type: string, format: date-time }
+         crypto_profiles:
+           type: array
+           items: { $ref: "#/components/schemas/CryptoProfile" }
+       required: [id, name, registered_at]
+ 
++    # ── Teams (Prompt 27, control-plane multi-tenancy) ────────────────────
++    Team:
++      type: object
++      properties:
++        id: { type: string, format: uuid }
++        name: { type: string, example: platform }
++        description: { type: ["string", "null"] }
++        supplier_ids:
++          type: ["array", "null"]
++          items: { type: string, format: uuid }
++          description: "null = every supplier (an estate-wide-by-team audit grant)"
++        environments:
++          type: ["array", "null"]
++          items: { type: string }
++        created_by: { type: string }
++        created_at: { type: string, format: date-time }
++      required: [id, name, created_by, created_at]
++
+     # ── Transit keys ──────────────────────────────────────────────────────
+     TransitKey:
+       type: object
+@@ -952,6 +973,69 @@ paths:
+             application/json:
+               schema: { type: array, items: { type: object, additionalProperties: true } }
+ 
++  # ── Teams (Prompt 27) ────────────────────────────────────────────────
++  /api/v1/teams:
++    get:
++      summary: List teams (estate-wide read only)
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { type: array, items: { $ref: "#/components/schemas/Team" } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++    post:
++      summary: Register a team (links a "arcanium-<role>:team:<name>" OIDC group to supplier ids) — estate-wide provision only
++      requestBody:
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                name: { type: string }
++                description: { type: ["string", "null"] }
++                supplier_ids: { type: ["array", "null"], items: { type: string, format: uuid } }
++                environments: { type: ["array", "null"], items: { type: string } }
++              required: [name]
++      responses:
++        "201":
++          description: Created
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Team" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "409": { description: Team name already registered }
++  /api/v1/teams/{id}:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    get:
++      summary: Team detail
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Team" }
++        "404": { $ref: "#/components/responses/NotFound" }
++    patch:
++      summary: Update a team's description/supplier_ids/environments — estate-wide provision only
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Team" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++    delete:
++      summary: Remove a team — estate-wide provision only
++      responses:
++        "204": { description: Deleted }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
+   # ── Approvals ─────────────────────────────────────────────────────────
+   /api/v1/approvals:
+     get:
+diff --git a/arcanium/api/src/auth/authorize.js b/arcanium/api/src/auth/authorize.js
+index 2df2a26..4e69e5f 100644
+--- a/arcanium/api/src/auth/authorize.js
++++ b/arcanium/api/src/auth/authorize.js
+@@ -22,6 +22,17 @@ const ROLE_GROUPS = {
+ 
+ const TENANT_GROUP_PREFIX = "arcanium-tenant-";
+ 
++// Prompt 27 — scoped-role group naming: "arcanium-<role>:env:<env>" or
++// "arcanium-<role>:team:<team>". Deliberately excludes supplier-admin (its
++// own tenant-scope mechanism above is unchanged and is not extended here —
++// see this prompt's own design rule: "The supplier-admin role is unchanged.
++// This prompt addresses operator-side and audit-side scoping, not
++// supplier-side"). Matches "arcanium-operator" (not "arcanium-supplier-admin",
++// which contains no ":" and never matches this pattern anyway) against the
++// same role names ROLE_GROUPS already recognizes.
++const SCOPED_GROUP_RE = /^arcanium-([a-z-]+):(env|team):(.+)$/;
++const SCOPABLE_ROLES = new Set(["ciso", "architect", "operator", "auditor"]);
++
+ // Display precedence only (e.g. for a single `persona` badge in the UI /
+ // GET /auth/me) — authorization itself checks the full `roles` set, not
+ // just this one value.
+@@ -38,9 +49,43 @@ export function groupsToIdentity(groups = []) {
+   const tenantScopes = groups
+     .filter((g) => g.startsWith(TENANT_GROUP_PREFIX))
+     .map((g) => `suppliers/${g.slice(TENANT_GROUP_PREFIX.length)}`);
++
++  // Prompt 27, Deliverable 1b — one scopes[] entry per scoped role, merging
++  // every env/team tag that role was granted (an identity can hold
++  // "arcanium-operator:env:staging" AND "arcanium-operator:env:production"
++  // — one scoped operator grant covering both, not two separate entries).
++  const scopedByRole = new Map();
++  for (const g of groups) {
++    const m = SCOPED_GROUP_RE.exec(g);
++    if (!m) continue;
++    const [, role, dim, value] = m;
++    if (!SCOPABLE_ROLES.has(role)) continue; // unknown/non-scopable role — ignored, not an error
++    if (!scopedByRole.has(role)) {
++      scopedByRole.set(role, { role, envScopes: new Set(), teamScopes: new Set() });
++    }
++    const entry = scopedByRole.get(role);
++    (dim === "env" ? entry.envScopes : entry.teamScopes).add(value);
++  }
++  const scopes = [...scopedByRole.values()].map((e) => ({
++    role: e.role,
++    envScopes: [...e.envScopes],
++    teamScopes: [...e.teamScopes],
++  }));
++
++  // Deliberately NOT falling back to a scoped role's name here (e.g.
++  // scopes[0]?.role): primaryRole is persisted as `sessions.persona`, and
++  // requireSession (auth/index.js) treats `[persona]` as an ESTATE-WIDE
++  // role for authorize()'s step-1 check — falling back to a scoped-only
++  // role name would silently promote "arcanium-operator:env:production"
++  // (restricted) into unrestricted estate-wide "operator" the moment a
++  // session was reconstructed on the next request. A scoped-only identity
++  // is still allowed to log in (see auth/index.js's own callback handler,
++  // which checks `scopes.length` as the alternate condition) with
++  // primaryRole left null here; auth/index.js gives that case a distinct
++  // sentinel persona value that MATRIX has no entry for.
+   const primaryRole =
+     ROLE_PRECEDENCE.find((r) => roles.includes(r)) || roles[0] || null;
+-  return { roles, tenantScopes, primaryRole };
++  return { roles, tenantScopes, primaryRole, scopes };
+ }
+ 
+ // The exact matrix from input/35 — enforced, not documented.
+@@ -98,6 +143,14 @@ const MATRIX = {
+   },
+ };
+ 
++// Prompt 27 — one read-only lookup into MATRIX, for list-filtering helpers
++// (auth/scope.js's teamReadScope) that need to know whether a role could
++// ever perform an action WITHOUT re-deciding a specific resource — they
++// still call authorize() itself for the actual per-request decision.
++export function roleVerdict(role, action) {
++  return MATRIX[role]?.[action] ?? false;
++}
++
+ export const ACTIONS = Object.freeze([
+   "read",
+   "provision",
+@@ -109,14 +162,24 @@ export const ACTIONS = Object.freeze([
+ ]);
+ 
+ /**
+- * authorize({ identity, action, tenant }) -> { decision: 'ALLOW'|'DENY', reason, role? }
++ * authorize({ identity, action, tenant, env, team }) -> { decision: 'ALLOW'|'DENY', reason, role? }
+  *
+- * identity: req.identity as set by requireSession — { roles, tenantScopes, persona, ... }
++ * identity: req.identity as set by requireSession — { roles, tenantScopes, scopes, persona, ... }
+  * action:   one of ACTIONS
+  * tenant:   the resource's tenant scope, e.g. "suppliers/pepsi" — required
+  *           whenever a 'limited' rule could apply; omit for estate-wide resources.
++ * env:      Prompt 27 — the resource's environment tag (e.g. "production"),
++ *           checked against a scoped grant's envScopes. Omit for resources
++ *           with no environment concept (estate-level resources).
++ * team:     Prompt 27 — the resource's team name (resolved by the caller via
++ *           the team registry, Deliverable 2), checked against a scoped
++ *           grant's teamScopes. Omit for resources with no team concept.
++ *
++ * Callers that omit env/team, or whose identity has no scoped grants
++ * (identity.scopes is empty/absent), get exactly today's estate-wide
++ * behavior — this is purely additive.
+  */
+-export function authorize({ identity, action, tenant }) {
++export function authorize({ identity, action, tenant, env, team }) {
+   if (!ACTIONS.includes(action)) {
+     return { decision: "DENY", reason: `unknown action: ${action}` };
+   }
+@@ -128,6 +191,7 @@ export function authorize({ identity, action, tenant }) {
+     ? identity.roles
+     : [identity.persona].filter(Boolean);
+ 
++  // Step 1 — estate-wide roles (unchanged behavior).
+   for (const role of roles) {
+     const rule = MATRIX[role];
+     if (!rule) continue;
+@@ -150,12 +214,48 @@ export function authorize({ identity, action, tenant }) {
+     }
+   }
+ 
++  // Step 2 — scoped grants (Prompt 27). Only reached when no estate-wide
++  // role already allowed the action above — a scoped grant never widens
++  // what an estate-wide role already permits, it only ever narrows.
++  for (const grant of identity.scopes || []) {
++    const rule = MATRIX[grant.role];
++    if (!rule) continue;
++    const verdict = rule[action];
++    if (verdict !== true && verdict !== "limited") continue; // false — this role can never do this action, scoped or not
++
++    // envScopes/teamScopes empty = "all" for that dimension (Deliverable 1c).
++    if (grant.envScopes.length && (!env || !grant.envScopes.includes(env))) {
++      continue;
++    }
++    if (grant.teamScopes.length && (!team || !grant.teamScopes.includes(team))) {
++      continue;
++    }
++    // A 'limited' verdict still respects the identity's own tenantScopes
++    // (only ever non-empty for supplier-admin in practice, since the new
++    // scoped-group syntax deliberately excludes it — see groupsToIdentity)
++    // — this generalizes correctly without a supplier-admin special case.
++    if (verdict === "limited") {
++      const tScopes = identity.tenantScopes || [];
++      if (tScopes.length && (!tenant || !tScopes.includes(tenant))) continue;
++    }
++
++    return {
++      decision: "ALLOW",
++      role: grant.role,
++      scoped: true,
++      env: env ?? null,
++      team: team ?? null,
++    };
++  }
++
+   return {
+     decision: "DENY",
+     reason: "no matching allow rule",
+     roles,
+     action,
+     tenant,
++    env,
++    team,
+   };
+ }
+ 
+diff --git a/arcanium/api/src/auth/index.js b/arcanium/api/src/auth/index.js
+index ef8d2b2..df796ca 100644
+--- a/arcanium/api/src/auth/index.js
++++ b/arcanium/api/src/auth/index.js
+@@ -93,23 +93,33 @@ authRouter.get("/callback", async (req, res, next) => {
+   try {
+     const { claims, returnTo } = await exchangeCode(req);
+     const groups = Array.isArray(claims.groups) ? claims.groups : [];
+-    const { roles, tenantScopes, primaryRole } = groupsToIdentity(groups);
++    const { tenantScopes, primaryRole, scopes } = groupsToIdentity(groups);
+ 
+-    if (!primaryRole) {
++    if (!primaryRole && !scopes.length) {
+       // A real, authenticated Keycloak identity with no recognised Arcanium
+-      // group is rejected, not silently defaulted to some role — deny by
+-      // default applies at the identity-mapping boundary too.
++      // group at all — neither an estate-wide role nor a scoped one — is
++      // rejected, not silently defaulted to some role — deny by default
++      // applies at the identity-mapping boundary too.
+       return res.status(403).json({
+         error: "authenticated but not authorized: no Arcanium role group",
+       });
+     }
++    // Prompt 27 — a scoped-only identity (e.g. only
++    // "arcanium-operator:env:production", no bare "arcanium-operator") has
++    // no estate-wide primaryRole to store. "scoped" is a sentinel persona
++    // value MATRIX has no entry for — requireSession's `roles: [persona]`
++    // therefore correctly fails the estate-wide check and falls through to
++    // authorize()'s scoped-grant path, instead of accidentally being
++    // treated as an unrestricted role. GET /auth/me and the UI derive the
++    // real display label from `scopes[0].role` when persona is this value.
++    const persona = primaryRole ?? "scoped";
+ 
+     const username = claims.preferred_username || claims.sub;
+     const id = randomBytes(32).toString("hex");
+     await query(
+       `INSERT INTO sessions (id, username, persona, namespaces, groups, expires_at, last_seen_at)
+        VALUES ($1,$2,$3,$4,$5, now() + interval '1 hour', now())`,
+-      [id, username, primaryRole, tenantScopes, groups],
++      [id, username, persona, tenantScopes, groups],
+     );
+     setCookie(res, id);
+     // returnTo is normally relative and safe to redirect to as-is (validated
+@@ -150,6 +160,7 @@ authRouter.get("/me", async (req, res, next) => {
+         user: "demo",
+         persona: "operator",
+         namespaces: [],
++        scopes: [],
+       });
+     const id = readCookie(req);
+     if (!id)
+@@ -163,12 +174,18 @@ authRouter.get("/me", async (req, res, next) => {
+     );
+     if (!rows.length)
+       return res.status(401).json({ enabled: true, error: "session expired" });
++    // Prompt 27, Deliverable 4 — scopes mirrors req.identity.scopes exactly,
++    // re-derived from the session's own stored `groups` (the same source
++    // requireSession uses below), so /auth/me and the actual enforcement
++    // path can never drift apart.
++    const { scopes } = groupsToIdentity(rows[0].groups ?? []);
+     res.json({
+       enabled: true,
+       user: rows[0].username,
+       persona: rows[0].persona,
+       namespaces: rows[0].namespaces ?? [],
+       groups: rows[0].groups ?? [],
++      scopes,
+       demoSwitch: config.auth.demoSwitch,
+     });
+   } catch (err) {
+@@ -249,6 +266,7 @@ export function requireSession(req, res, next) {
+       namespaces: [],
+       roles: ["operator"],
+       tenantScopes: [],
++      scopes: [],
+       groups: [],
+     };
+     return next();
+@@ -266,12 +284,23 @@ export function requireSession(req, res, next) {
+     .then(({ rows }) => {
+       if (!rows.length)
+         return res.status(401).json({ error: "session expired" });
++      // `roles` stays derived from the stored `persona` (unchanged from
++      // before this prompt) — a session acts as one estate-wide role at a
++      // time, and demo-persona (below) legitimately overrides which one
++      // that is, for presentations. `scopes` is new: re-derived fresh from
++      // the session's own stored `groups` on every request — demo-persona
++      // never writes to `groups`, so it structurally cannot grant a scoped
++      // env/team override (Deliverable 4's own requirement), while a real
++      // scoped-role group membership is always reflected correctly here
++      // regardless of which persona is currently in effect for the session.
++      const { scopes } = groupsToIdentity(rows[0].groups ?? []);
+       req.identity = {
+         user: rows[0].username,
+         persona: rows[0].persona,
+         namespaces: rows[0].namespaces ?? [],
+         roles: [rows[0].persona],
+         tenantScopes: rows[0].namespaces ?? [],
++        scopes,
+         groups: rows[0].groups ?? [],
+       };
+       // Idle-timeout sliding window — fire-and-forget, never blocks the request.
+diff --git a/arcanium/api/src/index.js b/arcanium/api/src/index.js
+index 5259404..2e3e594 100644
+--- a/arcanium/api/src/index.js
++++ b/arcanium/api/src/index.js
+@@ -19,6 +19,7 @@ import { applicationsRouter } from "./routes/applications.js";
+ import { keysRouter } from "./routes/keys.js";
+ import { pkiRouter } from "./routes/pki.js";
+ import { suppliersRouter } from "./routes/suppliers.js";
++import { teamsRouter } from "./routes/teams.js";
+ import { approvalsRouter } from "./routes/approvals.js";
+ import { clusterRouter } from "./routes/cluster.js";
+ import { jobsRouter } from "./routes/jobs.js";
+@@ -123,6 +124,7 @@ async function main() {
+   app.use("/api/v1/keys", keysRouter);
+   app.use("/api/v1/pki", pkiRouter);
+   app.use("/api/v1/suppliers", suppliersRouter);
++  app.use("/api/v1/teams", teamsRouter);
+   app.use("/api/v1/approvals", approvalsRouter);
+   app.use("/api/v1/cluster", clusterRouter);
+   app.use("/api/v1/jobs", jobsRouter);
+diff --git a/arcanium/api/src/reconciliation/engine.js b/arcanium/api/src/reconciliation/engine.js
+index bd80110..3016bdd 100644
+--- a/arcanium/api/src/reconciliation/engine.js
++++ b/arcanium/api/src/reconciliation/engine.js
+@@ -320,7 +320,7 @@ export async function acceptException(
+  * `tenant` param, the same two-step pattern every Phase 18+ route uses. */
+ export async function runTenant(runId) {
+   const { rows } = await query(
+-    `SELECT a.supplier_id, s.vault_namespace
++    `SELECT a.supplier_id, a.environment, s.vault_namespace
+        FROM reconciliation_runs rr
+        JOIN desired_state ds ON ds.id = rr.desired_state_id
+        JOIN applications a ON a.id = ds.application_id
+diff --git a/arcanium/api/src/routes/applications.js b/arcanium/api/src/routes/applications.js
+index 31a97dc..0a5dd80 100644
+--- a/arcanium/api/src/routes/applications.js
++++ b/arcanium/api/src/routes/applications.js
+@@ -5,7 +5,8 @@ import { query } from "../db.js";
+ import { createJob, runOrQueue } from "../provisioner/steps.js";
+ import { provisionApplication } from "../provisioner/application.js";
+ import { tenantScope } from "../auth/index.js";
+-import { authorize } from "../auth/authorize.js";
++import { authorize, roleVerdict } from "../auth/authorize.js";
++import { teamReadScope, scopedReadDenied } from "../auth/scope.js";
+ import { getApplicationIntent } from "../aggregation/intent.js";
+ 
+ export const applicationsRouter = Router();
+@@ -29,16 +30,33 @@ function notFound() {
+ }
+ 
+ // GET /api/v1/applications
++// Prompt 27, Deliverable 5/6 — team-scoped read (Configuration C): an
++// identity with no estate-wide read role but a scoped grant like
++// "arcanium-auditor:team:platform" sees exactly that team's applications —
++// filtered, not a 403 ("read is allowed but scoped" per this prompt's own
++// spec). Composed with, not replacing, the existing tenantScope() path.
+ applicationsRouter.get("/", async (req, res, next) => {
+   try {
+     const scope = await tenantScope(req);
+-    const { rows } = scope.scoped
++    let supplierIdFilter = null; // null = unscoped (see everything)
++    if (scope.scoped) {
++      supplierIdFilter = scope.supplierIds;
++    } else {
++      const estateWideRead = (req.identity?.roles || []).some(
++        (r) => roleVerdict(r, "read") === true,
++      );
++      if (!estateWideRead) {
++        const team = await teamReadScope(req.identity);
++        if (team.scoped) supplierIdFilter = team.supplierIds; // null here still means "this team covers everything"
++      }
++    }
++    const { rows } = supplierIdFilter !== null
+       ? await query(
+-          "SELECT id, name, description, supplier_id, category, registered_at FROM applications WHERE supplier_id = ANY($1) ORDER BY registered_at DESC",
+-          [scope.supplierIds],
++          "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications WHERE supplier_id = ANY($1) ORDER BY registered_at DESC",
++          [supplierIdFilter],
+         )
+       : await query(
+-          "SELECT id, name, description, supplier_id, category, registered_at FROM applications ORDER BY registered_at DESC",
++          "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications ORDER BY registered_at DESC",
+         );
+     res.json(rows);
+   } catch (err) {
+@@ -50,6 +68,19 @@ applicationsRouter.get("/", async (req, res, next) => {
+ applicationsRouter.post("/", async (req, res, next) => {
+   try {
+     const { name, description, supplier_id } = req.body ?? {};
++    // Prompt 27, Deliverable 3 — explicitly recorded, never silently
++    // defaulted: an absent `environment` in the request body is set to
++    // 'production' HERE (visible in this route's own code), not left to
++    // the column's DB-level DEFAULT alone to paper over.
++    const environment =
++      req.body?.environment !== undefined && req.body?.environment !== null
++        ? String(req.body.environment)
++        : "production";
++    if (!/^[a-z0-9_-]{1,64}$/i.test(environment))
++      return res.status(400).json({
++        error: "environment must match /^[a-z0-9_-]{1,64}$/i",
++        field: "environment",
++      });
+     // Prompt 19 — authorize()'s "limited" (supplier-admin) verdict only
+     // ALLOWs when `tenant` is passed and matches identity.tenantScopes; the
+     // original call here never passed one, so a supplier-admin could never
+@@ -64,10 +95,15 @@ applicationsRouter.post("/", async (req, res, next) => {
+       );
+       tenant = rows[0]?.vault_namespace ?? null;
+     }
++    // Prompt 27, Deliverable 3 — the resource being created doesn't exist
++    // yet, so its "env" is the environment being declared for it: a scoped
++    // operator:env:staging grant may create staging applications but not
++    // production ones.
+     const decision = authorize({
+       identity: req.identity,
+       action: "provision",
+       tenant,
++      env: environment,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+@@ -96,8 +132,8 @@ applicationsRouter.post("/", async (req, res, next) => {
+         .json({ error: "supplier_id must be a UUID", field: "supplier_id" });
+ 
+     const { rows } = await query(
+-      "INSERT INTO applications (name, description, supplier_id) VALUES ($1, $2, $3) RETURNING id, name, description, supplier_id, registered_at",
+-      [name, description ?? null, supplier_id ?? null],
++      "INSERT INTO applications (name, description, supplier_id, environment) VALUES ($1, $2, $3, $4) RETURNING id, name, description, supplier_id, environment, registered_at",
++      [name, description ?? null, supplier_id ?? null, environment],
+     );
+     res.status(201).json(rows[0]);
+   } catch (err) {
+@@ -112,7 +148,7 @@ applicationsRouter.get("/:id", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
+     const { rows: apps } = await query(
+-      "SELECT id, name, description, supplier_id, category, registered_at FROM applications WHERE id = $1",
++      "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications WHERE id = $1",
+       [req.params.id],
+     );
+     if (!apps.length) return next(notFound());
+@@ -124,6 +160,17 @@ applicationsRouter.get("/:id", async (req, res, next) => {
+     if (scope.scoped && !scope.supplierIds.includes(apps[0].supplier_id)) {
+       return next(notFound());
+     }
++    // Prompt 27, Deliverable 5 — same fix, same reasoning, for the scoped
++    // (team/env) grant path: GET / already narrows by it; a direct-by-id
++    // fetch had not, until this audit found it.
++    if (
++      await scopedReadDenied(req.identity, {
++        supplierId: apps[0].supplier_id,
++        env: apps[0].environment,
++      })
++    ) {
++      return next(notFound());
++    }
+ 
+     const { rows: profiles } = await query(
+       "SELECT id, type, vault_path, created_at FROM crypto_profiles WHERE application_id = $1 ORDER BY created_at",
+@@ -144,7 +191,7 @@ applicationsRouter.get("/:id/intent", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
+     const { rows: apps } = await query(
+-      "SELECT id, supplier_id FROM applications WHERE id = $1",
++      "SELECT id, supplier_id, environment FROM applications WHERE id = $1",
+       [req.params.id],
+     );
+     if (!apps.length) return next(notFound());
+@@ -153,6 +200,15 @@ applicationsRouter.get("/:id/intent", async (req, res, next) => {
+     if (scope.scoped && !scope.supplierIds.includes(apps[0].supplier_id)) {
+       return next(notFound());
+     }
++    // Prompt 27, Deliverable 5 — same scoped-grant fix as GET /:id above.
++    if (
++      await scopedReadDenied(req.identity, {
++        supplierId: apps[0].supplier_id,
++        env: apps[0].environment,
++      })
++    ) {
++      return next(notFound());
++    }
+ 
+     const intent = await getApplicationIntent(req.params.id);
+     if (!intent) return next(notFound());
+@@ -180,7 +236,7 @@ applicationsRouter.get("/:id/intent", async (req, res, next) => {
+ // existence + supplier_id lookup PATCH/DELETE need anyway.
+ async function applicationTenant(id) {
+   const { rows } = await query(
+-    `SELECT a.supplier_id, s.vault_namespace
++    `SELECT a.supplier_id, a.environment, s.vault_namespace
+        FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
+       WHERE a.id = $1`,
+     [id],
+@@ -206,6 +262,7 @@ applicationsRouter.patch("/:id", async (req, res, next) => {
+       identity: req.identity,
+       action: "provision",
+       tenant: app.vault_namespace,
++      env: app.environment,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+@@ -254,6 +311,7 @@ applicationsRouter.delete("/:id", async (req, res, next) => {
+       identity: req.identity,
+       action: "destroy_request",
+       tenant: app.vault_namespace,
++      env: app.environment,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+@@ -301,6 +359,7 @@ applicationsRouter.post("/:id/provision", async (req, res, next) => {
+       identity: req.identity,
+       action: "provision",
+       tenant: tenantInfo?.vault_namespace ?? null,
++      env: tenantInfo?.environment ?? null,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+@@ -365,6 +424,7 @@ applicationsRouter.post("/:id/classify", async (req, res, next) => {
+       identity: req.identity,
+       action: "provision",
+       tenant: app.vault_namespace,
++      env: app.environment,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+diff --git a/arcanium/api/src/routes/approvals.js b/arcanium/api/src/routes/approvals.js
+index d458d80..723f3e9 100644
+--- a/arcanium/api/src/routes/approvals.js
++++ b/arcanium/api/src/routes/approvals.js
+@@ -61,14 +61,18 @@ async function approvalTenant({ supplier_id, app_id }) {
+       "SELECT id, vault_namespace FROM suppliers WHERE id = $1",
+       [supplier_id],
+     );
++    // Prompt 27 — a supplier-only-scoped approval (no app_id) has no single
++    // application to read an environment tag from; environment stays null,
++    // same as any other estate-level resource this prompt doesn't tag.
+     return {
+       supplierId: rows[0]?.id ?? null,
+       vaultNamespace: rows[0]?.vault_namespace ?? null,
++      environment: null,
+     };
+   }
+   if (app_id && UUID_RE.test(app_id)) {
+     const { rows } = await query(
+-      `SELECT s.id, s.vault_namespace
++      `SELECT s.id, s.vault_namespace, a.environment
+          FROM applications a JOIN suppliers s ON s.id = a.supplier_id
+         WHERE a.id = $1`,
+       [app_id],
+@@ -76,9 +80,31 @@ async function approvalTenant({ supplier_id, app_id }) {
+     return {
+       supplierId: rows[0]?.id ?? null,
+       vaultNamespace: rows[0]?.vault_namespace ?? null,
++      environment: rows[0]?.environment ?? null,
+     };
+   }
+-  return { supplierId: null, vaultNamespace: null };
++  return { supplierId: null, vaultNamespace: null, environment: null };
++}
++
++// Prompt 27, Deliverable 3 — same env/tenant resolution as approvalTenant()
++// above, but keyed by an EXISTING approval_requests row (approve/deny act on
++// an id, not a fresh app_id/supplier_id pair from the request body).
++async function approvalContext(id) {
++  const { rows } = await query(
++    `SELECT ar.supplier_id AS ar_supplier_id, a.environment,
++            COALESCE(s.vault_namespace, s2.vault_namespace) AS vault_namespace
++       FROM approval_requests ar
++       LEFT JOIN applications a ON a.id = ar.app_id
++       LEFT JOIN suppliers s ON s.id = ar.supplier_id
++       LEFT JOIN suppliers s2 ON s2.id = a.supplier_id
++      WHERE ar.id = $1`,
++    [id],
++  );
++  if (!rows.length) return null;
++  return {
++    vaultNamespace: rows[0].vault_namespace ?? null,
++    environment: rows[0].environment ?? null,
++  };
+ }
+ 
+ // GET /api/v1/approvals
+@@ -137,7 +163,7 @@ approvalsRouter.post("/", async (req, res, next) => {
+     // check: any authenticated session could create an approval request
+     // against any application, cross-tenant.
+     const scope = await tenantScope(req);
+-    const { supplierId, vaultNamespace } = await approvalTenant({
++    const { supplierId, vaultNamespace, environment } = await approvalTenant({
+       supplier_id,
+       app_id,
+     });
+@@ -148,6 +174,7 @@ approvalsRouter.post("/", async (req, res, next) => {
+       identity: req.identity,
+       action: resolveApprovalAction(action),
+       tenant: vaultNamespace,
++      env: environment,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+@@ -202,7 +229,13 @@ approvalsRouter.post("/", async (req, res, next) => {
+ approvalsRouter.post("/:id/approve", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
+-    const decision = authorize({ identity: req.identity, action: "approve" });
++    const ctx = await approvalContext(req.params.id);
++    const decision = authorize({
++      identity: req.identity,
++      action: "approve",
++      tenant: ctx?.vaultNamespace ?? null,
++      env: ctx?.environment ?? null,
++    });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+         error: "forbidden",
+@@ -249,7 +282,13 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
+ approvalsRouter.post("/:id/deny", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
+-    const decision = authorize({ identity: req.identity, action: "approve" });
++    const ctx = await approvalContext(req.params.id);
++    const decision = authorize({
++      identity: req.identity,
++      action: "approve",
++      tenant: ctx?.vaultNamespace ?? null,
++      env: ctx?.environment ?? null,
++    });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+         error: "forbidden",
+@@ -293,7 +332,7 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
+     // action as POST /:id/approve, but was reachable by any authenticated
+     // session with no role or tenant check.
+     const { rows } = await query(
+-      `SELECT ar.id, ar.status, ar.supplier_id, s.vault_namespace
++      `SELECT ar.id, ar.status, ar.supplier_id, s.vault_namespace, a.environment
+          FROM approval_requests ar
+          LEFT JOIN applications a ON a.id = ar.app_id
+          LEFT JOIN suppliers s ON s.id = COALESCE(ar.supplier_id, a.supplier_id)
+@@ -315,6 +354,7 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
+       identity: req.identity,
+       action: "approve",
+       tenant: record.vault_namespace ?? null,
++      env: record.environment ?? null,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+diff --git a/arcanium/api/src/routes/controls.js b/arcanium/api/src/routes/controls.js
+index 2b11a4f..645a884 100644
+--- a/arcanium/api/src/routes/controls.js
++++ b/arcanium/api/src/routes/controls.js
+@@ -9,6 +9,8 @@
+ import { Router } from "express";
+ import { query } from "../db.js";
+ import { tenantScope } from "../auth/index.js";
++import { roleVerdict } from "../auth/authorize.js";
++import { teamReadScope } from "../auth/scope.js";
+ 
+ export const controlsRouter = Router();
+ 
+@@ -18,19 +20,48 @@ function notFound() {
+   return err;
+ }
+ 
+-// Filters assessment rows down to the caller's own tenant scope(s).
++// Filters assessment rows down to the caller's own tenant/team scope.
+ // 'estate'-scoped assessments (platform-wide controls — KEY-INV-01,
+ // TEN-ISO-01, AUD-01, WLI-01, NEG-AUTHZ-01, AUTO-01, GOV-01) are never
+-// visible to a scoped supplier-admin session; only per-application
+-// assessments (ROT-POL-01) under the caller's own namespace are.
+-async function filterToTenant(req, rows) {
++// visible to a scoped session (tenant- or team-scoped); only per-
++// application assessments (ROT-POL-01) under the caller's own namespace
++// are — true whether the caller is a supplier-admin scoped by tenant or,
++// as of Prompt 27, an operator/auditor scoped by team.
++//
++// Prompt 27, Configuration C's own named gap: "GET /api/v1/controls
++// returns all assessments for an operator session, regardless of team."
++// Fixed here — an identity with no estate-wide read role is now narrowed
++// by whichever scoped grant (tenant or team) actually applies, filtered
++// rather than denied outright.
++async function filterToScope(req, rows) {
+   const scope = await tenantScope(req);
+-  if (!scope.scoped) return rows;
+-  const { rows: sup } = await query(
+-    "SELECT vault_namespace FROM suppliers WHERE id = ANY($1)",
+-    [scope.supplierIds],
+-  );
+-  const prefixes = sup.map((s) => s.vault_namespace).filter(Boolean);
++  let prefixes = null; // null = unrestricted
++  if (scope.scoped) {
++    const { rows: sup } = await query(
++      "SELECT vault_namespace FROM suppliers WHERE id = ANY($1)",
++      [scope.supplierIds],
++    );
++    prefixes = sup.map((s) => s.vault_namespace).filter(Boolean);
++  } else {
++    const estateWideRead = (req.identity?.roles || []).some(
++      (r) => roleVerdict(r, "read") === true,
++    );
++    if (!estateWideRead) {
++      const team = await teamReadScope(req.identity);
++      if (!team.scoped) {
++        prefixes = []; // no grant at all covers read here — see nothing, not an error
++      } else if (team.supplierIds !== null) {
++        const { rows: sup } = await query(
++          "SELECT vault_namespace FROM suppliers WHERE id = ANY($1)",
++          [team.supplierIds],
++        );
++        prefixes = sup.map((s) => s.vault_namespace).filter(Boolean);
++      }
++      // team.supplierIds === null: this team covers every supplier — leave
++      // prefixes null (unrestricted), same as an estate-wide read role.
++    }
++  }
++  if (prefixes === null) return rows;
+   return rows.filter((r) => prefixes.some((p) => r.scope.startsWith(`${p}/`)));
+ }
+ 
+@@ -43,14 +74,14 @@ controlsRouter.get("/", async (req, res, next) => {
+          JOIN controls c ON c.id = ca.control_id
+         ORDER BY control_id, scope, assessed_at DESC`,
+     );
+-    res.json(await filterToTenant(req, rows));
++    res.json(await filterToScope(req, rows));
+   } catch (err) {
+     next(err);
+   }
+ });
+ 
+ // GET /api/v1/controls/:id — one control's definition + its latest
+-// assessment per scope (tenant-filtered the same way as the list route).
++// assessment per scope (tenant/team-filtered the same way as the list route).
+ controlsRouter.get("/:id", async (req, res, next) => {
+   try {
+     const { rows: ctrl } = await query("SELECT * FROM controls WHERE id = $1", [
+@@ -64,7 +95,7 @@ controlsRouter.get("/:id", async (req, res, next) => {
+         ORDER BY scope, assessed_at DESC`,
+       [req.params.id],
+     );
+-    const assessments = await filterToTenant(req, rows);
++    const assessments = await filterToScope(req, rows);
+     res.json({ ...ctrl[0], assessments });
+   } catch (err) {
+     next(err);
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index dce7dd5..3191c34 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -15,9 +15,33 @@ import {
+   requestKeyDestroy,
+ } from "../provisioner/key.js";
+ import { authorize } from "../auth/authorize.js";
++import { query } from "../db.js";
+ 
+ export const keysRouter = Router();
+ 
++// Prompt 27, Deliverable 3 — these routes operate on a bare Vault key name,
++// with no application_id in the URL, so resolving the owning application's
++// tenant/environment needs a join through crypto_profiles (vault_path's
++// trailing segment is the key name). Found live while wiring this in: these
++// three routes previously passed NO tenant at all — meaning a
++// supplier-admin's 'limited' verdict on rotate/destroy_request could never
++// succeed even for their own tenant's key (the same missing-tenant-param
++// bug already fixed elsewhere in Prompts 18/19). Resolving it here fixes
++// that gap as a direct byproduct of adding the env lookup this prompt
++// requires, not a separate, deferred fix.
++async function ownerOfKey(name) {
++  const { rows } = await query(
++    `SELECT s.vault_namespace, a.environment
++       FROM crypto_profiles cp
++       JOIN applications a ON a.id = cp.application_id
++       LEFT JOIN suppliers s ON s.id = a.supplier_id
++      WHERE cp.vault_path LIKE '%/' || $1
++      LIMIT 1`,
++    [name],
++  );
++  return rows[0] ?? null; // null = key exists in Vault but isn't tracked by any crypto_profile
++}
++
+ const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
+ 
+ // Derive a human custody label without inferring from the key name.
+@@ -164,7 +188,13 @@ keysRouter.post("/:name/rotate", async (req, res, next) => {
+     const { name } = req.params;
+     if (!KEY_NAME_RE.test(name))
+       return res.status(400).json({ error: "invalid key name" });
+-    const decision = authorize({ identity: req.identity, action: "rotate" });
++    const owner = await ownerOfKey(name);
++    const decision = authorize({
++      identity: req.identity,
++      action: "rotate",
++      tenant: owner?.vault_namespace ?? null,
++      env: owner?.environment ?? null,
++    });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+         error: "forbidden",
+@@ -200,7 +230,13 @@ keysRouter.post("/:name/rewrap", async (req, res, next) => {
+     // architect (the previous inline check incorrectly allowed both; that
+     // was a real gap, not a stylistic difference — see
+     // scenarios/11_security_foundation/test_negative_auth.sh).
+-    const decision = authorize({ identity: req.identity, action: "rewrap" });
++    const owner = await ownerOfKey(name);
++    const decision = authorize({
++      identity: req.identity,
++      action: "rewrap",
++      tenant: owner?.vault_namespace ?? null,
++      env: owner?.environment ?? null,
++    });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+         error: "forbidden",
+@@ -222,9 +258,12 @@ keysRouter.post("/:name/destroy", async (req, res, next) => {
+     const { name } = req.params;
+     if (!KEY_NAME_RE.test(name))
+       return res.status(400).json({ error: "invalid key name" });
++    const owner = await ownerOfKey(name);
+     const decision = authorize({
+       identity: req.identity,
+       action: "destroy_request",
++      tenant: owner?.vault_namespace ?? null,
++      env: owner?.environment ?? null,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+diff --git a/arcanium/api/src/routes/reconciliation.js b/arcanium/api/src/routes/reconciliation.js
+index f494984..6cc0d2d 100644
+--- a/arcanium/api/src/routes/reconciliation.js
++++ b/arcanium/api/src/routes/reconciliation.js
+@@ -9,7 +9,8 @@
+ import { Router } from "express";
+ import { query } from "../db.js";
+ import { tenantScope } from "../auth/index.js";
+-import { authorize } from "../auth/authorize.js";
++import { authorize, roleVerdict } from "../auth/authorize.js";
++import { teamReadScope, scopedReadDenied } from "../auth/scope.js";
+ import {
+   runSweep,
+   reconcileRun,
+@@ -51,11 +52,58 @@ reconciliationRouter.get("/", async (req, res, next) => {
+   try {
+     const scope = await tenantScope(req);
+     const params = [];
+-    let where = "";
++    const clauses = [];
+     if (scope.scoped) {
+       params.push(scope.supplierIds);
+-      where = `WHERE a.supplier_id = ANY($${params.length})`;
++      clauses.push(`a.supplier_id = ANY($${params.length})`);
++    } else {
++      // Prompt 27, Deliverable 3/6 — no estate-wide read role: narrow by
++      // whatever scoped grants the identity actually has (env and/or
++      // team), never a 403 for a read that's merely scoped rather than
++      // denied outright. An identity with an estate-wide read role (the
++      // common case today) is left completely unrestricted, exactly as
++      // before this prompt.
++      const estateWideRead = (req.identity?.roles || []).some(
++        (r) => roleVerdict(r, "read") === true,
++      );
++      if (!estateWideRead) {
++        const grants = req.identity?.scopes || [];
++        const envUnion = new Set();
++        let envRestricted = false;
++        for (const g of grants) {
++          const v = roleVerdict(g.role, "read");
++          if (v !== true && v !== "limited") continue;
++          if (g.envScopes.length) {
++            envRestricted = true;
++            for (const e of g.envScopes) envUnion.add(e);
++          }
++        }
++        if (envRestricted) {
++          params.push([...envUnion]);
++          clauses.push(`a.environment = ANY($${params.length})`);
++        }
++        const team = await teamReadScope(req.identity);
++        if (team.scoped && team.supplierIds !== null) {
++          params.push(team.supplierIds);
++          clauses.push(`a.supplier_id = ANY($${params.length})`);
++        }
++        // Neither env- nor team-restricted, and no estate-wide read role
++        // either: no scoped grant applies at all — see nothing (deny-safe
++        // empty list, not an error, matching the same "scoped, not denied"
++        // shape as the cases above).
++        if (!envRestricted && !(team.scoped && team.supplierIds !== null)) {
++          clauses.push("false");
++        }
++      }
++    }
++    // Optional ?env= query filter, intersected with (not a bypass of) the
++    // scope narrowing above — any caller may ask to see only one
++    // environment; it can only ever narrow further, never widen access.
++    if (typeof req.query.env === "string" && req.query.env) {
++      params.push(req.query.env);
++      clauses.push(`a.environment = $${params.length}`);
+     }
++    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+     const { rows } = await query(
+       `SELECT ds.id, ds.application_id, a.name AS application_name, a.supplier_id,
+               s.vault_namespace, ds.key_name, ds.requirement, ds.desired_value,
+@@ -135,7 +183,7 @@ reconciliationRouter.post("/run", async (req, res, next) => {
+     if (desired_state_id) {
+       validateUuid(desired_state_id);
+       const { rows } = await query(
+-        `SELECT a.supplier_id, s.vault_namespace
++        `SELECT a.supplier_id, a.environment, s.vault_namespace
+            FROM desired_state ds
+            JOIN applications a ON a.id = ds.application_id
+            LEFT JOIN suppliers s ON s.id = a.supplier_id
+@@ -149,6 +197,7 @@ reconciliationRouter.post("/run", async (req, res, next) => {
+         identity: req.identity,
+         action: "read",
+         tenant: rows[0].vault_namespace ?? null,
++        env: rows[0].environment ?? null,
+       });
+       if (decision.decision !== "ALLOW")
+         return res.status(403).json({
+@@ -160,6 +209,19 @@ reconciliationRouter.post("/run", async (req, res, next) => {
+       return res.json(results);
+     }
+ 
++    // Prompt 27 — this bulk path has no single resource to check env/team
++    // against, so a scoped grant (which requires a specific env/team to
++    // match) can never satisfy it — only an estate-wide role can. Found
++    // live while wiring this prompt in: before this check, a scoped-only
++    // identity (persona "scoped", no MATRIX entry) would reach here with
++    // no gate at all and run an entirely unscoped sweep.
++    const decision = authorize({ identity: req.identity, action: "read" });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({
++        error: "forbidden",
++        action: "read",
++        reason: decision.reason,
++      });
+     // Estate-wide sweep, implicitly narrowed to the caller's own tenant(s)
+     // when scoped — never a separate opt-in the caller could forget.
+     const results = await runSweep(
+@@ -183,7 +245,7 @@ reconciliationRouter.patch("/desired-state/:id", async (req, res, next) => {
+     if (!existing) return next(notFound());
+ 
+     const { rows: appRows } = await query(
+-      `SELECT a.supplier_id, s.vault_namespace
++      `SELECT a.supplier_id, a.environment, s.vault_namespace
+          FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
+         WHERE a.id = $1`,
+       [existing.application_id],
+@@ -195,6 +257,7 @@ reconciliationRouter.patch("/desired-state/:id", async (req, res, next) => {
+       identity: req.identity,
+       action: "provision",
+       tenant: appRows[0]?.vault_namespace ?? null,
++      env: appRows[0]?.environment ?? null,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+@@ -241,7 +304,7 @@ reconciliationRouter.get("/:run_id", async (req, res, next) => {
+               rr.status, rr.observed_at, rr.detail,
+               ds.application_id, ds.key_name, ds.requirement, ds.desired_value,
+               ds.version, ds.source, ds.changed_by, ds.changed_groups, ds.changed_reason, ds.updated_at,
+-              a.name AS application_name, a.supplier_id, s.vault_namespace
++              a.name AS application_name, a.supplier_id, a.environment, s.vault_namespace
+          FROM reconciliation_runs rr
+          JOIN desired_state ds ON ds.id = rr.desired_state_id
+          JOIN applications a ON a.id = ds.application_id
+@@ -255,6 +318,17 @@ reconciliationRouter.get("/:run_id", async (req, res, next) => {
+     const scope = await tenantScope(req);
+     if (scope.scoped && !scope.supplierIds.includes(r.supplier_id))
+       return next(notFound());
++    // Prompt 27, Deliverable 5 — same scoped-grant (team/env) fix as
++    // applications.js's GET /:id above; found by this prompt's own
++    // required audit.
++    if (
++      await scopedReadDenied(req.identity, {
++        supplierId: r.supplier_id,
++        env: r.environment,
++      })
++    ) {
++      return next(notFound());
++    }
+ 
+     const disposition = await getDispositionFor(r.desired_state_id, r.status);
+     const history = await getDesiredStateHistory({
+@@ -313,6 +387,7 @@ reconciliationRouter.post("/:run_id/reconcile", async (req, res, next) => {
+       identity: req.identity,
+       action: "reconcile",
+       tenant: tenant.vault_namespace ?? null,
++      env: tenant.environment ?? null,
+     });
+     if (decision.decision !== "ALLOW")
+       return res.status(403).json({
+@@ -358,6 +433,7 @@ reconciliationRouter.post(
+         identity: req.identity,
+         action: "approve",
+         tenant: tenant.vault_namespace ?? null,
++        env: tenant.environment ?? null,
+       });
+       if (decision.decision !== "ALLOW")
+         return res.status(403).json({
+diff --git a/arcanium/ui/app/composables/useArcaniumApi.ts b/arcanium/ui/app/composables/useArcaniumApi.ts
+index bf47a25..b0aa8ea 100644
+--- a/arcanium/ui/app/composables/useArcaniumApi.ts
++++ b/arcanium/ui/app/composables/useArcaniumApi.ts
+@@ -3,7 +3,7 @@
+ 
+ import type {
+   Supplier, Application, TransitKey, ApprovalRecord, ApiHealth, ClusterNode, MaturityReport, ProvisioningJob,
+-  ReconciliationRow, ReconciliationDetail, ApplicationIntent
++  ReconciliationRow, ReconciliationDetail, ApplicationIntent, Team
+ } from '~/types/arcanium'
+ // Prompt 22, Deliverable 2 — openapi/arcanium.yaml is the one authoritative
+ // contract; these return types are generated from it (`make openapi-generate`
+@@ -58,7 +58,7 @@ export function useArcaniumApi() {
+     // Sign-in is a full-page navigation to /gateway/api/v1/auth/login, not a
+     // fetch call — see app/pages/login.vue. There is no username/password
+     // API call any more; Express is the OIDC client end-to-end.
+-    me: () => $get<{ enabled: boolean; user: string; persona: string; namespaces: string[]; groups?: string[]; demoSwitch?: boolean }>('/api/v1/auth/me'),
++    me: () => $get<{ enabled: boolean; user: string; persona: string; namespaces: string[]; groups?: string[]; scopes?: import('~/types/arcanium').IdentityScope[]; demoSwitch?: boolean }>('/api/v1/auth/me'),
+     logout: () => $post<{ ok: boolean; logoutUrl: string | null }>('/api/v1/auth/logout'),
+     setDemoPersona: (persona: string) => $post<{ persona: string }>('/api/v1/auth/demo-persona', { persona }),
+ 
+@@ -81,6 +81,13 @@ export function useArcaniumApi() {
+     createSupplier: (body: Pick<Supplier, 'name' | 'vault_namespace' | 'sla_tier'>) => $post<Supplier>('/api/v1/suppliers', body),
+     updateSupplier: (id: string, body: Partial<Supplier>) => $patch<Supplier>(`/api/v1/suppliers/${encodeURIComponent(id)}`, body),
+     deleteSupplier: (id: string) => $delete<void>(`/api/v1/suppliers/${encodeURIComponent(id)}`),
++
++    // ── Teams (Prompt 27) ──────────────────────────────────
++    teams: () => $get<Team[]>('/api/v1/teams'),
++    team: (id: string) => $get<Team>(`/api/v1/teams/${encodeURIComponent(id)}`),
++    createTeam: (body: Pick<Team, 'name'> & Partial<Team>) => $post<Team>('/api/v1/teams', body),
++    updateTeam: (id: string, body: Partial<Team>) => $patch<Team>(`/api/v1/teams/${encodeURIComponent(id)}`, body),
++    deleteTeam: (id: string) => $delete<void>(`/api/v1/teams/${encodeURIComponent(id)}`),
+     // ── Reconciliation (Prompt 20) ────────────────────────
+     reconciliationList: (opts?: { status?: string; disposition?: string }) => {
+       const q = new URLSearchParams(Object.entries(opts ?? {}).filter(([, v]) => v) as [string, string][]).toString()
+diff --git a/arcanium/ui/app/layouts/default.vue b/arcanium/ui/app/layouts/default.vue
+index 1238719..959cc09 100644
+--- a/arcanium/ui/app/layouts/default.vue
++++ b/arcanium/ui/app/layouts/default.vue
+@@ -220,9 +220,21 @@ const persona = ref('operator')
+ const username = ref('')
+ const authGroups = ref<string[]>([])
+ const tenantScopeNs = ref<string[]>([])
+-const personaLabel = computed(() =>
+-  persona.value ? persona.value.charAt(0).toUpperCase() + persona.value.slice(1).replace('-', ' ') : 'Operator',
+-)
++// Prompt 27, Deliverable 4 — a scoped-only identity has no estate-wide
++// role (persona is the "scoped" sentinel — see auth/index.js's own
++// callback handler comment for why); the real display role comes from
++// scopes[0].role in that case, with an "(env only)"/"(team only)" suffix
++// so "Operator" never silently reads as unrestricted when it isn't.
++const scopes = ref<{ role: string, envScopes: string[], teamScopes: string[] }[]>([])
++const personaLabel = computed(() => {
++  const label = (role: string) => role.charAt(0).toUpperCase() + role.slice(1).replace('-', ' ')
++  if (persona.value === 'scoped' && scopes.value.length) {
++    const g = scopes.value[0]!
++    const dims = [...g.envScopes, ...g.teamScopes]
++    return `${label(g.role)} (${dims.join(', ') || 'scoped'} only)`
++  }
++  return persona.value ? label(persona.value) : 'Operator'
++})
+ onMounted(async () => {
+   try {
+     const m = await me()
+@@ -231,6 +243,7 @@ onMounted(async () => {
+     username.value = m.user || ''
+     authGroups.value = m.groups || []
+     tenantScopeNs.value = m.namespaces || []
++    scopes.value = m.scopes || []
+   } catch { /* not signed in — global middleware handles the redirect */ }
+ })
+ async function signOut() {
+@@ -313,6 +326,7 @@ const NAV_ICONS = {
+   maturity: `<svg viewBox="0 0 16 16" fill="none"><polyline points="2,12 6,7 9,10 14,4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+   observability: `<svg viewBox="0 0 16 16" fill="none"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/></svg>`,
+   reconciliation: `<svg viewBox="0 0 16 16" fill="none"><path d="M13 4a5 5 0 0 0-8.9-1.6M3 12a5 5 0 0 0 8.9 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M13 1.5V4h-2.5M3 14.5V12h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
++  teams: `<svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.3" stroke="currentColor" stroke-width="1.2"/><circle cx="11" cy="6.5" r="1.8" stroke="currentColor" stroke-width="1.1" opacity=".6"/><path d="M1.5 14c0-2.8 1.8-5 4-5s4 2.2 4 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M9.7 9.5c1.8.2 3 1.9 3 4.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity=".6"/></svg>`,
+ }
+ 
+ const isSupplierAdmin = computed(() => persona.value === 'supplier-admin')
+@@ -338,6 +352,7 @@ const navItems = computed(() => {
+     { to: '/cluster', label: 'Cluster', icon: NAV_ICONS.cluster, platform: true },
+     { to: '/maturity', label: 'Maturity', icon: NAV_ICONS.maturity },
+     { to: '/observability', label: 'Observability', icon: NAV_ICONS.observability, platform: true },
++    { to: '/teams', label: 'Teams', icon: NAV_ICONS.teams, platform: true },
+   ]
+   return isSupplierAdmin.value ? all.filter((i) => !i.platform) : all
+ })
+@@ -362,6 +377,7 @@ const PAGE_TITLES: Record<string, string> = {
+   '/cluster': 'Cluster Health',
+   '/maturity': 'Maturity',
+   '/observability': 'Observability',
++  '/teams': 'Teams',
+ }
+ const currentTitle = computed(() => {
+   // Exact match first
+@@ -393,6 +409,7 @@ const ALL_CMDS = [
+   { to: '/cluster', label: 'Cluster Health', category: 'Page', icon: NAV_ICONS.cluster },
+   { to: '/maturity', label: 'Maturity', category: 'Page', icon: NAV_ICONS.maturity },
+   { to: '/observability', label: 'Observability', category: 'Page', icon: NAV_ICONS.observability },
++  { to: '/teams', label: 'Teams', category: 'Page', icon: NAV_ICONS.teams },
+ ]
+ 
+ const cmdResults = computed(() => {
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index ae3ba3b..de4900a 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -1291,6 +1291,169 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/api/v1/teams": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /** List teams (estate-wide read only) */
++        get: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path?: never;
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description OK */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/json": components["schemas"]["Team"][];
++                    };
++                };
++                401: components["responses"]["Unauthorized"];
++                403: components["responses"]["Forbidden"];
++            };
++        };
++        put?: never;
++        /** Register a team (links a "arcanium-<role>:team:<name>" OIDC group to supplier ids) — estate-wide provision only */
++        post: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path?: never;
++                cookie?: never;
++            };
++            requestBody?: {
++                content: {
++                    "application/json": {
++                        name: string;
++                        description?: string | null;
++                        supplier_ids?: string[] | null;
++                        environments?: string[] | null;
++                    };
++                };
++            };
++            responses: {
++                /** @description Created */
++                201: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/json": components["schemas"]["Team"];
++                    };
++                };
++                400: components["responses"]["BadRequest"];
++                403: components["responses"]["Forbidden"];
++                /** @description Team name already registered */
++                409: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++            };
++        };
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/teams/{id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path: {
++                id: string;
++            };
++            cookie?: never;
++        };
++        /** Team detail */
++        get: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description OK */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/json": components["schemas"]["Team"];
++                    };
++                };
++                404: components["responses"]["NotFound"];
++            };
++        };
++        put?: never;
++        post?: never;
++        /** Remove a team — estate-wide provision only */
++        delete: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description Deleted */
++                204: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                403: components["responses"]["Forbidden"];
++                404: components["responses"]["NotFound"];
++            };
++        };
++        options?: never;
++        head?: never;
++        /** Update a team's description/supplier_ids/environments — estate-wide provision only */
++        patch: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description OK */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/json": components["schemas"]["Team"];
++                    };
++                };
++                403: components["responses"]["Forbidden"];
++                404: components["responses"]["NotFound"];
++            };
++        };
++        trace?: never;
++    };
+     "/api/v1/approvals": {
+         parameters: {
+             query?: never;
+@@ -2447,10 +2610,25 @@ export interface components {
+             supplier_id?: string | null;
+             /** @enum {string} */
+             category?: "platform" | "tenant" | "unscoped";
++            /** @description Prompt 27 — defaults to 'production' when omitted at registration; explicitly recorded, never left null. */
++            environment?: string;
+             /** Format: date-time */
+             registered_at: string;
+             crypto_profiles?: components["schemas"]["CryptoProfile"][];
+         };
++        Team: {
++            /** Format: uuid */
++            id: string;
++            /** @example platform */
++            name: string;
++            description?: string | null;
++            /** @description null = every supplier (an estate-wide-by-team audit grant) */
++            supplier_ids?: string[] | null;
++            environments?: string[] | null;
++            created_by: string;
++            /** Format: date-time */
++            created_at: string;
++        };
+         TransitKey: {
+             name?: string;
+             type?: string;
+diff --git a/arcanium/ui/app/types/arcanium.ts b/arcanium/ui/app/types/arcanium.ts
+index e8d7d3c..738398d 100644
+--- a/arcanium/ui/app/types/arcanium.ts
++++ b/arcanium/ui/app/types/arcanium.ts
+@@ -241,6 +241,24 @@ export interface ControlAssessment {
+   dimension?: string
+ }
+ 
++// ── Teams (Prompt 27 — control-plane multi-tenancy) ───────────────────────
++export interface Team {
++  id: string
++  name: string
++  description?: string | null
++  /** null = every supplier (an estate-wide-by-team audit grant) */
++  supplier_ids: string[] | null
++  environments: string[] | null
++  created_by: string
++  created_at: string
++}
++
++export interface IdentityScope {
++  role: string
++  envScopes: string[]
++  teamScopes: string[]
++}
++
+ // ── Unified Cryptographic Service Intent View (Phase 25) ──────────────────
+ // A read-model over Phases 18-21's existing tables/live reads — no new
+ // domain data. `custody` and `assessment.reconciliation` are arrays, not
+diff --git a/arcanium/ui/server/routes/gateway/[...path].ts b/arcanium/ui/server/routes/gateway/[...path].ts
+index 9a906ff..5e7cac6 100644
+--- a/arcanium/ui/server/routes/gateway/[...path].ts
++++ b/arcanium/ui/server/routes/gateway/[...path].ts
+@@ -1,10 +1,10 @@
+ // Transport only: a fixed upstream, allowlisted API paths and no Vault credentials.
+ export default defineEventHandler(async (event) => {
+   const path = getRouterParam(event, 'path') || ''
+-  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation|controls)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
++  const read = /^(health|api\/v1\/(suppliers|applications|keys|approvals|evidence|cluster|pki|maturity|jobs|observability|keymgmt|platform|auth|integrations|reconciliation|controls|teams)(\/[a-zA-Z0-9_-]+)*(\/(applications|keys|summary|entitlements|me))?)$/.test(path)
+   const write =
+     (event.method === 'POST' && (
+-      /^api\/v1\/(approvals(\/[a-zA-Z0-9_-]+\/(approve|deny|authorize))?|suppliers|applications|keys)$/.test(path)
++      /^api\/v1\/(approvals(\/[a-zA-Z0-9_-]+\/(approve|deny|authorize))?|suppliers|applications|keys|teams)$/.test(path)
+       || /^api\/v1\/applications\/[a-f0-9-]+\/(provision|classify)$/.test(path)
+       || /^api\/v1\/keys\/[a-zA-Z0-9_-]+\/(rotate|rewrap|destroy)$/.test(path)
+       || /^api\/v1\/keymgmt\/[a-zA-Z0-9_.-]+\/(rotate|sync)$/.test(path)
+@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
+       || /^api\/v1\/reconciliation\/run$/.test(path)
+       || /^api\/v1\/reconciliation\/[a-zA-Z0-9_-]+\/(reconcile|accept-exception)$/.test(path)
+     ))
+-    || (['PATCH', 'DELETE'].includes(event.method) && /^api\/v1\/(suppliers|applications)\/[a-f0-9-]+$/.test(path))
++    || (['PATCH', 'DELETE'].includes(event.method) && /^api\/v1\/(suppliers|applications|teams)\/[a-f0-9-]+$/.test(path))
+     // Prompt 20 — editing the desired value itself (input/36's "who changed
+     // the intent, when, why").
+     || (event.method === 'PATCH' && /^api\/v1\/reconciliation\/desired-state\/[a-zA-Z0-9_-]+$/.test(path))
+diff --git a/compose/identity/ldap/bootstrap.ldif b/compose/identity/ldap/bootstrap.ldif
+index 760c29e..43df0a6 100644
+--- a/compose/identity/ldap/bootstrap.ldif
++++ b/compose/identity/ldap/bootstrap.ldif
+@@ -76,6 +76,29 @@ givenName: Demo
+ mail: demo-cocacola@arcanium.local
+ userPassword: Arcanium-cocacola-2026
+ 
++# Prompt 27 — scoped-role demo accounts (Control-Plane Multi-Tenancy).
++# Neither account holds a BARE arcanium-operator/arcanium-auditor group —
++# only the scoped variant — so scenarios/16_multitenancy/test_scope_isolation.sh
++# can prove the scoped-grant path actually restricts access, not merely that
++# it's additive on top of an already-unrestricted estate-wide role.
++dn: uid=demo-operator-prod,ou=people,dc=arcanium,dc=local
++objectClass: inetOrgPerson
++uid: demo-operator-prod
++cn: Demo Operator Production
++sn: Production
++givenName: Demo
++mail: demo-operator-prod@arcanium.local
++userPassword: Arcanium-opprod-2026
++
++dn: uid=demo-auditor-platform,ou=people,dc=arcanium,dc=local
++objectClass: inetOrgPerson
++uid: demo-auditor-platform
++cn: Demo Auditor Platform
++sn: Platform
++givenName: Demo
++mail: demo-auditor-platform@arcanium.local
++userPassword: Arcanium-auditplat-2026
++
+ # ── Groups ───────────────────────────────────────────────────────────────
+ 
+ dn: cn=arcanium-ciso,ou=groups,dc=arcanium,dc=local
+@@ -115,3 +138,18 @@ dn: cn=arcanium-tenant-cocacola,ou=groups,dc=arcanium,dc=local
+ objectClass: groupOfNames
+ cn: arcanium-tenant-cocacola
+ member: uid=demo-cocacola,ou=people,dc=arcanium,dc=local
++
++# Prompt 27 — scoped-role groups (env/team dimensions). Each of these two
++# demo accounts is a member of ONLY the scoped variant below, never the
++# bare "arcanium-operator"/"arcanium-auditor" groups above — that's what
++# makes them useful for proving the scoped path actually restricts, not
++# just that it's additive.
++dn: cn=arcanium-operator:env:production,ou=groups,dc=arcanium,dc=local
++objectClass: groupOfNames
++cn: arcanium-operator:env:production
++member: uid=demo-operator-prod,ou=people,dc=arcanium,dc=local
++
++dn: cn=arcanium-auditor:team:platform,ou=groups,dc=arcanium,dc=local
++objectClass: groupOfNames
++cn: arcanium-auditor:team:platform
++member: uid=demo-auditor-platform,ou=people,dc=arcanium,dc=local
+diff --git a/compose/identity/ldap/setup_ldap.sh b/compose/identity/ldap/setup_ldap.sh
+index 77e37db..a0a2892 100755
+--- a/compose/identity/ldap/setup_ldap.sh
++++ b/compose/identity/ldap/setup_ldap.sh
+@@ -76,3 +76,5 @@ echo "  demo-operator / Arcanium-ops-2026"
+ echo "  demo-auditor / Arcanium-audit-2026"
+ echo "  demo-pepsi / Arcanium-pepsi-2026        (arcanium-supplier-admin + arcanium-tenant-pepsi)"
+ echo "  demo-cocacola / Arcanium-cocacola-2026  (arcanium-supplier-admin + arcanium-tenant-cocacola)"
++echo "  demo-operator-prod / Arcanium-opprod-2026        (arcanium-operator:env:production only)"
++echo "  demo-auditor-platform / Arcanium-auditplat-2026  (arcanium-auditor:team:platform only)"
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 7b9ed4d..5259716 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -125,12 +125,33 @@ components:
+         description: { type: ["string", "null"] }
+         supplier_id: { type: ["string", "null"], format: uuid }
+         category: { type: string, enum: [platform, tenant, unscoped] }
++        environment:
++          type: string
++          description: "Prompt 27 — defaults to 'production' when omitted at registration; explicitly recorded, never left null."
+         registered_at: { type: string, format: date-time }
+         crypto_profiles:
+           type: array
+           items: { $ref: "#/components/schemas/CryptoProfile" }
+       required: [id, name, registered_at]
+ 
++    # ── Teams (Prompt 27, control-plane multi-tenancy) ────────────────────
++    Team:
++      type: object
++      properties:
++        id: { type: string, format: uuid }
++        name: { type: string, example: platform }
++        description: { type: ["string", "null"] }
++        supplier_ids:
++          type: ["array", "null"]
++          items: { type: string, format: uuid }
++          description: "null = every supplier (an estate-wide-by-team audit grant)"
++        environments:
++          type: ["array", "null"]
++          items: { type: string }
++        created_by: { type: string }
++        created_at: { type: string, format: date-time }
++      required: [id, name, created_by, created_at]
++
+     # ── Transit keys ──────────────────────────────────────────────────────
+     TransitKey:
+       type: object
+@@ -952,6 +973,69 @@ paths:
+             application/json:
+               schema: { type: array, items: { type: object, additionalProperties: true } }
+ 
++  # ── Teams (Prompt 27) ────────────────────────────────────────────────
++  /api/v1/teams:
++    get:
++      summary: List teams (estate-wide read only)
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { type: array, items: { $ref: "#/components/schemas/Team" } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++    post:
++      summary: Register a team (links a "arcanium-<role>:team:<name>" OIDC group to supplier ids) — estate-wide provision only
++      requestBody:
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                name: { type: string }
++                description: { type: ["string", "null"] }
++                supplier_ids: { type: ["array", "null"], items: { type: string, format: uuid } }
++                environments: { type: ["array", "null"], items: { type: string } }
++              required: [name]
++      responses:
++        "201":
++          description: Created
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Team" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "409": { description: Team name already registered }
++  /api/v1/teams/{id}:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++    get:
++      summary: Team detail
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Team" }
++        "404": { $ref: "#/components/responses/NotFound" }
++    patch:
++      summary: Update a team's description/supplier_ids/environments — estate-wide provision only
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Team" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++    delete:
++      summary: Remove a team — estate-wide provision only
++      responses:
++        "204": { description: Deleted }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
+   # ── Approvals ─────────────────────────────────────────────────────────
+   /api/v1/approvals:
+     get:
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index 71521ef..092d7d2 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -582,6 +582,59 @@ capture_backup() {
+   fi
+ }
+ 
++# ------------------------------------------------------------ multitenancy --
++# Prompt 27, Deliverable 8 — team count, environment-tag coverage, and the
++# last scenarios/16_multitenancy/ scope-isolation result. Direct DB reads
++# (no API auth needed), same style as capture_persistence()'s schema_version
++# read — the API-based checks elsewhere in this file all report UNKNOWN
++# under ARCANIUM_AUTH_ENABLED=true precisely because they're anonymous;
++# this data is just as reliably available with a plain, non-secret count.
++capture_multitenancy() {
++  local d="$TMP/components/multitenancy"
++  mkdir -p "$d"
++
++  if ! running arcanium-postgres; then
++    jq -n '{teams_count: null, applications: {total: null, with_environment_tag: null}}' \
++      >"$d/multitenancy.json"
++  else
++    local teams_count total_apps tagged_apps
++    teams_count=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from teams;" 2>/dev/null | tr -d '[:space:]')
++    total_apps=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from applications;" 2>/dev/null | tr -d '[:space:]')
++    # environment is NOT NULL with a DEFAULT (migration 018) — every
++    # application, past and future, is backfilled/defaulted automatically,
++    # so this gap is expected to be 0 by design, not merely by luck. A
++    # non-zero value here would mean the column itself somehow allowed a
++    # NULL to slip through — a real finding, not routine drift.
++    tagged_apps=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from applications where environment is not null;" 2>/dev/null | tr -d '[:space:]')
++    jq -n \
++      --arg tc "${teams_count:-0}" --arg ta "${total_apps:-0}" --arg tg "${tagged_apps:-0}" \
++      '{teams_count: ($tc | tonumber),
++        applications: {total: ($ta | tonumber), with_environment_tag: ($tg | tonumber)}}' \
++      >"$d/multitenancy.json"
++  fi
++
++  local scope_result="UNKNOWN" scope_detail="scenarios/16_multitenancy/test_scope_isolation.sh has not been run"
++  if [ -f state/.last-scope-isolation-result ]; then
++    scope_result=$(cat state/.last-scope-isolation-result)
++    local mtime
++    mtime=$(stat -f '%Sm' -t '%Y-%m-%dT%H:%M:%SZ' state/.last-scope-isolation-result 2>/dev/null ||
++      stat -c '%y' state/.last-scope-isolation-result 2>/dev/null || echo unknown)
++    scope_detail="last run: $mtime"
++  fi
++  jq --arg r "$scope_result" --arg d "$scope_detail" \
++    '. + {scope_isolation: {last_result: $r, detail: $d}}' \
++    "$d/multitenancy.json" >"$d/multitenancy.json.tmp" && mv "$d/multitenancy.json.tmp" "$d/multitenancy.json"
++
++  if running arcanium-postgres; then
++    set_status multitenancy CAPTURED
++  else
++    set_status multitenancy UNKNOWN
++  fi
++}
++
+ # ------------------------------------------------------------- verification --
+ capture_verification() {
+   local results="[]"
+@@ -760,7 +813,7 @@ echo "Capturing baseline: $FINAL"
+ echo "  purpose: $PURPOSE"
+ echo
+ 
+-for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_verification; do
++for fn in capture_source capture_runtime capture_arcanium capture_vault capture_hsm capture_identity capture_infra capture_kms capture_observability capture_workloads capture_persistence capture_backup capture_multitenancy capture_verification; do
+   echo "-> ${fn#capture_}"
+   "$fn"
+ done
+@@ -869,13 +922,30 @@ fi
+     echo "  status: UNKNOWN"
+   fi
+   echo
++  echo "# Prompt 27, Deliverable 8 — team count, environment-tag coverage, and"
++  echo "# the last scenarios/16_multitenancy/test_scope_isolation.sh result."
++  echo "multitenancy:"
++  if [ -s "$TMP/components/multitenancy/multitenancy.json" ]; then
++    jq -r '
++      "  teams_count: \(.teams_count // "null")",
++      "  applications:",
++      "    total: \(.applications.total // "null")",
++      "    with_environment_tag: \(.applications.with_environment_tag // "null")",
++      "  scope_isolation:",
++      "    last_result: \(.scope_isolation.last_result)",
++      "    detail: \"\(.scope_isolation.detail)\""
++    ' "$TMP/components/multitenancy/multitenancy.json"
++  else
++    echo "  status: UNKNOWN"
++  fi
++  echo
+   echo "verification:"
+   jq -r '.results[] | "  \(.check): \(.result)"' "$TMP/verification/results.json"
+   echo
+   echo "capture:"
+   echo "  overall: ${overall}"
+   echo "  checks:"
+-  for c in source runtime arcanium vault hsm identity infra kms observability workloads persistence backup verification; do
++  for c in source runtime arcanium vault hsm identity infra kms observability workloads persistence backup multitenancy verification; do
+     echo "    ${c}: ${STATUS[$c]:-UNKNOWN}"
+   done
+ } >"$TMP/manifest.yaml"

@@ -93,23 +93,33 @@ authRouter.get("/callback", async (req, res, next) => {
   try {
     const { claims, returnTo } = await exchangeCode(req);
     const groups = Array.isArray(claims.groups) ? claims.groups : [];
-    const { roles, tenantScopes, primaryRole } = groupsToIdentity(groups);
+    const { tenantScopes, primaryRole, scopes } = groupsToIdentity(groups);
 
-    if (!primaryRole) {
+    if (!primaryRole && !scopes.length) {
       // A real, authenticated Keycloak identity with no recognised Arcanium
-      // group is rejected, not silently defaulted to some role — deny by
-      // default applies at the identity-mapping boundary too.
+      // group at all — neither an estate-wide role nor a scoped one — is
+      // rejected, not silently defaulted to some role — deny by default
+      // applies at the identity-mapping boundary too.
       return res.status(403).json({
         error: "authenticated but not authorized: no Arcanium role group",
       });
     }
+    // Prompt 27 — a scoped-only identity (e.g. only
+    // "arcanium-operator:env:production", no bare "arcanium-operator") has
+    // no estate-wide primaryRole to store. "scoped" is a sentinel persona
+    // value MATRIX has no entry for — requireSession's `roles: [persona]`
+    // therefore correctly fails the estate-wide check and falls through to
+    // authorize()'s scoped-grant path, instead of accidentally being
+    // treated as an unrestricted role. GET /auth/me and the UI derive the
+    // real display label from `scopes[0].role` when persona is this value.
+    const persona = primaryRole ?? "scoped";
 
     const username = claims.preferred_username || claims.sub;
     const id = randomBytes(32).toString("hex");
     await query(
       `INSERT INTO sessions (id, username, persona, namespaces, groups, expires_at, last_seen_at)
        VALUES ($1,$2,$3,$4,$5, now() + interval '1 hour', now())`,
-      [id, username, primaryRole, tenantScopes, groups],
+      [id, username, persona, tenantScopes, groups],
     );
     setCookie(res, id);
     // returnTo is normally relative and safe to redirect to as-is (validated
@@ -150,6 +160,7 @@ authRouter.get("/me", async (req, res, next) => {
         user: "demo",
         persona: "operator",
         namespaces: [],
+        scopes: [],
       });
     const id = readCookie(req);
     if (!id)
@@ -163,12 +174,18 @@ authRouter.get("/me", async (req, res, next) => {
     );
     if (!rows.length)
       return res.status(401).json({ enabled: true, error: "session expired" });
+    // Prompt 27, Deliverable 4 — scopes mirrors req.identity.scopes exactly,
+    // re-derived from the session's own stored `groups` (the same source
+    // requireSession uses below), so /auth/me and the actual enforcement
+    // path can never drift apart.
+    const { scopes } = groupsToIdentity(rows[0].groups ?? []);
     res.json({
       enabled: true,
       user: rows[0].username,
       persona: rows[0].persona,
       namespaces: rows[0].namespaces ?? [],
       groups: rows[0].groups ?? [],
+      scopes,
       demoSwitch: config.auth.demoSwitch,
     });
   } catch (err) {
@@ -249,6 +266,7 @@ export function requireSession(req, res, next) {
       namespaces: [],
       roles: ["operator"],
       tenantScopes: [],
+      scopes: [],
       groups: [],
     };
     return next();
@@ -266,12 +284,23 @@ export function requireSession(req, res, next) {
     .then(({ rows }) => {
       if (!rows.length)
         return res.status(401).json({ error: "session expired" });
+      // `roles` stays derived from the stored `persona` (unchanged from
+      // before this prompt) — a session acts as one estate-wide role at a
+      // time, and demo-persona (below) legitimately overrides which one
+      // that is, for presentations. `scopes` is new: re-derived fresh from
+      // the session's own stored `groups` on every request — demo-persona
+      // never writes to `groups`, so it structurally cannot grant a scoped
+      // env/team override (Deliverable 4's own requirement), while a real
+      // scoped-role group membership is always reflected correctly here
+      // regardless of which persona is currently in effect for the session.
+      const { scopes } = groupsToIdentity(rows[0].groups ?? []);
       req.identity = {
         user: rows[0].username,
         persona: rows[0].persona,
         namespaces: rows[0].namespaces ?? [],
         roles: [rows[0].persona],
         tenantScopes: rows[0].namespaces ?? [],
+        scopes,
         groups: rows[0].groups ?? [],
       };
       // Idle-timeout sliding window — fire-and-forget, never blocks the request.

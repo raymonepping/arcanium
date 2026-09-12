@@ -1,0 +1,30 @@
+ M Makefile
+ M arcanium/api/openapi/arcanium.yaml
+ M arcanium/api/src/auth/authorize.js
+ M arcanium/api/src/auth/index.js
+ M arcanium/api/src/index.js
+ M arcanium/api/src/reconciliation/engine.js
+ M arcanium/api/src/routes/applications.js
+ M arcanium/api/src/routes/approvals.js
+ M arcanium/api/src/routes/controls.js
+ M arcanium/api/src/routes/keys.js
+ M arcanium/api/src/routes/reconciliation.js
+ M arcanium/ui/app/composables/useArcaniumApi.ts
+ M arcanium/ui/app/layouts/default.vue
+ M arcanium/ui/app/types/api.generated.ts
+ M arcanium/ui/app/types/arcanium.ts
+ M arcanium/ui/server/routes/gateway/[...path].ts
+ M compose/identity/ldap/bootstrap.ldif
+ M compose/identity/ldap/setup_ldap.sh
+ M openapi/arcanium.yaml
+ M state/scripts/capture-state.sh
+?? arcanium/api/src/auth/scope.js
+?? arcanium/api/src/migrations/017_teams.sql
+?? arcanium/api/src/migrations/018_environment_tag.sql
+?? arcanium/api/src/routes/teams.js
+?? arcanium/api/src/teams/
+?? arcanium/ui/app/pages/teams.vue
+?? docs/authorization-audit.md
+?? docs/identity-configuration.md
+?? scenarios/16_multitenancy/
+?? state/.last-scope-isolation-result

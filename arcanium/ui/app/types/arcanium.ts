@@ -241,6 +241,24 @@ export interface ControlAssessment {
   dimension?: string
 }
 
+// ── Teams (Prompt 27 — control-plane multi-tenancy) ───────────────────────
+export interface Team {
+  id: string
+  name: string
+  description?: string | null
+  /** null = every supplier (an estate-wide-by-team audit grant) */
+  supplier_ids: string[] | null
+  environments: string[] | null
+  created_by: string
+  created_at: string
+}
+
+export interface IdentityScope {
+  role: string
+  envScopes: string[]
+  teamScopes: string[]
+}
+
 // ── Unified Cryptographic Service Intent View (Phase 25) ──────────────────
 // A read-model over Phases 18-21's existing tables/live reads — no new
 // domain data. `custody` and `assessment.reconciliation` are arrays, not

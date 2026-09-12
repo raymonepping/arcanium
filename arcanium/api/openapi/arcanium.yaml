@@ -125,11 +125,32 @@ components:
         description: { type: ["string", "null"] }
         supplier_id: { type: ["string", "null"], format: uuid }
         category: { type: string, enum: [platform, tenant, unscoped] }
+        environment:
+          type: string
+          description: "Prompt 27 — defaults to 'production' when omitted at registration; explicitly recorded, never left null."
         registered_at: { type: string, format: date-time }
         crypto_profiles:
           type: array
           items: { $ref: "#/components/schemas/CryptoProfile" }
       required: [id, name, registered_at]
+
+    # ── Teams (Prompt 27, control-plane multi-tenancy) ────────────────────
+    Team:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: platform }
+        description: { type: ["string", "null"] }
+        supplier_ids:
+          type: ["array", "null"]
+          items: { type: string, format: uuid }
+          description: "null = every supplier (an estate-wide-by-team audit grant)"
+        environments:
+          type: ["array", "null"]
+          items: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+      required: [id, name, created_by, created_at]
 
     # ── Transit keys ──────────────────────────────────────────────────────
     TransitKey:
@@ -951,6 +972,69 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { type: object, additionalProperties: true } }
+
+  # ── Teams (Prompt 27) ────────────────────────────────────────────────
+  /api/v1/teams:
+    get:
+      summary: List teams (estate-wide read only)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Team" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Register a team (links a "arcanium-<role>:team:<name>" OIDC group to supplier ids) — estate-wide provision only
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: ["string", "null"] }
+                supplier_ids: { type: ["array", "null"], items: { type: string, format: uuid } }
+                environments: { type: ["array", "null"], items: { type: string } }
+              required: [name]
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Team name already registered }
+  /api/v1/teams/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Team detail
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      summary: Update a team's description/supplier_ids/environments — estate-wide provision only
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Remove a team — estate-wide provision only
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # ── Approvals ─────────────────────────────────────────────────────────
   /api/v1/approvals:
