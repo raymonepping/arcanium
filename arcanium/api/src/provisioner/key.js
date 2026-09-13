@@ -8,6 +8,7 @@
 
 import {
   vaultRequest,
+  vaultRequestNs,
   getProvisionerToken,
   getTransitKey,
   getNamespaceTransitKey,
@@ -16,24 +17,25 @@ import { query } from "../db.js";
 import { runSteps } from "./steps.js";
 import { cryptoOp } from "../telemetry/metrics.js";
 
-export async function rotateKey(job, name) {
+// Prompt 40 — `namespace` is the only thing that differs between a
+// root-namespace rotate (routes/keys.js) and a supplier-tenant rotate
+// (routes/suppliers.js's new POST /:id/keys/:name/rotate): which Vault
+// call function carries the request, never the job/step/undo machinery
+// itself. Defaults to root (namespace = null) so every existing call site
+// is unchanged.
+export async function rotateKey(job, name, namespace = null) {
+  const req = namespace
+    ? (method, path, body) =>
+        vaultRequestNs(method, path, body, getProvisionerToken(), namespace)
+    : (method, path, body) =>
+        vaultRequest(method, path, body, getProvisionerToken());
   return runSteps(job, [
     {
       name: `rotate transit/keys/${name}`,
       run: async () => {
-        await vaultRequest(
-          "POST",
-          `transit/keys/${name}/rotate`,
-          {},
-          getProvisionerToken(),
-        );
+        await req("POST", `transit/keys/${name}/rotate`, {});
         cryptoOp("rotate", name);
-        const meta = await vaultRequest(
-          "GET",
-          `transit/keys/${name}`,
-          null,
-          getProvisionerToken(),
-        );
+        const meta = await req("GET", `transit/keys/${name}`, null);
         return `now at version ${meta?.data?.latest_version}`;
       },
     },

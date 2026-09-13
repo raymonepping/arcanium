@@ -6,6 +6,7 @@ import { query } from "../db.js";
 import { listNamespaceTransitKeys, getNamespaceTransitKey } from "../vault.js";
 import { projectKey, publicKeyOf } from "./keys.js";
 import { createJob, runOrQueue } from "../provisioner/steps.js";
+import { rotateKey } from "../provisioner/key.js";
 import {
   provisionSupplier,
   deprovisionSupplier,
@@ -403,6 +404,68 @@ suppliersRouter.get("/:id/keys/:name/public-key", async (req, res, next) => {
         `attachment; filename="${req.params.name}-public.pem"`,
       )
       .send(pem);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/suppliers/:id/keys/:name/rotate — Prompt 40.
+// Namespace-scoped equivalent of POST /api/v1/keys/:name/rotate
+// (routes/keys.js). That route's own tenant-resolution (ownerOfKey())
+// deliberately requires a.supplier_id IS NULL (Prompt 36, closing a
+// cross-tenant leak) — a real, correct restriction, but it also makes
+// that route structurally incapable of ever rotating a supplier-tenant's
+// key. This is the missing route, not a widening of that one: the
+// root-namespace route is untouched. Same tenant-scope check every other
+// route in this file uses (404, not 403, for a wrong-tenant caller —
+// existence is not confirmed/denied to them), then authorize()'s
+// existing 'limited' + tenantScopes check for supplier-admin (unchanged;
+// an estate-wide role — architect/operator — is allowed here exactly as
+// it already is on the root-namespace route).
+suppliersRouter.post("/:id/keys/:name/rotate", async (req, res, next) => {
+  try {
+    validateUuid(req.params.id);
+    if (!NAME_RE.test(req.params.name))
+      return res.status(400).json({ error: "invalid key name" });
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(req.params.id))
+      throw notFound();
+    const { rows } = await query(
+      "SELECT vault_namespace FROM suppliers WHERE id = $1",
+      [req.params.id],
+    );
+    if (!rows.length) throw notFound();
+    const namespace = rows[0].vault_namespace;
+
+    const decision = authorize({
+      identity: req.identity,
+      action: "rotate",
+      tenant: namespace,
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "rotate",
+        reason: decision.reason,
+      });
+
+    const job = await createJob({
+      target_type: "key",
+      target_id: `${namespace}/${req.params.name}`,
+      target_name: req.params.name,
+      action: "rotate",
+      requested_by: req.identity?.user ?? "arcanium",
+      params: { namespace },
+      request_id: req.requestId,
+    });
+    const finished = await runOrQueue(job, (j) =>
+      rotateKey(j, req.params.name, namespace),
+    );
+    res
+      .status(
+        finished.queued ? 202 : finished.status === "succeeded" ? 200 : 502,
+      )
+      .json({ provisioning_job: finished });
   } catch (err) {
     next(err);
   }

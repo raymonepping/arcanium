@@ -1,0 +1,297 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 394542a..d7762cb 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -207,6 +207,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Added
+ 
++- Supplier-scoped key rotation (Prompt 40) — the last open item from the
++  six-stage lifecycle audit. `POST /api/v1/keys/:name/rotate` was, and
++  remains, structurally root-namespace-only (`ownerOfKey()`'s join
++  deliberately excludes supplier-tenant applications — Prompt 36, closing
++  a real cross-tenant leak), which meant a supplier-admin could never
++  rotate their own tenant's key through any route at all — a missing
++  capability, not a live bug (nothing was silently wrong; a supplier's
++  attempt was correctly denied rather than mis-routed). New `POST
++  /api/v1/suppliers/:id/keys/:name/rotate` closes it: same tenant-scope
++  check (404, not 403, for a wrong-tenant caller) every other
++  supplier-scoped route in this file already uses, same `authorize()`
++  'limited' verdict the MATRIX already expressed for supplier-admin
++  rotate — nothing in the authorization model itself needed to change.
++  `provisioner/key.js`'s `rotateKey()` gained an optional `namespace`
++  parameter (root-namespace call sites unchanged). Required one new,
++  narrowly-scoped Vault policy grant (`suppliers/+/transit/keys/+/rotate`,
++  `update` only — the existing wildcard family was read-only) — verified
++  live via a fresh AppRole session token (not root) before any
++  application code was written, then end-to-end through the real API:
++  a supplier-admin rotating their own tenant's key (200), the same key
++  cross-tenant (404, no existence confirmed), an estate-wide role
++  (architect, 200 — unrestricted exactly as on the root-namespace route),
++  and a denied role (auditor, 403). New negative-auth check added
++  (pepsi-admin rotating cocacola's key → 404).
+ - Real evidence behind the key detail page's lifecycle strip (Prompt
+   33): `Distribute` and `Use` previously hardcoded `on: true`/`on: false`
+   for every key, unconditionally — a fabricated claim in one direction,
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index e7d415d..adcde03 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -1073,6 +1073,31 @@ paths:
+               schema: { type: string }
+         "400": { $ref: "#/components/responses/BadRequest" }
+         "404": { description: "Supplier not found, key not found, or has no public key (symmetric type)" }
++  /api/v1/suppliers/{id}/keys/{name}/rotate:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++      - { name: name, in: path, required: true, schema: { type: string } }
++    post:
++      summary: "Rotate a supplier tenant's Transit key (Prompt 40 — architect/operator/limited supplier-admin, own tenant only)"
++      description: >-
++        Namespace-scoped equivalent of POST /api/v1/keys/{name}/rotate.
++        Tenant-scoped the same way as GET /api/v1/suppliers/{id}/keys — a
++        wrong-tenant caller gets 404, never 403 (existence is not
++        confirmed/denied to them).
++      responses:
++        "200":
++          description: Rotated synchronously
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  provisioning_job: { $ref: "#/components/schemas/ProvisioningJob" }
++        "202": { description: Queued }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
+ 
+   # ── Teams (Prompt 27) ────────────────────────────────────────────────
+   /api/v1/teams:
+diff --git a/arcanium/api/src/provisioner/key.js b/arcanium/api/src/provisioner/key.js
+index e33cb90..bba2049 100644
+--- a/arcanium/api/src/provisioner/key.js
++++ b/arcanium/api/src/provisioner/key.js
+@@ -8,6 +8,7 @@
+ 
+ import {
+   vaultRequest,
++  vaultRequestNs,
+   getProvisionerToken,
+   getTransitKey,
+   getNamespaceTransitKey,
+@@ -16,24 +17,24 @@ import { query } from "../db.js";
+ import { runSteps } from "./steps.js";
+ import { cryptoOp } from "../telemetry/metrics.js";
+ 
+-export async function rotateKey(job, name) {
++// Prompt 40 — `namespace` is the only thing that differs between a
++// root-namespace rotate (routes/keys.js) and a supplier-tenant rotate
++// (routes/suppliers.js's new POST /:id/keys/:name/rotate): which Vault
++// call function carries the request, never the job/step/undo machinery
++// itself. Defaults to root (namespace = null) so every existing call site
++// is unchanged.
++export async function rotateKey(job, name, namespace = null) {
++  const req = namespace
++    ? (method, path, body) =>
++        vaultRequestNs(method, path, body, getProvisionerToken(), namespace)
++    : (method, path, body) => vaultRequest(method, path, body, getProvisionerToken());
+   return runSteps(job, [
+     {
+       name: `rotate transit/keys/${name}`,
+       run: async () => {
+-        await vaultRequest(
+-          "POST",
+-          `transit/keys/${name}/rotate`,
+-          {},
+-          getProvisionerToken(),
+-        );
++        await req("POST", `transit/keys/${name}/rotate`, {});
+         cryptoOp("rotate", name);
+-        const meta = await vaultRequest(
+-          "GET",
+-          `transit/keys/${name}`,
+-          null,
+-          getProvisionerToken(),
+-        );
++        const meta = await req("GET", `transit/keys/${name}`, null);
+         return `now at version ${meta?.data?.latest_version}`;
+       },
+     },
+diff --git a/arcanium/api/src/routes/suppliers.js b/arcanium/api/src/routes/suppliers.js
+index b7d46d8..8441441 100644
+--- a/arcanium/api/src/routes/suppliers.js
++++ b/arcanium/api/src/routes/suppliers.js
+@@ -6,6 +6,7 @@ import { query } from "../db.js";
+ import { listNamespaceTransitKeys, getNamespaceTransitKey } from "../vault.js";
+ import { projectKey, publicKeyOf } from "./keys.js";
+ import { createJob, runOrQueue } from "../provisioner/steps.js";
++import { rotateKey } from "../provisioner/key.js";
+ import {
+   provisionSupplier,
+   deprovisionSupplier,
+@@ -407,3 +408,65 @@ suppliersRouter.get("/:id/keys/:name/public-key", async (req, res, next) => {
+     next(err);
+   }
+ });
++
++// POST /api/v1/suppliers/:id/keys/:name/rotate — Prompt 40.
++// Namespace-scoped equivalent of POST /api/v1/keys/:name/rotate
++// (routes/keys.js). That route's own tenant-resolution (ownerOfKey())
++// deliberately requires a.supplier_id IS NULL (Prompt 36, closing a
++// cross-tenant leak) — a real, correct restriction, but it also makes
++// that route structurally incapable of ever rotating a supplier-tenant's
++// key. This is the missing route, not a widening of that one: the
++// root-namespace route is untouched. Same tenant-scope check every other
++// route in this file uses (404, not 403, for a wrong-tenant caller —
++// existence is not confirmed/denied to them), then authorize()'s
++// existing 'limited' + tenantScopes check for supplier-admin (unchanged;
++// an estate-wide role — architect/operator — is allowed here exactly as
++// it already is on the root-namespace route).
++suppliersRouter.post("/:id/keys/:name/rotate", async (req, res, next) => {
++  try {
++    validateUuid(req.params.id);
++    if (!NAME_RE.test(req.params.name))
++      return res.status(400).json({ error: "invalid key name" });
++    const scope = await tenantScope(req);
++    if (scope.scoped && !scope.supplierIds.includes(req.params.id))
++      throw notFound();
++    const { rows } = await query(
++      "SELECT vault_namespace FROM suppliers WHERE id = $1",
++      [req.params.id],
++    );
++    if (!rows.length) throw notFound();
++    const namespace = rows[0].vault_namespace;
++
++    const decision = authorize({
++      identity: req.identity,
++      action: "rotate",
++      tenant: namespace,
++    });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({
++        error: "forbidden",
++        action: "rotate",
++        reason: decision.reason,
++      });
++
++    const job = await createJob({
++      target_type: "key",
++      target_id: `${namespace}/${req.params.name}`,
++      target_name: req.params.name,
++      action: "rotate",
++      requested_by: req.identity?.user ?? "arcanium",
++      params: { namespace },
++      request_id: req.requestId,
++    });
++    const finished = await runOrQueue(job, (j) =>
++      rotateKey(j, req.params.name, namespace),
++    );
++    res
++      .status(
++        finished.queued ? 202 : finished.status === "succeeded" ? 200 : 502,
++      )
++      .json({ provisioning_job: finished });
++  } catch (err) {
++    next(err);
++  }
++});
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index e7d415d..adcde03 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -1073,6 +1073,31 @@ paths:
+               schema: { type: string }
+         "400": { $ref: "#/components/responses/BadRequest" }
+         "404": { description: "Supplier not found, key not found, or has no public key (symmetric type)" }
++  /api/v1/suppliers/{id}/keys/{name}/rotate:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++      - { name: name, in: path, required: true, schema: { type: string } }
++    post:
++      summary: "Rotate a supplier tenant's Transit key (Prompt 40 — architect/operator/limited supplier-admin, own tenant only)"
++      description: >-
++        Namespace-scoped equivalent of POST /api/v1/keys/{name}/rotate.
++        Tenant-scoped the same way as GET /api/v1/suppliers/{id}/keys — a
++        wrong-tenant caller gets 404, never 403 (existence is not
++        confirmed/denied to them).
++      responses:
++        "200":
++          description: Rotated synchronously
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  provisioning_job: { $ref: "#/components/schemas/ProvisioningJob" }
++        "202": { description: Queued }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
+ 
+   # ── Teams (Prompt 27) ────────────────────────────────────────────────
+   /api/v1/teams:
+diff --git a/scenarios/11_security_foundation/test_negative_auth.sh b/scenarios/11_security_foundation/test_negative_auth.sh
+index 7638734..3244b0e 100755
+--- a/scenarios/11_security_foundation/test_negative_auth.sh
++++ b/scenarios/11_security_foundation/test_negative_auth.sh
+@@ -382,6 +382,15 @@ if session_ok "${JAR[pepsi]}" && [ -n "$COKE_SUPPLIER" ]; then
+   S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/suppliers/$COKE_SUPPLIER/keys/cocacola-signing-key/public-key")
+   [ "$S" = "404" ] && ok "pepsi-admin GET cocacola's key public-key route -> 404" ||
+     bad "pepsi-admin GET cocacola's key public-key route (got $S)"
++
++  # Prompt 40 — same tenant-scope check as the two GET routes above, now
++  # for the new supplier-scoped rotate route: a pepsi-admin naming
++  # cocacola's supplier id must get 404 (never a 403 confirming the
++  # supplier/key's existence, and never a 200 actually rotating a key
++  # belonging to a tenant that isn't theirs).
++  S=$(status_of -b "${JAR[pepsi]}" -X POST "$API/api/v1/suppliers/$COKE_SUPPLIER/keys/cocacola-signing-key/rotate")
++  [ "$S" = "404" ] && ok "pepsi-admin POST cocacola's key rotate route -> 404" ||
++    bad "pepsi-admin POST cocacola's key rotate route (got $S)"
+ else
+   unk "pepsi-admin cross-tenant /suppliers/:id/applications+/keys checks — no session or no supplier fixture"
+ fi
+diff --git a/state/CURRENT b/state/CURRENT
+index 80ce37d..6f4dc9b 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-39-hardening
++state/baselines/2026-09-13_pre-prompt-40-supplier-rotate
+diff --git a/terraform/vault-platform/policies.tf b/terraform/vault-platform/policies.tf
+index 0850c06..8e86b62 100644
+--- a/terraform/vault-platform/policies.tf
++++ b/terraform/vault-platform/policies.tf
+@@ -164,6 +164,16 @@ resource "vault_policy" "arcanium_transit" {
+     path "suppliers/+/transit/keys/*" {
+       capabilities = ["read"]
+     }
++    # Prompt 40 — the one additional capability a supplier-scoped rotate
++    # route needs beyond the read-only visibility above. Deliberately
++    # narrow: "update" on the /rotate sub-path only, not a broader
++    # create/update/delete grant on supplier keys generally — a
++    # supplier-admin can rotate their own tenant's key (authorize()'s
++    # existing 'limited' + tenantScopes check, unchanged), never anything
++    # else about it, through this policy.
++    path "suppliers/+/transit/keys/+/rotate" {
++      capabilities = ["update"]
++    }
+   EOT
+ }
+ 

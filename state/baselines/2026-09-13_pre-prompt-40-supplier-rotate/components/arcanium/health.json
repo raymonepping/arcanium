@@ -1,0 +1,1 @@
+{"status":"ok","version":"1.0.0","vault":{"reachable":true,"authenticated":true,"tokenExpiry":null,"agentManaged":true,"lastTokenRefreshAt":"2026-09-13T17:24:14.721Z"},"database":{"reachable":true,"latencyMs":1,"dbCredsExpiry":"2026-09-13T18:24:14.722Z","lastDbRotationAt":"2026-09-13T17:24:14.722Z"},"evidence":{"ingestEnabled":false}}

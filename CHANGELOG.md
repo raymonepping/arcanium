@@ -207,6 +207,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Supplier-scoped key rotation (Prompt 40) — the last open item from the
+  six-stage lifecycle audit. `POST /api/v1/keys/:name/rotate` was, and
+  remains, structurally root-namespace-only (`ownerOfKey()`'s join
+  deliberately excludes supplier-tenant applications — Prompt 36, closing
+  a real cross-tenant leak), which meant a supplier-admin could never
+  rotate their own tenant's key through any route at all — a missing
+  capability, not a live bug (nothing was silently wrong; a supplier's
+  attempt was correctly denied rather than mis-routed). New `POST
+  /api/v1/suppliers/:id/keys/:name/rotate` closes it: same tenant-scope
+  check (404, not 403, for a wrong-tenant caller) every other
+  supplier-scoped route in this file already uses, same `authorize()`
+  'limited' verdict the MATRIX already expressed for supplier-admin
+  rotate — nothing in the authorization model itself needed to change.
+  `provisioner/key.js`'s `rotateKey()` gained an optional `namespace`
+  parameter (root-namespace call sites unchanged). Required one new,
+  narrowly-scoped Vault policy grant (`suppliers/+/transit/keys/+/rotate`,
+  `update` only — the existing wildcard family was read-only) — verified
+  live via a fresh AppRole session token (not root) before any
+  application code was written, then end-to-end through the real API:
+  a supplier-admin rotating their own tenant's key (200), the same key
+  cross-tenant (404, no existence confirmed), an estate-wide role
+  (architect, 200 — unrestricted exactly as on the root-namespace route),
+  and a denied role (auditor, 403). New negative-auth check added
+  (pepsi-admin rotating cocacola's key → 404).
 - Real evidence behind the key detail page's lifecycle strip (Prompt
   33): `Distribute` and `Use` previously hardcoded `on: true`/`on: false`
   for every key, unconditionally — a fabricated claim in one direction,

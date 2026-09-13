@@ -1073,6 +1073,31 @@ paths:
               schema: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { description: "Supplier not found, key not found, or has no public key (symmetric type)" }
+  /api/v1/suppliers/{id}/keys/{name}/rotate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      summary: "Rotate a supplier tenant's Transit key (Prompt 40 — architect/operator/limited supplier-admin, own tenant only)"
+      description: >-
+        Namespace-scoped equivalent of POST /api/v1/keys/{name}/rotate.
+        Tenant-scoped the same way as GET /api/v1/suppliers/{id}/keys — a
+        wrong-tenant caller gets 404, never 403 (existence is not
+        confirmed/denied to them).
+      responses:
+        "200":
+          description: Rotated synchronously
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provisioning_job: { $ref: "#/components/schemas/ProvisioningJob" }
+        "202": { description: Queued }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # ── Teams (Prompt 27) ────────────────────────────────────────────────
   /api/v1/teams:

@@ -382,6 +382,15 @@ if session_ok "${JAR[pepsi]}" && [ -n "$COKE_SUPPLIER" ]; then
   S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/suppliers/$COKE_SUPPLIER/keys/cocacola-signing-key/public-key")
   [ "$S" = "404" ] && ok "pepsi-admin GET cocacola's key public-key route -> 404" ||
     bad "pepsi-admin GET cocacola's key public-key route (got $S)"
+
+  # Prompt 40 — same tenant-scope check as the two GET routes above, now
+  # for the new supplier-scoped rotate route: a pepsi-admin naming
+  # cocacola's supplier id must get 404 (never a 403 confirming the
+  # supplier/key's existence, and never a 200 actually rotating a key
+  # belonging to a tenant that isn't theirs).
+  S=$(status_of -b "${JAR[pepsi]}" -X POST "$API/api/v1/suppliers/$COKE_SUPPLIER/keys/cocacola-signing-key/rotate")
+  [ "$S" = "404" ] && ok "pepsi-admin POST cocacola's key rotate route -> 404" ||
+    bad "pepsi-admin POST cocacola's key rotate route (got $S)"
 else
   unk "pepsi-admin cross-tenant /suppliers/:id/applications+/keys checks — no session or no supplier fixture"
 fi

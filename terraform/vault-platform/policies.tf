@@ -164,6 +164,16 @@ resource "vault_policy" "arcanium_transit" {
     path "suppliers/+/transit/keys/*" {
       capabilities = ["read"]
     }
+    # Prompt 40 — the one additional capability a supplier-scoped rotate
+    # route needs beyond the read-only visibility above. Deliberately
+    # narrow: "update" on the /rotate sub-path only, not a broader
+    # create/update/delete grant on supplier keys generally — a
+    # supplier-admin can rotate their own tenant's key (authorize()'s
+    # existing 'limited' + tenantScopes check, unchanged), never anything
+    # else about it, through this policy.
+    path "suppliers/+/transit/keys/+/rotate" {
+      capabilities = ["update"]
+    }
   EOT
 }
 
