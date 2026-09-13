@@ -18,7 +18,7 @@
 //     and collapsing them into one value would be exactly the "fabricated
 //     aggregation" this phase's design rules forbid.
 
-import { query } from "../db.js";
+import { query, escapeLikeValue } from "../db.js";
 import { custodyOf, resolveKeyMeta } from "../routes/keys.js";
 import { getDispositionFor } from "../reconciliation/engine.js";
 
@@ -130,12 +130,20 @@ export async function getApplicationIntent(appId) {
     });
   }
 
+  // Prompt 39 — this pattern's trailing `%` is a genuine, intended
+  // wildcard (every control_assessments row under this app), but
+  // `namespace`/`app.name` are concatenated in UNESCAPED — either one
+  // containing `_` or `%` (an application name is user-supplied at
+  // registration time) would let it wildcard-match a DIFFERENT,
+  // similarly-shaped app's scope too, leaking one tenant's control
+  // assessments into another's governance view. escapeLikeValue() makes
+  // the two halves literal; only the explicit trailing `%` still wildcards.
   const { rows: controls } = await query(
     `SELECT DISTINCT ON (control_id, scope) ca.*, c.requirement, c.mandatory, c.dimension
        FROM control_assessments ca JOIN controls c ON c.id = ca.control_id
-      WHERE ca.scope LIKE $1
+      WHERE ca.scope LIKE $1 ESCAPE '\\'
       ORDER BY control_id, scope, assessed_at DESC`,
-    [`${namespace}/${app.name}/%`],
+    [`${escapeLikeValue(namespace)}/${escapeLikeValue(app.name)}/%`],
   );
 
   const keyNames = profiles.map((p) => keyNameFromPath(p.vault_path));

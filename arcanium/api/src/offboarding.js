@@ -129,13 +129,19 @@ export async function initiateOffboarding(applicationId, actor) {
     throw e;
   }
 
+  // Prompt 39 — same LIKE-wildcard-injection fix as everywhere else a
+  // key_name is resolved through crypto_profiles: `_`/`%` in ds.key_name
+  // are real LIKE metacharacters, not literal ones, under a `LIKE '%/' ||
+  // ds.key_name` join. An exact suffix match (right()/length()) has no
+  // metacharacter surface — the actual intent here was never a wildcard.
   const { rows: dsRows } = await query(
     `SELECT ds.id, ds.key_name, ds.archived_at, cp.vault_path, s.vault_namespace AS namespace
        FROM desired_state ds
        JOIN applications a ON a.id = ds.application_id
        LEFT JOIN suppliers s ON s.id = a.supplier_id
        LEFT JOIN crypto_profiles cp
-         ON cp.application_id = ds.application_id AND cp.vault_path LIKE '%/' || ds.key_name
+         ON cp.application_id = ds.application_id
+        AND right(cp.vault_path, length(ds.key_name) + 1) = '/' || ds.key_name
       WHERE ds.application_id = $1 AND ds.archived_at IS NULL`,
     [applicationId],
   );

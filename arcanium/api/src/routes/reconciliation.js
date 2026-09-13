@@ -396,9 +396,13 @@ reconciliationRouter.post("/desired-state", async (req, res, next) => {
     // key_name typo or a key this application doesn't actually own. Same
     // vault_path-suffix match used everywhere else a key_name is resolved
     // through crypto_profiles (offboarding.js, engine.js).
+    // Prompt 39 — was `vault_path LIKE '%/' || $2`: `_`/`%` in key_name
+    // (a request-body field, not even DB-sourced here) are real LIKE
+    // metacharacters, not literal ones — an exact suffix match closes
+    // that off entirely.
     const { rows: cpRows } = await query(
       `SELECT 1 FROM crypto_profiles
-        WHERE application_id = $1 AND vault_path LIKE '%/' || $2`,
+        WHERE application_id = $1 AND right(vault_path, length($2) + 1) = '/' || $2`,
       [application_id, key_name],
     );
     if (!cpRows.length)

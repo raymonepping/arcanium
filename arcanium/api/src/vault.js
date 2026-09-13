@@ -265,6 +265,45 @@ export function getProvisionerToken() {
   return config.vault.provisionerToken || state.token;
 }
 
+// Prompt 39 — live-verifies a Vault Control Group request's own status,
+// distinct from (and never a substitute for) sys/control-group/authorize.
+// routes/approvals.js previously flipped an approval's status to
+// 'approved' purely on the caller's say-so — nothing ever asked Vault
+// whether a real crypto-approvers member had actually authorized this
+// accessor. Verified live against a genuine CG-gated request
+// (transit/encrypt/external-supplier-key): this endpoint is a
+// side-effect-free status read (terraform/vault-platform/policies.tf
+// already grants the provisioner token `read` on this exact path — the
+// capability was provisioned and unused) — {approved:false,
+// authorizations:null} before authorization, {approved:true,
+// authorizations:[{entity_id, entity_name}]} after, both HTTP 200. An
+// invalid/expired/unknown accessor is a 400, treated the same as any
+// other failure here: never read as approved.
+export async function checkControlGroupRequest(accessor) {
+  try {
+    const res = await vaultRequest(
+      "POST",
+      "sys/control-group/request",
+      { accessor },
+      getProvisionerToken(),
+    );
+    return {
+      checked: true,
+      approved: res?.data?.approved === true,
+      authorizations: res?.data?.authorizations ?? null,
+    };
+  } catch (err) {
+    // Any failure — invalid/expired accessor, Vault unreachable — must
+    // never be read as "approved". Fail closed.
+    return {
+      checked: false,
+      approved: false,
+      authorizations: null,
+      error: err.message,
+    };
+  }
+}
+
 export async function listTransitKeys() {
   const res = await vaultRequest("LIST", "transit/keys", null, state.token);
   return res.data?.keys ?? [];

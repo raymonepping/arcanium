@@ -77,9 +77,14 @@ async function desiredStateRowsFor({ desiredStateId, supplierIds } = {}) {
        -- ds.key_name actually names, feeding a wrong Vault path into
        -- OBSERVERS/APPLIERS for this row. Matches offboarding.js's own
        -- already-correct join pattern.
+       -- Prompt 39 — same LIKE-wildcard-injection fix as offboarding.js's
+       -- own already-fixed join: an underscore or percent sign in
+       -- ds.key_name is a real LIKE metacharacter, not a literal one,
+       -- under the old LIKE '%/' || ds.key_name form. An exact suffix
+       -- match has no metacharacter surface.
        LEFT JOIN crypto_profiles cp
          ON cp.application_id = ds.application_id AND cp.type = 'transit'
-        AND cp.vault_path LIKE '%/' || ds.key_name
+        AND right(cp.vault_path, length(ds.key_name) + 1) = '/' || ds.key_name
        ${where}
       ORDER BY ds.application_id, ds.key_name`,
     params,
@@ -259,9 +264,14 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
        JOIN applications a ON a.id = ds.application_id
        LEFT JOIN suppliers s ON s.id = a.supplier_id
        -- Prompt 36 — same join fix as desiredStateRowsFor() above.
+       -- Prompt 39 — same LIKE-wildcard-injection fix as offboarding.js's
+       -- own already-fixed join: an underscore or percent sign in
+       -- ds.key_name is a real LIKE metacharacter, not a literal one,
+       -- under the old LIKE '%/' || ds.key_name form. An exact suffix
+       -- match has no metacharacter surface.
        LEFT JOIN crypto_profiles cp
          ON cp.application_id = ds.application_id AND cp.type = 'transit'
-        AND cp.vault_path LIKE '%/' || ds.key_name
+        AND right(cp.vault_path, length(ds.key_name) + 1) = '/' || ds.key_name
       WHERE rr.id = $1`,
     [runId],
   );

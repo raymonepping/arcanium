@@ -1,0 +1,19 @@
+ M CHANGELOG.md
+ M Makefile
+ M arcanium/api/openapi/arcanium.yaml
+ M arcanium/api/src/aggregation/intent.js
+ M arcanium/api/src/approval-execution.js
+ M arcanium/api/src/db.js
+ M arcanium/api/src/maturity/checks.js
+ M arcanium/api/src/offboarding.js
+ M arcanium/api/src/provisioner/key.js
+ M arcanium/api/src/reconciliation/engine.js
+ M arcanium/api/src/routes/approvals.js
+ M arcanium/api/src/routes/keys.js
+ M arcanium/api/src/routes/reconciliation.js
+ M arcanium/api/src/vault.js
+ M openapi/arcanium.yaml
+ M state/CURRENT
+ M state/scripts/capture-state.sh
+?? scripts/clean-slate.sh
+?? state/baselines/2026-09-13_pre-prompt-39-hardening/

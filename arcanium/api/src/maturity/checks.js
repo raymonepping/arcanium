@@ -9,6 +9,8 @@ import { query } from "../db.js";
 import {
   listTransitKeys,
   getTransitKey,
+  listHsmTransitKeys,
+  getHsmTransitKey,
   vaultRequest,
   getProvisionerToken,
 } from "../vault.js";
@@ -25,13 +27,31 @@ async function rows(sql, params = []) {
   }
 }
 
+// Prompt 39 — this previously read ONLY the primary Vault cluster
+// (listTransitKeys/getTransitKey). vault-hsm's Managed Keys — the
+// project's own strongest custody signal — were structurally invisible
+// to every dimension in this file, including dimKeyLifecycle(), whose
+// entire job is custody hygiene. routes/keys.js's GET /keys already
+// merges both clusters (HSM wins on a name collision, since it's the
+// higher-assurance read for a shared name); this adopts the same merge
+// so the maturity model's key inventory matches what a human actually
+// sees on the Keys page.
 async function loadKeys() {
   try {
-    const names = await listTransitKeys();
-    const metas = await Promise.all(
-      names.map((n) => getTransitKey(n).catch(() => null)),
-    );
-    return metas.filter(Boolean);
+    const [names, hsmNames] = await Promise.all([
+      listTransitKeys(),
+      listHsmTransitKeys(),
+    ]);
+    const byName = new Map();
+    for (const name of names) {
+      const meta = await getTransitKey(name).catch(() => null);
+      if (meta) byName.set(name, meta);
+    }
+    for (const name of hsmNames) {
+      const meta = await getHsmTransitKey(name).catch(() => null);
+      if (meta) byName.set(name, meta);
+    }
+    return [...byName.values()];
   } catch {
     return [];
   }
@@ -51,22 +71,40 @@ export async function dimKeyLifecycle() {
   }
   const nonExport = keys.filter((k) => k.exportable === false).length;
   const protectedDel = keys.filter((k) => k.deletion_allowed === false).length;
-  const versioned = keys.filter(
-    (k) => (k.min_decryption_version ?? 0) >= 1,
+  // Prompt 39 — `min_decryption_version >= 1` was the previous "versioned"
+  // signal: true of essentially every real Transit key from the moment
+  // it's created (Vault's own default), rotated or not — it rewarded a
+  // default, not a demonstrated behavior. Reuses ladderChecks()'s own
+  // already-correct "genuinely rotated" definition (a key at version > 1
+  // has actually gone through a rotation) for consistency and honesty.
+  const rotated = keys.filter(
+    (k) => Object.keys(k.keys ?? {}).length > 1 || (k.latest_version ?? 1) > 1,
   ).length;
+  // Prompt 39 — hardware/HSM-backed custody (a managed key — key material
+  // never leaves the HSM) is a real, harder-to-fake custody signal this
+  // dimension never measured at all before loadKeys() could even see
+  // vault-hsm's keys.
+  const hsmBacked = keys.filter((k) => k.type === "managed_key").length;
   const autoRot = keys.filter((k) => (k.auto_rotate_period ?? 0) > 0).length;
   const score = clamp(
-    pct(nonExport, keys.length) * 45 +
-      pct(protectedDel, keys.length) * 30 +
-      pct(versioned, keys.length) * 25,
+    pct(nonExport, keys.length) * 30 +
+      pct(protectedDel, keys.length) * 20 +
+      pct(rotated, keys.length) * 25 +
+      pct(hsmBacked, keys.length) * 25,
   );
   return {
     id: "lifecycle",
     name: "Key Lifecycle Hygiene",
     score,
-    basis: `${nonExport}/${keys.length} non-exportable · ${protectedDel}/${keys.length} deletion-protected · ${versioned}/${keys.length} versioned`,
+    basis: `${nonExport}/${keys.length} non-exportable · ${protectedDel}/${keys.length} deletion-protected · ${rotated}/${keys.length} genuinely rotated · ${hsmBacked}/${keys.length} HSM-backed`,
     nextStep:
-      autoRot === 0 ? "Set an auto-rotation period on production keys" : null,
+      rotated === 0
+        ? "Rotate at least one production key (a configured auto_rotate_period alone does not count)"
+        : hsmBacked === 0
+          ? "Move at least one production key to HSM-backed (managed key) custody"
+          : autoRot === 0
+            ? "Set an auto-rotation period on production keys"
+            : null,
   };
 }
 

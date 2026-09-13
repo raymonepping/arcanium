@@ -657,40 +657,131 @@ capture_multitenancy() {
 # Prompt 28, Deliverable 9 — service accounts, expiry_date coverage/drift,
 # and offboarding progress. Same "count what's true right now, never a
 # static/assumed number" discipline every other capture_* function follows.
+#
+# Prompt 39 — two real gaps, found while finishing off the six-stage audit's
+# remainder:
+#  1. Every count below used `${var:-0}` against a psql call whose stderr was
+#     thrown away. Bash's `:-0` fires on an EMPTY value too, not just an
+#     UNSET one — so a psql call that genuinely failed (bad connection,
+#     locked table, a typo'd column after a future migration) silently
+#     printed the same "0" a real, healthy, confirmed-empty table would.
+#     This is exactly the "fabricated PASS" class of bug this whole script
+#     exists to prevent, just for numbers instead of a check verdict.
+#     count_or_unknown() now tells the two apart: a failed query leaves the
+#     field genuinely null (with the failure named in query_errors), never
+#     a guessed 0.
+#  2. This component made zero Vault calls — `offboarding.completed` was
+#     read as a pure DB flag (applications.offboarded_at), never checked
+#     against Vault's own reality the way Prompt 36 already insists on for
+#     the live destroy path itself. An application can only be marked
+#     offboarded once every one of its desired_state rows resolved
+#     (offboarding.js), but nothing here confirms the underlying Vault
+#     key/PKI-role material is actually gone — a stuck worker or a partial
+#     destroy could leave offboarded_at set while real key material still
+#     lives in Vault, and this baseline would never have noticed.
+#     offboarding_live_check() live-GETs every crypto_profiles path
+#     belonging to an offboarded application (namespace-aware) and counts
+#     a 404 as destroyed, a 200 as a real, still-live discrepancy — never
+#     assumed either way on a network/auth failure (UNKNOWN, added to
+#     query_errors, not folded into either count).
 capture_lifecycle_completion() {
   local d="$TMP/components/lifecycle_completion"
   mkdir -p "$d"
+  local -a lc_query_errors=()
+
+  # Runs a count query; on a genuine failure (non-zero psql exit) leaves
+  # the named var EMPTY (never "0") and records the failure — the caller
+  # renders empty as JSON null, not a guessed healthy count.
+  count_or_unknown() {
+    local __resultvar="$1" __label="$2" __sql="$3"
+    local __out __err="/tmp/arc-lc-err.$$"
+    if __out=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c "$__sql" 2>"$__err"); then
+      printf -v "$__resultvar" '%s' "$(tr -d '[:space:]' <<<"$__out")"
+    else
+      printf -v "$__resultvar" ''
+      lc_query_errors+=("$__label: $(tr -d '\n' <"$__err" | cut -c1-200)")
+    fi
+    rm -f "$__err"
+  }
+
+  # Prompt 39 — live-verifies offboarding.completed against Vault itself
+  # instead of trusting the DB flag alone. Reuses the same GET-and-check-
+  # 404 convention offboarding.js's own keyIsActive()/observeExpiryDate()
+  # use — a 404 is a real, positively-observed "destroyed", not an error.
+  # The provisioner token is read transiently from .env for this one live
+  # check and never written to $d — this script's own hard rule (whitelist
+  # fields, never capture secret values) applies here exactly as it does
+  # to LDAP_ADMIN_PASSWORD's existing transient use elsewhere in this file.
+  offboarding_live_check() {
+    local still_live=0 confirmed_destroyed=0 unresolved=0
+    if ! running arcanium-vault_s && ! running arcanium-vault_1; then
+      echo "null null null vault-not-running"
+      return
+    fi
+    local token
+    token="$(grep -E '^VAULT_PROVISIONER_TOKEN=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
+    if [ -z "$token" ]; then
+      echo "null null null no-provisioner-token"
+      return
+    fi
+    local rows
+    rows=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -F'|' -c \
+      "select coalesce(s.vault_namespace,''), cp.vault_path
+         from applications a
+         join crypto_profiles cp on cp.application_id = a.id
+         left join suppliers s on s.id = a.supplier_id
+        where a.offboarded_at is not null;" 2>/dev/null)
+    if [ -z "$rows" ]; then
+      echo "0 0 0 -"
+      return
+    fi
+    while IFS='|' read -r ns path; do
+      [ -z "$path" ] && continue
+      local hdrs=(-H "X-Vault-Token: $token")
+      [ -n "$ns" ] && hdrs+=(-H "X-Vault-Namespace: $ns")
+      local code
+      code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
+        "${hdrs[@]}" "https://127.0.0.1:18200/v1/${path}" 2>/dev/null || echo 000)
+      case "$code" in
+      404) confirmed_destroyed=$((confirmed_destroyed + 1)) ;;
+      200) still_live=$((still_live + 1)) ;;
+      *) unresolved=$((unresolved + 1)) ;;
+      esac
+    done <<<"$rows"
+    echo "$confirmed_destroyed $still_live $unresolved -"
+  }
 
   if ! running arcanium-postgres; then
     jq -n '{service_accounts: {active: null, revoked: null},
             expiry_date: {tracked: null, drifted: null},
-            offboarding: {initiated: null, completed: null},
-            approval_execution_backlog: null}' \
+            offboarding: {initiated: null, completed: null,
+              completed_verified_destroyed: null, completed_still_live_in_vault: null},
+            approval_execution_backlog: null, query_errors: ["arcanium-postgres not running"]}' \
       >"$d/lifecycle_completion.json"
   else
     local sa_active sa_revoked exp_tracked exp_drifted ob_initiated ob_completed approval_backlog
-    sa_active=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
-      "select count(*) from service_accounts where revoked_at is null;" 2>/dev/null | tr -d '[:space:]')
-    sa_revoked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
-      "select count(*) from service_accounts where revoked_at is not null;" 2>/dev/null | tr -d '[:space:]')
-    exp_tracked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
-      "select count(*) from desired_state where requirement='expiry_date' and archived_at is null;" 2>/dev/null | tr -d '[:space:]')
+    count_or_unknown sa_active "service_accounts.active" \
+      "select count(*) from service_accounts where revoked_at is null;"
+    count_or_unknown sa_revoked "service_accounts.revoked" \
+      "select count(*) from service_accounts where revoked_at is not null;"
+    count_or_unknown exp_tracked "expiry_date.tracked" \
+      "select count(*) from desired_state where requirement='expiry_date' and archived_at is null;"
     # Counted from the latest reconciliation_runs row per desired_state, not
     # a stale/cached flag — matches how every other DRIFTED count in this
     # script (e.g. capture_persistence's own reconciliation figures) is
     # derived: from the most recent observed run per row, live.
-    exp_drifted=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+    count_or_unknown exp_drifted "expiry_date.drifted" \
       "select count(*) from (
          select distinct on (rr.desired_state_id) rr.desired_state_id, rr.status
            from reconciliation_runs rr
            join desired_state ds on ds.id = rr.desired_state_id
           where ds.requirement = 'expiry_date' and ds.archived_at is null
           order by rr.desired_state_id, rr.observed_at desc
-       ) latest where status = 'DRIFTED';" 2>/dev/null | tr -d '[:space:]')
-    ob_initiated=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
-      "select count(*) from applications where offboarding_initiated_at is not null;" 2>/dev/null | tr -d '[:space:]')
-    ob_completed=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
-      "select count(*) from applications where offboarded_at is not null;" 2>/dev/null | tr -d '[:space:]')
+       ) latest where status = 'DRIFTED';"
+    count_or_unknown ob_initiated "offboarding.initiated" \
+      "select count(*) from applications where offboarding_initiated_at is not null;"
+    count_or_unknown ob_completed "offboarding.completed" \
+      "select count(*) from applications where offboarded_at is not null;"
     # Prompt 29, Deliverable 9 — a persistently nonzero count here means
     # approval-execution.js's own worker step is stuck (silently not
     # keeping up with real approved destroys), the same class of
@@ -700,24 +791,55 @@ capture_lifecycle_completion() {
     # 2026-09-13 — see approval-execution.js's own header) — this count
     # alone can't distinguish "stuck" from "correctly skipped," only that
     # something here needs a human look if it stays nonzero across baselines.
-    approval_backlog=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
-      "select count(*) from approval_requests where status='approved' and action='revoke' and executed_at is null;" 2>/dev/null | tr -d '[:space:]')
+    count_or_unknown approval_backlog "approval_execution_backlog" \
+      "select count(*) from approval_requests where status='approved' and action='revoke' and executed_at is null;"
+
+    local ob_verify
+    ob_verify=$(offboarding_live_check)
+    read -r ob_destroyed ob_live ob_unresolved ob_verify_err <<<"$ob_verify"
+    if [ "$ob_verify_err" != "-" ]; then
+      lc_query_errors+=("offboarding.live_vault_check: $ob_verify_err")
+    fi
+    if [ "$ob_unresolved" != "null" ] && [ "${ob_unresolved:-0}" != "0" ]; then
+      lc_query_errors+=("offboarding.live_vault_check: ${ob_unresolved} path(s) gave a non-404/200 response — left out of both counts, treated as unknown")
+    fi
+
+    local errors_json="[]"
+    if [ "${#lc_query_errors[@]}" -gt 0 ]; then
+      errors_json=$(printf '%s\n' "${lc_query_errors[@]}" | jq -R . | jq -s .)
+    fi
+
     jq -n \
-      --arg saa "${sa_active:-0}" --arg sar "${sa_revoked:-0}" \
-      --arg ext "${exp_tracked:-0}" --arg exd "${exp_drifted:-0}" \
-      --arg obi "${ob_initiated:-0}" --arg obc "${ob_completed:-0}" \
-      --arg aeb "${approval_backlog:-0}" \
-      '{service_accounts: {active: ($saa | tonumber), revoked: ($sar | tonumber)},
-        expiry_date: {tracked: ($ext | tonumber), drifted: ($exd | tonumber)},
-        offboarding: {initiated: ($obi | tonumber), completed: ($obc | tonumber)},
-        approval_execution_backlog: ($aeb | tonumber)}' \
+      --arg saa "${sa_active}" --arg sar "${sa_revoked}" \
+      --arg ext "${exp_tracked}" --arg exd "${exp_drifted}" \
+      --arg obi "${ob_initiated}" --arg obc "${ob_completed}" \
+      --arg obd "${ob_destroyed}" --arg obl "${ob_live}" \
+      --arg aeb "${approval_backlog}" \
+      --argjson errs "$errors_json" \
+      'def n($x): if $x == "" or $x == "null" then null else ($x | tonumber) end;
+       {service_accounts: {active: n($saa), revoked: n($sar)},
+        expiry_date: {tracked: n($ext), drifted: n($exd)},
+        offboarding: {initiated: n($obi), completed: n($obc),
+          completed_verified_destroyed: n($obd),
+          completed_still_live_in_vault: n($obl)},
+        approval_execution_backlog: n($aeb),
+        query_errors: $errs}' \
       >"$d/lifecycle_completion.json"
+
+    unset -f count_or_unknown offboarding_live_check
   fi
 
-  if running arcanium-postgres; then
-    set_status lifecycle_completion CAPTURED
-  else
+  if ! running arcanium-postgres; then
     set_status lifecycle_completion UNKNOWN
+  elif jq -e '.query_errors | length > 0' "$d/lifecycle_completion.json" >/dev/null 2>&1; then
+    set_status lifecycle_completion PARTIAL
+  elif jq -e '.offboarding.completed_still_live_in_vault > 0' "$d/lifecycle_completion.json" >/dev/null 2>&1; then
+    # A real, live-confirmed discrepancy (offboarded_at set, key material
+    # still in Vault) is a genuine finding, not a capture failure — surface
+    # it as PARTIAL rather than a clean CAPTURED so it isn't missed.
+    set_status lifecycle_completion PARTIAL
+  else
+    set_status lifecycle_completion CAPTURED
   fi
 }
 

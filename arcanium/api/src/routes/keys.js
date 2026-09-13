@@ -40,13 +40,21 @@ export const keysRouter = Router();
 // makes this query structurally incapable of matching a supplier-owned
 // application, closing the ambiguity rather than trying to disambiguate a
 // name collision after the fact.
+// Prompt 39 — this was `cp.vault_path LIKE '%/' || $1`: a LIKE pattern
+// whose "literal" half isn't actually literal — `_` and `%` are LIKE
+// metacharacters, and Vault key names may contain underscores. A key
+// named e.g. `pay_ents-api-key` would ALSO match `payXents-api-key` for
+// any single character X, an unintended collision feeding straight into
+// this function's tenant-resolution result. The real intent was never a
+// wildcard match at all — just "vault_path ends with '/' + name" — which
+// `right()`/`length()` express with no metacharacter surface to exploit.
 async function ownerOfKey(name) {
   const { rows } = await query(
     `SELECT a.id AS application_id, s.vault_namespace, a.environment
        FROM crypto_profiles cp
        JOIN applications a ON a.id = cp.application_id
        LEFT JOIN suppliers s ON s.id = a.supplier_id
-      WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
+      WHERE right(cp.vault_path, length($1) + 1) = '/' || $1 AND a.supplier_id IS NULL
       LIMIT 1`,
     [name],
   );
@@ -71,13 +79,16 @@ async function ownerOfKey(name) {
 // that tenant's namespace — a real cross-tenant information leak, not
 // just a display bug, since GET /keys/:name is estate-wide (no tenant
 // scope check of its own).
+// Prompt 39 — same LIKE-wildcard-injection fix as ownerOfKey() above, same
+// reason: the underscore in a key name is a real LIKE metacharacter, not a
+// literal one, unless expressed as an exact suffix match instead.
 async function distributionOf(name) {
   const { rows } = await query(
     `SELECT a.name AS application, a.environment, s.vault_namespace AS namespace
        FROM crypto_profiles cp
        JOIN applications a ON a.id = cp.application_id
        LEFT JOIN suppliers s ON s.id = a.supplier_id
-      WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
+      WHERE right(cp.vault_path, length($1) + 1) = '/' || $1 AND a.supplier_id IS NULL
       LIMIT 1`,
     [name],
   );

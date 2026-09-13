@@ -9,6 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Five remaining items from the six-stage lifecycle audit's own
+  remainder (Prompt 39): LIKE-wildcard escaping, the maturity model's
+  shallow custody scoring, `capture-state.sh`'s non-live
+  `lifecycle_completion` component, live Vault Control Group
+  verification, and the request→approval drift window.
+  - **LIKE-wildcard escaping.** Every "does this vault_path end with
+    this key_name" check across the codebase (`routes/keys.js`,
+    `provisioner/key.js`, `approval-execution.js`, `offboarding.js`,
+    `reconciliation/engine.js`, `routes/reconciliation.js`) used
+    `LIKE '%/' || key_name` — but `_`/`%` in a key name are real LIKE
+    metacharacters, not literal ones, letting an unintended key
+    silently match through a tenant-resolution join. All converted to
+    an exact suffix match (`right(vault_path, length(key_name)+1) =
+    '/' || key_name`), which has no metacharacter surface at all.
+    `aggregation/intent.js`'s scope query genuinely needs a trailing
+    wildcard — kept as LIKE, but the namespace/app-name values are now
+    escaped first (new `db.js#escapeLikeValue()`) with an explicit
+    `ESCAPE '\'` clause, closing a real cross-tenant control-assessment
+    leak an app named with `_`/`%` could otherwise trigger.
+  - **Maturity model's shallow custody scoring.** `dimKeyLifecycle()`'s
+    "versioned" signal was `min_decryption_version >= 1` — true of
+    essentially any real Transit key from creation, rotated or not.
+    Replaced with the same "genuinely rotated" (version > 1) signal
+    `ladderChecks()` already used correctly, plus a new HSM-backed
+    custody component. Also found and fixed a deeper gap while at it:
+    the maturity model's own key inventory (`loadKeys()`) only ever
+    read the primary Vault cluster — vault-hsm's Managed Keys were
+    invisible to it, unlike `routes/keys.js`'s own `GET /keys`, which
+    already merges both. Verified live: 9 keys now visible (up from
+    the primary cluster alone), 1/9 correctly reported HSM-backed.
+  - **`capture-state.sh`'s non-live `lifecycle_completion`.** Every
+    count used `${var:-0}` against a psql call with discarded stderr —
+    a genuinely FAILED query silently reported the same "0" a healthy
+    empty table would. `count_or_unknown()` now tells the two apart
+    (a real failure reports `null` and is named in a new
+    `query_errors` array). Also added a real Vault cross-check this
+    component never made before: `offboarding.completed` was a pure DB
+    flag: a new `offboarding_live_check()` live-GETs every offboarded
+    application's crypto_profiles paths and counts a genuine 404
+    (destroyed) vs. a still-live 200 discrepancy — verified live
+    against the one currently-offboarded application (2/2 confirmed
+    destroyed).
+  - **Live Control Group verification.** `POST /approvals/:id/approve`
+    and `POST /approvals/:accessor/authorize` used to flip status to
+    `'approved'` purely on the caller's say-so — nothing ever asked
+    Vault whether the accessor had actually been authorized by a real
+    crypto-approvers member, even though the provisioner token already
+    had unused `read` access to `sys/control-group/request` (a real,
+    side-effect-free status check, verified live against a genuine
+    `transit/encrypt/external-supplier-key` Control Group request).
+    Both routes now fail closed (409) unless Vault itself reports
+    `approved: true`, and record Vault's own named authorizing entity
+    as the approver instead of a hardcoded `"arcanium-api"` string.
+    Verified live end-to-end: approving before the real Vault authorize
+    step correctly refuses (409); after it, approves and records
+    `approver: "arcanium-approver-1"`.
+  - **Request→approval drift window.** Prompt 36 pinned a destroy
+    request's key version at request time and re-verified it before
+    execution, but nothing re-confirmed the pin at the moment of
+    approval itself. `POST /:id/approve` now live-reads the key's
+    current Vault version and refuses (409, naming both versions) if
+    it has moved past the pin since the request was raised — verified
+    live end-to-end against a disposable test key rotated between
+    request and approval (pin=1, live=2 → correctly refused).
+  - Full regression green (fitness 37/0/1, negative-auth 30/0,
+    verify-stack 53/1/0). All disposable test fixtures created for live
+    verification (a throwaway application/key, a synthetic Control
+    Group request) were cleaned up afterward.
 - Rotation correctness, destroyed-key reporting, and the key detail
   page's dead Version history card (Prompt 38). Reconciliation's
   rotation_period requirement only ever checked the CONFIGURED

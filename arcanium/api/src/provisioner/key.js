@@ -95,10 +95,14 @@ export async function requestKeyDestroy(
     );
     resolvedSupplierId = rows[0]?.supplier_id ?? null;
   } else {
+    // Prompt 39 — same LIKE-wildcard-injection fix as routes/keys.js's
+    // ownerOfKey()/distributionOf(): `_`/`%` in `name` are real LIKE
+    // metacharacters, not literal ones, under the old `LIKE '%/' || $1`
+    // form. An exact suffix match has no metacharacter surface at all.
     const { rows } = await query(
       `SELECT a.id, a.supplier_id FROM applications a
          JOIN crypto_profiles cp ON cp.application_id = a.id
-        WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
+        WHERE right(cp.vault_path, length($1) + 1) = '/' || $1 AND a.supplier_id IS NULL
         ORDER BY cp.created_at ASC LIMIT 1`,
       [name],
     );

@@ -1306,7 +1306,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
-      summary: Approve — records the decision (CISO-weight); the Vault CG authorize call itself happens out-of-band
+      summary: "Approve — Prompt 39: live-verifies Vault's own Control Group status (when the record carries an accessor) and re-checks a destroy request's pinned key version for drift, before recording the decision"
       responses:
         "200":
           description: OK
@@ -1315,7 +1315,7 @@ paths:
               schema: { $ref: "#/components/schemas/ApprovalRecord" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { description: Not pending }
+        "409": { description: "Not pending, OR (Prompt 39) Vault reports this Control Group request not yet authorized, OR the destroy request's pinned key version no longer matches Vault's live version" }
   /api/v1/approvals/{id}/deny:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1333,7 +1333,7 @@ paths:
     parameters:
       - { name: accessor, in: path, required: true, schema: { type: string }, description: "Vault Control Group accessor, not a UUID." }
     post:
-      summary: CLI alias — approves the pending record matching this accessor (Prompt 19 — previously completely unguarded; CISO-weight)
+      summary: "CLI alias — approves the pending record matching this accessor (Prompt 19 — previously completely unguarded; CISO-weight). Prompt 39: same live Control Group + pinned-version verification as POST /:id/approve"
       responses:
         "200":
           description: OK
@@ -1342,7 +1342,7 @@ paths:
               schema: { $ref: "#/components/schemas/ApprovalRecord" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { description: Not pending }
+        "409": { description: "Not pending, OR (Prompt 39) Vault reports this Control Group request not yet authorized, OR the destroy request's pinned key version no longer matches Vault's live version" }
 
   # ── Cluster / Jobs / Platform ─────────────────────────────────────────
   /api/v1/cluster:

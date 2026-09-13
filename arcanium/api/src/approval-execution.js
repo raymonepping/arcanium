@@ -89,13 +89,17 @@ async function hasLiveDestroyIntent(keyName, appId) {
 // no longer an estate-wide, unscoped key-name search. Two tenants with a
 // same-named key can no longer collide: crypto_profiles is joined through
 // THIS ONE application only.
-async function resolveKeyLocation(appId, keyName) {
+// Prompt 39 — same LIKE-wildcard-injection fix as routes/keys.js's
+// ownerOfKey(): `keyName` is matched as an exact suffix now, not a LIKE
+// pattern where `_`/`%` in the name would act as unintended wildcards.
+export async function resolveKeyLocation(appId, keyName) {
   const { rows } = await query(
     `SELECT cp.vault_path, s.vault_namespace AS namespace
        FROM applications a
        LEFT JOIN suppliers s ON s.id = a.supplier_id
        LEFT JOIN crypto_profiles cp
-         ON cp.application_id = a.id AND cp.vault_path LIKE '%/' || $2
+         ON cp.application_id = a.id
+        AND right(cp.vault_path, length($2) + 1) = '/' || $2
       WHERE a.id = $1
       LIMIT 1`,
     [appId, keyName],
@@ -108,7 +112,7 @@ async function resolveKeyLocation(appId, keyName) {
 // comment) and, inside destroyTransitKey(), to avoid blindly force-setting
 // deletion_allowed. Returns null (not throwing) on a 404 — "key not
 // found" is a legitimate, expected outcome here, not an error condition.
-async function readLiveKeyMeta(keyName, namespace) {
+export async function readLiveKeyMeta(keyName, namespace) {
   try {
     return namespace
       ? await getNamespaceTransitKey(namespace, keyName)

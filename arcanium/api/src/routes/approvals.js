@@ -11,6 +11,8 @@ import { query } from "../db.js";
 import { tenantScope } from "../auth/index.js";
 import { authorize } from "../auth/authorize.js";
 import { approvalEvent } from "../telemetry/metrics.js";
+import { checkControlGroupRequest } from "../vault.js";
+import { resolveKeyLocation, readLiveKeyMeta } from "../approval-execution.js";
 
 export const approvalsRouter = Router();
 
@@ -105,6 +107,74 @@ async function approvalContext(id) {
     vaultNamespace: rows[0].vault_namespace ?? null,
     environment: rows[0].environment ?? null,
   };
+}
+
+// Prompt 39 — shared gate for both approve routes (POST /:id/approve and
+// POST /:accessor/authorize). Two live checks, neither previously made:
+//
+//  1. Control Group verification. Both routes used to flip status to
+//     'approved' purely on the caller's say-so — approve.sh's real flow
+//     calls Vault's own sys/control-group/authorize itself (using
+//     approver-1's identity) BEFORE calling either of these endpoints, but
+//     nothing stopped a caller from skipping that step and hitting these
+//     directly, recording a real Vault CG accessor as "approved" when
+//     Vault itself never authorized it. checkControlGroupRequest() is a
+//     live, side-effect-free status read (verified against a genuine CG
+//     request) — approval is refused (never silently allowed) unless
+//     Vault itself reports approved:true. When it does, Vault's own
+//     response names the real authorizing entity — recorded as the
+//     approver instead of a hardcoded "arcanium-api" string.
+//  2. The request→approval drift window. Prompt 36 pinned
+//     pinned_key_version at REQUEST time and re-verifies it immediately
+//     before EXECUTION — but nothing re-confirmed the pin was still
+//     current at the moment of APPROVAL itself. A key rotated between
+//     request and approval previously went unnoticed until execution's
+//     own (already-correct) refusal; this surfaces the same drift at the
+//     human decision point instead, for a destroy_request whose live
+//     version has already moved past what was pinned.
+async function verifyApprovalGate(record) {
+  let approver = null;
+
+  if (record.accessor) {
+    const cg = await checkControlGroupRequest(record.accessor);
+    if (!cg.approved) {
+      return {
+        ok: false,
+        status: 409,
+        body: {
+          error: "vault control group not authorized",
+          detail:
+            cg.error ??
+            "no approver has authorized this Control Group request in Vault yet — call sys/control-group/authorize as a crypto-approvers member first",
+        },
+      };
+    }
+    approver = cg.authorizations?.[0]?.entity_name ?? null;
+  }
+
+  if (record.action === "revoke" && record.app_id && record.key_name) {
+    const { namespace } = await resolveKeyLocation(
+      record.app_id,
+      record.key_name,
+    );
+    const liveMeta = await readLiveKeyMeta(record.key_name, namespace);
+    if (
+      liveMeta &&
+      record.pinned_key_version != null &&
+      liveMeta.latest_version !== record.pinned_key_version
+    ) {
+      return {
+        ok: false,
+        status: 409,
+        body: {
+          error: "key changed since this request was raised",
+          detail: `pinned version ${record.pinned_key_version} no longer matches the live version ${liveMeta.latest_version} — this destroy request needs to be re-filed against the current key, not approved as-is`,
+        },
+      };
+    }
+  }
+
+  return { ok: true, approver: approver ?? "arcanium-api" };
 }
 
 // GET /api/v1/approvals
@@ -245,7 +315,8 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
 
     // Fetch the pending approval
     const { rows } = await query(
-      `SELECT id, status, accessor FROM approval_requests WHERE id = $1`,
+      `SELECT id, status, accessor, action, app_id, key_name, pinned_key_version
+         FROM approval_requests WHERE id = $1`,
       [req.params.id],
     );
     if (!rows.length) return next(notFound());
@@ -260,15 +331,21 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
     // is a member of the approver group (crypto-approvers). The arcanium-api token
     // is not a member of that group — the approve.sh script handles the Vault CG
     // authorize call directly using approver-1 credentials before calling this endpoint.
-    // This endpoint only records the approval in the database.
+    // Prompt 39 — this endpoint used to only ever RECORD the approval,
+    // trusting that Vault authorize step had genuinely happened. It now
+    // verifies that live, plus re-checks a destroy request's pinned key
+    // version hasn't drifted since it was raised — see
+    // verifyApprovalGate()'s own header.
+    const gate = await verifyApprovalGate(record);
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
 
     // Update approval record
     const { rows: updated } = await query(
       `UPDATE approval_requests
-       SET status = 'approved', approver = 'arcanium-api', updated_at = now()
+       SET status = 'approved', approver = $2, updated_at = now()
        WHERE id = $1
        RETURNING id, app_id, key_name, action, status, approver, accessor, updated_at`,
-      [req.params.id],
+      [req.params.id, gate.approver],
     );
     approvalEvent("approved", "local");
     res.json(updated[0]);
@@ -332,7 +409,9 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
     // action as POST /:id/approve, but was reachable by any authenticated
     // session with no role or tenant check.
     const { rows } = await query(
-      `SELECT ar.id, ar.status, ar.supplier_id, s.vault_namespace, a.environment
+      `SELECT ar.id, ar.status, ar.supplier_id, ar.accessor, ar.action,
+              ar.app_id, ar.key_name, ar.pinned_key_version,
+              s.vault_namespace, a.environment
          FROM approval_requests ar
          LEFT JOIN applications a ON a.id = ar.app_id
          LEFT JOIN suppliers s ON s.id = COALESCE(ar.supplier_id, a.supplier_id)
@@ -368,7 +447,19 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
         .status(409)
         .json({ error: "approval is not pending", status: record.status });
 
-    const approver = source === "manual" ? "cli-operator" : "arcanium-api";
+    // Prompt 39 — same live Control Group + pinned-version verification
+    // as POST /:id/approve (verifyApprovalGate()). When Vault names a
+    // real authorizing entity, that's more truthful than the guessed
+    // cli-operator/arcanium-api label below and takes precedence.
+    const gate = await verifyApprovalGate(record);
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
+
+    const approver =
+      gate.approver !== "arcanium-api"
+        ? gate.approver
+        : source === "manual"
+          ? "cli-operator"
+          : "arcanium-api";
     const { rows: updated } = await query(
       `UPDATE approval_requests
        SET status = 'approved', approver = $2, updated_at = now()

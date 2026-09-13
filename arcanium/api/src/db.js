@@ -88,6 +88,22 @@ export async function withTransaction(fn) {
   }
 }
 
+// Prompt 39 — escapes LIKE metacharacters (`\`, `%`, `_`) in a value that
+// is meant to be matched LITERALLY inside a LIKE pattern that also needs a
+// genuine wildcard elsewhere (e.g. a trailing `%`). Postgres's default LIKE
+// escape character is the backslash, so this alone is sufficient — but
+// callers should still add an explicit `ESCAPE '\'` clause, since relying
+// on an unstated default is exactly the kind of implicit behavior this
+// project's own discipline avoids. Most "does X end with Y" checks in this
+// codebase don't actually need wildcard semantics at all — those should
+// use `right(a, length(b)+1) = '/' || b` instead of LIKE, which has no
+// metacharacter surface to escape in the first place; this helper is only
+// for the few call sites (aggregation/intent.js's scope prefix match) that
+// genuinely need a real wildcard alongside a literal, untrusted value.
+export function escapeLikeValue(value) {
+  return String(value).replace(/[\\%_]/g, (ch) => "\\" + ch);
+}
+
 // Ping the database — used by the health endpoint.
 export async function ping() {
   const start = Date.now();

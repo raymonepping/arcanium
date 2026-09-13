@@ -1,0 +1,938 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 3184b66..394542a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Fixed
+ 
++- Five remaining items from the six-stage lifecycle audit's own
++  remainder (Prompt 39): LIKE-wildcard escaping, the maturity model's
++  shallow custody scoring, `capture-state.sh`'s non-live
++  `lifecycle_completion` component, live Vault Control Group
++  verification, and the request→approval drift window.
++  - **LIKE-wildcard escaping.** Every "does this vault_path end with
++    this key_name" check across the codebase (`routes/keys.js`,
++    `provisioner/key.js`, `approval-execution.js`, `offboarding.js`,
++    `reconciliation/engine.js`, `routes/reconciliation.js`) used
++    `LIKE '%/' || key_name` — but `_`/`%` in a key name are real LIKE
++    metacharacters, not literal ones, letting an unintended key
++    silently match through a tenant-resolution join. All converted to
++    an exact suffix match (`right(vault_path, length(key_name)+1) =
++    '/' || key_name`), which has no metacharacter surface at all.
++    `aggregation/intent.js`'s scope query genuinely needs a trailing
++    wildcard — kept as LIKE, but the namespace/app-name values are now
++    escaped first (new `db.js#escapeLikeValue()`) with an explicit
++    `ESCAPE '\'` clause, closing a real cross-tenant control-assessment
++    leak an app named with `_`/`%` could otherwise trigger.
++  - **Maturity model's shallow custody scoring.** `dimKeyLifecycle()`'s
++    "versioned" signal was `min_decryption_version >= 1` — true of
++    essentially any real Transit key from creation, rotated or not.
++    Replaced with the same "genuinely rotated" (version > 1) signal
++    `ladderChecks()` already used correctly, plus a new HSM-backed
++    custody component. Also found and fixed a deeper gap while at it:
++    the maturity model's own key inventory (`loadKeys()`) only ever
++    read the primary Vault cluster — vault-hsm's Managed Keys were
++    invisible to it, unlike `routes/keys.js`'s own `GET /keys`, which
++    already merges both. Verified live: 9 keys now visible (up from
++    the primary cluster alone), 1/9 correctly reported HSM-backed.
++  - **`capture-state.sh`'s non-live `lifecycle_completion`.** Every
++    count used `${var:-0}` against a psql call with discarded stderr —
++    a genuinely FAILED query silently reported the same "0" a healthy
++    empty table would. `count_or_unknown()` now tells the two apart
++    (a real failure reports `null` and is named in a new
++    `query_errors` array). Also added a real Vault cross-check this
++    component never made before: `offboarding.completed` was a pure DB
++    flag: a new `offboarding_live_check()` live-GETs every offboarded
++    application's crypto_profiles paths and counts a genuine 404
++    (destroyed) vs. a still-live 200 discrepancy — verified live
++    against the one currently-offboarded application (2/2 confirmed
++    destroyed).
++  - **Live Control Group verification.** `POST /approvals/:id/approve`
++    and `POST /approvals/:accessor/authorize` used to flip status to
++    `'approved'` purely on the caller's say-so — nothing ever asked
++    Vault whether the accessor had actually been authorized by a real
++    crypto-approvers member, even though the provisioner token already
++    had unused `read` access to `sys/control-group/request` (a real,
++    side-effect-free status check, verified live against a genuine
++    `transit/encrypt/external-supplier-key` Control Group request).
++    Both routes now fail closed (409) unless Vault itself reports
++    `approved: true`, and record Vault's own named authorizing entity
++    as the approver instead of a hardcoded `"arcanium-api"` string.
++    Verified live end-to-end: approving before the real Vault authorize
++    step correctly refuses (409); after it, approves and records
++    `approver: "arcanium-approver-1"`.
++  - **Request→approval drift window.** Prompt 36 pinned a destroy
++    request's key version at request time and re-verified it before
++    execution, but nothing re-confirmed the pin at the moment of
++    approval itself. `POST /:id/approve` now live-reads the key's
++    current Vault version and refuses (409, naming both versions) if
++    it has moved past the pin since the request was raised — verified
++    live end-to-end against a disposable test key rotated between
++    request and approval (pin=1, live=2 → correctly refused).
++  - Full regression green (fitness 37/0/1, negative-auth 30/0,
++    verify-stack 53/1/0). All disposable test fixtures created for live
++    verification (a throwaway application/key, a synthetic Control
++    Group request) were cleaned up afterward.
+ - Rotation correctness, destroyed-key reporting, and the key detail
+   page's dead Version history card (Prompt 38). Reconciliation's
+   rotation_period requirement only ever checked the CONFIGURED
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 448f04d..e7d415d 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -1306,7 +1306,7 @@ paths:
+     parameters:
+       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+     post:
+-      summary: Approve — records the decision (CISO-weight); the Vault CG authorize call itself happens out-of-band
++      summary: "Approve — Prompt 39: live-verifies Vault's own Control Group status (when the record carries an accessor) and re-checks a destroy request's pinned key version for drift, before recording the decision"
+       responses:
+         "200":
+           description: OK
+@@ -1315,7 +1315,7 @@ paths:
+               schema: { $ref: "#/components/schemas/ApprovalRecord" }
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "404": { $ref: "#/components/responses/NotFound" }
+-        "409": { description: Not pending }
++        "409": { description: "Not pending, OR (Prompt 39) Vault reports this Control Group request not yet authorized, OR the destroy request's pinned key version no longer matches Vault's live version" }
+   /api/v1/approvals/{id}/deny:
+     parameters:
+       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+@@ -1333,7 +1333,7 @@ paths:
+     parameters:
+       - { name: accessor, in: path, required: true, schema: { type: string }, description: "Vault Control Group accessor, not a UUID." }
+     post:
+-      summary: CLI alias — approves the pending record matching this accessor (Prompt 19 — previously completely unguarded; CISO-weight)
++      summary: "CLI alias — approves the pending record matching this accessor (Prompt 19 — previously completely unguarded; CISO-weight). Prompt 39: same live Control Group + pinned-version verification as POST /:id/approve"
+       responses:
+         "200":
+           description: OK
+@@ -1342,7 +1342,7 @@ paths:
+               schema: { $ref: "#/components/schemas/ApprovalRecord" }
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "404": { $ref: "#/components/responses/NotFound" }
+-        "409": { description: Not pending }
++        "409": { description: "Not pending, OR (Prompt 39) Vault reports this Control Group request not yet authorized, OR the destroy request's pinned key version no longer matches Vault's live version" }
+ 
+   # ── Cluster / Jobs / Platform ─────────────────────────────────────────
+   /api/v1/cluster:
+diff --git a/arcanium/api/src/aggregation/intent.js b/arcanium/api/src/aggregation/intent.js
+index cf54282..1ef28a1 100644
+--- a/arcanium/api/src/aggregation/intent.js
++++ b/arcanium/api/src/aggregation/intent.js
+@@ -18,7 +18,7 @@
+ //     and collapsing them into one value would be exactly the "fabricated
+ //     aggregation" this phase's design rules forbid.
+ 
+-import { query } from "../db.js";
++import { query, escapeLikeValue } from "../db.js";
+ import { custodyOf, resolveKeyMeta } from "../routes/keys.js";
+ import { getDispositionFor } from "../reconciliation/engine.js";
+ 
+@@ -130,12 +130,20 @@ export async function getApplicationIntent(appId) {
+     });
+   }
+ 
++  // Prompt 39 — this pattern's trailing `%` is a genuine, intended
++  // wildcard (every control_assessments row under this app), but
++  // `namespace`/`app.name` are concatenated in UNESCAPED — either one
++  // containing `_` or `%` (an application name is user-supplied at
++  // registration time) would let it wildcard-match a DIFFERENT,
++  // similarly-shaped app's scope too, leaking one tenant's control
++  // assessments into another's governance view. escapeLikeValue() makes
++  // the two halves literal; only the explicit trailing `%` still wildcards.
+   const { rows: controls } = await query(
+     `SELECT DISTINCT ON (control_id, scope) ca.*, c.requirement, c.mandatory, c.dimension
+        FROM control_assessments ca JOIN controls c ON c.id = ca.control_id
+-      WHERE ca.scope LIKE $1
++      WHERE ca.scope LIKE $1 ESCAPE '\\'
+       ORDER BY control_id, scope, assessed_at DESC`,
+-    [`${namespace}/${app.name}/%`],
++    [`${escapeLikeValue(namespace)}/${escapeLikeValue(app.name)}/%`],
+   );
+ 
+   const keyNames = profiles.map((p) => keyNameFromPath(p.vault_path));
+diff --git a/arcanium/api/src/approval-execution.js b/arcanium/api/src/approval-execution.js
+index f01d05b..54e3b8f 100644
+--- a/arcanium/api/src/approval-execution.js
++++ b/arcanium/api/src/approval-execution.js
+@@ -89,13 +89,17 @@ async function hasLiveDestroyIntent(keyName, appId) {
+ // no longer an estate-wide, unscoped key-name search. Two tenants with a
+ // same-named key can no longer collide: crypto_profiles is joined through
+ // THIS ONE application only.
+-async function resolveKeyLocation(appId, keyName) {
++// Prompt 39 — same LIKE-wildcard-injection fix as routes/keys.js's
++// ownerOfKey(): `keyName` is matched as an exact suffix now, not a LIKE
++// pattern where `_`/`%` in the name would act as unintended wildcards.
++export async function resolveKeyLocation(appId, keyName) {
+   const { rows } = await query(
+     `SELECT cp.vault_path, s.vault_namespace AS namespace
+        FROM applications a
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
+        LEFT JOIN crypto_profiles cp
+-         ON cp.application_id = a.id AND cp.vault_path LIKE '%/' || $2
++         ON cp.application_id = a.id
++        AND right(cp.vault_path, length($2) + 1) = '/' || $2
+       WHERE a.id = $1
+       LIMIT 1`,
+     [appId, keyName],
+@@ -108,7 +112,7 @@ async function resolveKeyLocation(appId, keyName) {
+ // comment) and, inside destroyTransitKey(), to avoid blindly force-setting
+ // deletion_allowed. Returns null (not throwing) on a 404 — "key not
+ // found" is a legitimate, expected outcome here, not an error condition.
+-async function readLiveKeyMeta(keyName, namespace) {
++export async function readLiveKeyMeta(keyName, namespace) {
+   try {
+     return namespace
+       ? await getNamespaceTransitKey(namespace, keyName)
+diff --git a/arcanium/api/src/db.js b/arcanium/api/src/db.js
+index 4e14e33..0ff549d 100644
+--- a/arcanium/api/src/db.js
++++ b/arcanium/api/src/db.js
+@@ -88,6 +88,22 @@ export async function withTransaction(fn) {
+   }
+ }
+ 
++// Prompt 39 — escapes LIKE metacharacters (`\`, `%`, `_`) in a value that
++// is meant to be matched LITERALLY inside a LIKE pattern that also needs a
++// genuine wildcard elsewhere (e.g. a trailing `%`). Postgres's default LIKE
++// escape character is the backslash, so this alone is sufficient — but
++// callers should still add an explicit `ESCAPE '\'` clause, since relying
++// on an unstated default is exactly the kind of implicit behavior this
++// project's own discipline avoids. Most "does X end with Y" checks in this
++// codebase don't actually need wildcard semantics at all — those should
++// use `right(a, length(b)+1) = '/' || b` instead of LIKE, which has no
++// metacharacter surface to escape in the first place; this helper is only
++// for the few call sites (aggregation/intent.js's scope prefix match) that
++// genuinely need a real wildcard alongside a literal, untrusted value.
++export function escapeLikeValue(value) {
++  return String(value).replace(/[\\%_]/g, (ch) => "\\" + ch);
++}
++
+ // Ping the database — used by the health endpoint.
+ export async function ping() {
+   const start = Date.now();
+diff --git a/arcanium/api/src/maturity/checks.js b/arcanium/api/src/maturity/checks.js
+index 062c741..d8dcf3d 100644
+--- a/arcanium/api/src/maturity/checks.js
++++ b/arcanium/api/src/maturity/checks.js
+@@ -9,6 +9,8 @@ import { query } from "../db.js";
+ import {
+   listTransitKeys,
+   getTransitKey,
++  listHsmTransitKeys,
++  getHsmTransitKey,
+   vaultRequest,
+   getProvisionerToken,
+ } from "../vault.js";
+@@ -25,13 +27,31 @@ async function rows(sql, params = []) {
+   }
+ }
+ 
++// Prompt 39 — this previously read ONLY the primary Vault cluster
++// (listTransitKeys/getTransitKey). vault-hsm's Managed Keys — the
++// project's own strongest custody signal — were structurally invisible
++// to every dimension in this file, including dimKeyLifecycle(), whose
++// entire job is custody hygiene. routes/keys.js's GET /keys already
++// merges both clusters (HSM wins on a name collision, since it's the
++// higher-assurance read for a shared name); this adopts the same merge
++// so the maturity model's key inventory matches what a human actually
++// sees on the Keys page.
+ async function loadKeys() {
+   try {
+-    const names = await listTransitKeys();
+-    const metas = await Promise.all(
+-      names.map((n) => getTransitKey(n).catch(() => null)),
+-    );
+-    return metas.filter(Boolean);
++    const [names, hsmNames] = await Promise.all([
++      listTransitKeys(),
++      listHsmTransitKeys(),
++    ]);
++    const byName = new Map();
++    for (const name of names) {
++      const meta = await getTransitKey(name).catch(() => null);
++      if (meta) byName.set(name, meta);
++    }
++    for (const name of hsmNames) {
++      const meta = await getHsmTransitKey(name).catch(() => null);
++      if (meta) byName.set(name, meta);
++    }
++    return [...byName.values()];
+   } catch {
+     return [];
+   }
+@@ -51,22 +71,40 @@ export async function dimKeyLifecycle() {
+   }
+   const nonExport = keys.filter((k) => k.exportable === false).length;
+   const protectedDel = keys.filter((k) => k.deletion_allowed === false).length;
+-  const versioned = keys.filter(
+-    (k) => (k.min_decryption_version ?? 0) >= 1,
++  // Prompt 39 — `min_decryption_version >= 1` was the previous "versioned"
++  // signal: true of essentially every real Transit key from the moment
++  // it's created (Vault's own default), rotated or not — it rewarded a
++  // default, not a demonstrated behavior. Reuses ladderChecks()'s own
++  // already-correct "genuinely rotated" definition (a key at version > 1
++  // has actually gone through a rotation) for consistency and honesty.
++  const rotated = keys.filter(
++    (k) => Object.keys(k.keys ?? {}).length > 1 || (k.latest_version ?? 1) > 1,
+   ).length;
++  // Prompt 39 — hardware/HSM-backed custody (a managed key — key material
++  // never leaves the HSM) is a real, harder-to-fake custody signal this
++  // dimension never measured at all before loadKeys() could even see
++  // vault-hsm's keys.
++  const hsmBacked = keys.filter((k) => k.type === "managed_key").length;
+   const autoRot = keys.filter((k) => (k.auto_rotate_period ?? 0) > 0).length;
+   const score = clamp(
+-    pct(nonExport, keys.length) * 45 +
+-      pct(protectedDel, keys.length) * 30 +
+-      pct(versioned, keys.length) * 25,
++    pct(nonExport, keys.length) * 30 +
++      pct(protectedDel, keys.length) * 20 +
++      pct(rotated, keys.length) * 25 +
++      pct(hsmBacked, keys.length) * 25,
+   );
+   return {
+     id: "lifecycle",
+     name: "Key Lifecycle Hygiene",
+     score,
+-    basis: `${nonExport}/${keys.length} non-exportable · ${protectedDel}/${keys.length} deletion-protected · ${versioned}/${keys.length} versioned`,
++    basis: `${nonExport}/${keys.length} non-exportable · ${protectedDel}/${keys.length} deletion-protected · ${rotated}/${keys.length} genuinely rotated · ${hsmBacked}/${keys.length} HSM-backed`,
+     nextStep:
+-      autoRot === 0 ? "Set an auto-rotation period on production keys" : null,
++      rotated === 0
++        ? "Rotate at least one production key (a configured auto_rotate_period alone does not count)"
++        : hsmBacked === 0
++          ? "Move at least one production key to HSM-backed (managed key) custody"
++          : autoRot === 0
++            ? "Set an auto-rotation period on production keys"
++            : null,
+   };
+ }
+ 
+diff --git a/arcanium/api/src/offboarding.js b/arcanium/api/src/offboarding.js
+index 4ea2c48..2bd8c27 100644
+--- a/arcanium/api/src/offboarding.js
++++ b/arcanium/api/src/offboarding.js
+@@ -129,13 +129,19 @@ export async function initiateOffboarding(applicationId, actor) {
+     throw e;
+   }
+ 
++  // Prompt 39 — same LIKE-wildcard-injection fix as everywhere else a
++  // key_name is resolved through crypto_profiles: `_`/`%` in ds.key_name
++  // are real LIKE metacharacters, not literal ones, under a `LIKE '%/' ||
++  // ds.key_name` join. An exact suffix match (right()/length()) has no
++  // metacharacter surface — the actual intent here was never a wildcard.
+   const { rows: dsRows } = await query(
+     `SELECT ds.id, ds.key_name, ds.archived_at, cp.vault_path, s.vault_namespace AS namespace
+        FROM desired_state ds
+        JOIN applications a ON a.id = ds.application_id
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
+        LEFT JOIN crypto_profiles cp
+-         ON cp.application_id = ds.application_id AND cp.vault_path LIKE '%/' || ds.key_name
++         ON cp.application_id = ds.application_id
++        AND right(cp.vault_path, length(ds.key_name) + 1) = '/' || ds.key_name
+       WHERE ds.application_id = $1 AND ds.archived_at IS NULL`,
+     [applicationId],
+   );
+diff --git a/arcanium/api/src/provisioner/key.js b/arcanium/api/src/provisioner/key.js
+index e5378cc..e33cb90 100644
+--- a/arcanium/api/src/provisioner/key.js
++++ b/arcanium/api/src/provisioner/key.js
+@@ -95,10 +95,14 @@ export async function requestKeyDestroy(
+     );
+     resolvedSupplierId = rows[0]?.supplier_id ?? null;
+   } else {
++    // Prompt 39 — same LIKE-wildcard-injection fix as routes/keys.js's
++    // ownerOfKey()/distributionOf(): `_`/`%` in `name` are real LIKE
++    // metacharacters, not literal ones, under the old `LIKE '%/' || $1`
++    // form. An exact suffix match has no metacharacter surface at all.
+     const { rows } = await query(
+       `SELECT a.id, a.supplier_id FROM applications a
+          JOIN crypto_profiles cp ON cp.application_id = a.id
+-        WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
++        WHERE right(cp.vault_path, length($1) + 1) = '/' || $1 AND a.supplier_id IS NULL
+         ORDER BY cp.created_at ASC LIMIT 1`,
+       [name],
+     );
+diff --git a/arcanium/api/src/reconciliation/engine.js b/arcanium/api/src/reconciliation/engine.js
+index 8e6dd10..e65f39f 100644
+--- a/arcanium/api/src/reconciliation/engine.js
++++ b/arcanium/api/src/reconciliation/engine.js
+@@ -77,9 +77,14 @@ async function desiredStateRowsFor({ desiredStateId, supplierIds } = {}) {
+        -- ds.key_name actually names, feeding a wrong Vault path into
+        -- OBSERVERS/APPLIERS for this row. Matches offboarding.js's own
+        -- already-correct join pattern.
++       -- Prompt 39 — same LIKE-wildcard-injection fix as offboarding.js's
++       -- own already-fixed join: an underscore or percent sign in
++       -- ds.key_name is a real LIKE metacharacter, not a literal one,
++       -- under the old LIKE '%/' || ds.key_name form. An exact suffix
++       -- match has no metacharacter surface.
+        LEFT JOIN crypto_profiles cp
+          ON cp.application_id = ds.application_id AND cp.type = 'transit'
+-        AND cp.vault_path LIKE '%/' || ds.key_name
++        AND right(cp.vault_path, length(ds.key_name) + 1) = '/' || ds.key_name
+        ${where}
+       ORDER BY ds.application_id, ds.key_name`,
+     params,
+@@ -259,9 +264,14 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
+        JOIN applications a ON a.id = ds.application_id
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
+        -- Prompt 36 — same join fix as desiredStateRowsFor() above.
++       -- Prompt 39 — same LIKE-wildcard-injection fix as offboarding.js's
++       -- own already-fixed join: an underscore or percent sign in
++       -- ds.key_name is a real LIKE metacharacter, not a literal one,
++       -- under the old LIKE '%/' || ds.key_name form. An exact suffix
++       -- match has no metacharacter surface.
+        LEFT JOIN crypto_profiles cp
+          ON cp.application_id = ds.application_id AND cp.type = 'transit'
+-        AND cp.vault_path LIKE '%/' || ds.key_name
++        AND right(cp.vault_path, length(ds.key_name) + 1) = '/' || ds.key_name
+       WHERE rr.id = $1`,
+     [runId],
+   );
+diff --git a/arcanium/api/src/routes/approvals.js b/arcanium/api/src/routes/approvals.js
+index 723f3e9..36ce22c 100644
+--- a/arcanium/api/src/routes/approvals.js
++++ b/arcanium/api/src/routes/approvals.js
+@@ -11,6 +11,8 @@ import { query } from "../db.js";
+ import { tenantScope } from "../auth/index.js";
+ import { authorize } from "../auth/authorize.js";
+ import { approvalEvent } from "../telemetry/metrics.js";
++import { checkControlGroupRequest } from "../vault.js";
++import { resolveKeyLocation, readLiveKeyMeta } from "../approval-execution.js";
+ 
+ export const approvalsRouter = Router();
+ 
+@@ -107,6 +109,74 @@ async function approvalContext(id) {
+   };
+ }
+ 
++// Prompt 39 — shared gate for both approve routes (POST /:id/approve and
++// POST /:accessor/authorize). Two live checks, neither previously made:
++//
++//  1. Control Group verification. Both routes used to flip status to
++//     'approved' purely on the caller's say-so — approve.sh's real flow
++//     calls Vault's own sys/control-group/authorize itself (using
++//     approver-1's identity) BEFORE calling either of these endpoints, but
++//     nothing stopped a caller from skipping that step and hitting these
++//     directly, recording a real Vault CG accessor as "approved" when
++//     Vault itself never authorized it. checkControlGroupRequest() is a
++//     live, side-effect-free status read (verified against a genuine CG
++//     request) — approval is refused (never silently allowed) unless
++//     Vault itself reports approved:true. When it does, Vault's own
++//     response names the real authorizing entity — recorded as the
++//     approver instead of a hardcoded "arcanium-api" string.
++//  2. The request→approval drift window. Prompt 36 pinned
++//     pinned_key_version at REQUEST time and re-verifies it immediately
++//     before EXECUTION — but nothing re-confirmed the pin was still
++//     current at the moment of APPROVAL itself. A key rotated between
++//     request and approval previously went unnoticed until execution's
++//     own (already-correct) refusal; this surfaces the same drift at the
++//     human decision point instead, for a destroy_request whose live
++//     version has already moved past what was pinned.
++async function verifyApprovalGate(record) {
++  let approver = null;
++
++  if (record.accessor) {
++    const cg = await checkControlGroupRequest(record.accessor);
++    if (!cg.approved) {
++      return {
++        ok: false,
++        status: 409,
++        body: {
++          error: "vault control group not authorized",
++          detail:
++            cg.error ??
++            "no approver has authorized this Control Group request in Vault yet — call sys/control-group/authorize as a crypto-approvers member first",
++        },
++      };
++    }
++    approver = cg.authorizations?.[0]?.entity_name ?? null;
++  }
++
++  if (record.action === "revoke" && record.app_id && record.key_name) {
++    const { namespace } = await resolveKeyLocation(
++      record.app_id,
++      record.key_name,
++    );
++    const liveMeta = await readLiveKeyMeta(record.key_name, namespace);
++    if (
++      liveMeta &&
++      record.pinned_key_version != null &&
++      liveMeta.latest_version !== record.pinned_key_version
++    ) {
++      return {
++        ok: false,
++        status: 409,
++        body: {
++          error: "key changed since this request was raised",
++          detail: `pinned version ${record.pinned_key_version} no longer matches the live version ${liveMeta.latest_version} — this destroy request needs to be re-filed against the current key, not approved as-is`,
++        },
++      };
++    }
++  }
++
++  return { ok: true, approver: approver ?? "arcanium-api" };
++}
++
+ // GET /api/v1/approvals
+ // Returns all pending approvals (status = 'pending') by default.
+ // Query param ?all=true returns all approvals regardless of status.
+@@ -245,7 +315,8 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
+ 
+     // Fetch the pending approval
+     const { rows } = await query(
+-      `SELECT id, status, accessor FROM approval_requests WHERE id = $1`,
++      `SELECT id, status, accessor, action, app_id, key_name, pinned_key_version
++         FROM approval_requests WHERE id = $1`,
+       [req.params.id],
+     );
+     if (!rows.length) return next(notFound());
+@@ -260,15 +331,21 @@ approvalsRouter.post("/:id/approve", async (req, res, next) => {
+     // is a member of the approver group (crypto-approvers). The arcanium-api token
+     // is not a member of that group — the approve.sh script handles the Vault CG
+     // authorize call directly using approver-1 credentials before calling this endpoint.
+-    // This endpoint only records the approval in the database.
++    // Prompt 39 — this endpoint used to only ever RECORD the approval,
++    // trusting that Vault authorize step had genuinely happened. It now
++    // verifies that live, plus re-checks a destroy request's pinned key
++    // version hasn't drifted since it was raised — see
++    // verifyApprovalGate()'s own header.
++    const gate = await verifyApprovalGate(record);
++    if (!gate.ok) return res.status(gate.status).json(gate.body);
+ 
+     // Update approval record
+     const { rows: updated } = await query(
+       `UPDATE approval_requests
+-       SET status = 'approved', approver = 'arcanium-api', updated_at = now()
++       SET status = 'approved', approver = $2, updated_at = now()
+        WHERE id = $1
+        RETURNING id, app_id, key_name, action, status, approver, accessor, updated_at`,
+-      [req.params.id],
++      [req.params.id, gate.approver],
+     );
+     approvalEvent("approved", "local");
+     res.json(updated[0]);
+@@ -332,7 +409,9 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
+     // action as POST /:id/approve, but was reachable by any authenticated
+     // session with no role or tenant check.
+     const { rows } = await query(
+-      `SELECT ar.id, ar.status, ar.supplier_id, s.vault_namespace, a.environment
++      `SELECT ar.id, ar.status, ar.supplier_id, ar.accessor, ar.action,
++              ar.app_id, ar.key_name, ar.pinned_key_version,
++              s.vault_namespace, a.environment
+          FROM approval_requests ar
+          LEFT JOIN applications a ON a.id = ar.app_id
+          LEFT JOIN suppliers s ON s.id = COALESCE(ar.supplier_id, a.supplier_id)
+@@ -368,7 +447,19 @@ approvalsRouter.post("/:accessor/authorize", async (req, res, next) => {
+         .status(409)
+         .json({ error: "approval is not pending", status: record.status });
+ 
+-    const approver = source === "manual" ? "cli-operator" : "arcanium-api";
++    // Prompt 39 — same live Control Group + pinned-version verification
++    // as POST /:id/approve (verifyApprovalGate()). When Vault names a
++    // real authorizing entity, that's more truthful than the guessed
++    // cli-operator/arcanium-api label below and takes precedence.
++    const gate = await verifyApprovalGate(record);
++    if (!gate.ok) return res.status(gate.status).json(gate.body);
++
++    const approver =
++      gate.approver !== "arcanium-api"
++        ? gate.approver
++        : source === "manual"
++          ? "cli-operator"
++          : "arcanium-api";
+     const { rows: updated } = await query(
+       `UPDATE approval_requests
+        SET status = 'approved', approver = $2, updated_at = now()
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index 54e7eed..4272419 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -40,13 +40,21 @@ export const keysRouter = Router();
+ // makes this query structurally incapable of matching a supplier-owned
+ // application, closing the ambiguity rather than trying to disambiguate a
+ // name collision after the fact.
++// Prompt 39 — this was `cp.vault_path LIKE '%/' || $1`: a LIKE pattern
++// whose "literal" half isn't actually literal — `_` and `%` are LIKE
++// metacharacters, and Vault key names may contain underscores. A key
++// named e.g. `pay_ents-api-key` would ALSO match `payXents-api-key` for
++// any single character X, an unintended collision feeding straight into
++// this function's tenant-resolution result. The real intent was never a
++// wildcard match at all — just "vault_path ends with '/' + name" — which
++// `right()`/`length()` express with no metacharacter surface to exploit.
+ async function ownerOfKey(name) {
+   const { rows } = await query(
+     `SELECT a.id AS application_id, s.vault_namespace, a.environment
+        FROM crypto_profiles cp
+        JOIN applications a ON a.id = cp.application_id
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
+-      WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
++      WHERE right(cp.vault_path, length($1) + 1) = '/' || $1 AND a.supplier_id IS NULL
+       LIMIT 1`,
+     [name],
+   );
+@@ -71,13 +79,16 @@ async function ownerOfKey(name) {
+ // that tenant's namespace — a real cross-tenant information leak, not
+ // just a display bug, since GET /keys/:name is estate-wide (no tenant
+ // scope check of its own).
++// Prompt 39 — same LIKE-wildcard-injection fix as ownerOfKey() above, same
++// reason: the underscore in a key name is a real LIKE metacharacter, not a
++// literal one, unless expressed as an exact suffix match instead.
+ async function distributionOf(name) {
+   const { rows } = await query(
+     `SELECT a.name AS application, a.environment, s.vault_namespace AS namespace
+        FROM crypto_profiles cp
+        JOIN applications a ON a.id = cp.application_id
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
+-      WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
++      WHERE right(cp.vault_path, length($1) + 1) = '/' || $1 AND a.supplier_id IS NULL
+       LIMIT 1`,
+     [name],
+   );
+diff --git a/arcanium/api/src/routes/reconciliation.js b/arcanium/api/src/routes/reconciliation.js
+index 2317674..3cf565a 100644
+--- a/arcanium/api/src/routes/reconciliation.js
++++ b/arcanium/api/src/routes/reconciliation.js
+@@ -396,9 +396,13 @@ reconciliationRouter.post("/desired-state", async (req, res, next) => {
+     // key_name typo or a key this application doesn't actually own. Same
+     // vault_path-suffix match used everywhere else a key_name is resolved
+     // through crypto_profiles (offboarding.js, engine.js).
++    // Prompt 39 — was `vault_path LIKE '%/' || $2`: `_`/`%` in key_name
++    // (a request-body field, not even DB-sourced here) are real LIKE
++    // metacharacters, not literal ones — an exact suffix match closes
++    // that off entirely.
+     const { rows: cpRows } = await query(
+       `SELECT 1 FROM crypto_profiles
+-        WHERE application_id = $1 AND vault_path LIKE '%/' || $2`,
++        WHERE application_id = $1 AND right(vault_path, length($2) + 1) = '/' || $2`,
+       [application_id, key_name],
+     );
+     if (!cpRows.length)
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index 8cb7fb4..d801e40 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -265,6 +265,40 @@ export function getProvisionerToken() {
+   return config.vault.provisionerToken || state.token;
+ }
+ 
++// Prompt 39 — live-verifies a Vault Control Group request's own status,
++// distinct from (and never a substitute for) sys/control-group/authorize.
++// routes/approvals.js previously flipped an approval's status to
++// 'approved' purely on the caller's say-so — nothing ever asked Vault
++// whether a real crypto-approvers member had actually authorized this
++// accessor. Verified live against a genuine CG-gated request
++// (transit/encrypt/external-supplier-key): this endpoint is a
++// side-effect-free status read (terraform/vault-platform/policies.tf
++// already grants the provisioner token `read` on this exact path — the
++// capability was provisioned and unused) — {approved:false,
++// authorizations:null} before authorization, {approved:true,
++// authorizations:[{entity_id, entity_name}]} after, both HTTP 200. An
++// invalid/expired/unknown accessor is a 400, treated the same as any
++// other failure here: never read as approved.
++export async function checkControlGroupRequest(accessor) {
++  try {
++    const res = await vaultRequest(
++      "POST",
++      "sys/control-group/request",
++      { accessor },
++      getProvisionerToken(),
++    );
++    return {
++      checked: true,
++      approved: res?.data?.approved === true,
++      authorizations: res?.data?.authorizations ?? null,
++    };
++  } catch (err) {
++    // Any failure — invalid/expired accessor, Vault unreachable — must
++    // never be read as "approved". Fail closed.
++    return { checked: false, approved: false, authorizations: null, error: err.message };
++  }
++}
++
+ export async function listTransitKeys() {
+   const res = await vaultRequest("LIST", "transit/keys", null, state.token);
+   return res.data?.keys ?? [];
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 448f04d..e7d415d 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -1306,7 +1306,7 @@ paths:
+     parameters:
+       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+     post:
+-      summary: Approve — records the decision (CISO-weight); the Vault CG authorize call itself happens out-of-band
++      summary: "Approve — Prompt 39: live-verifies Vault's own Control Group status (when the record carries an accessor) and re-checks a destroy request's pinned key version for drift, before recording the decision"
+       responses:
+         "200":
+           description: OK
+@@ -1315,7 +1315,7 @@ paths:
+               schema: { $ref: "#/components/schemas/ApprovalRecord" }
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "404": { $ref: "#/components/responses/NotFound" }
+-        "409": { description: Not pending }
++        "409": { description: "Not pending, OR (Prompt 39) Vault reports this Control Group request not yet authorized, OR the destroy request's pinned key version no longer matches Vault's live version" }
+   /api/v1/approvals/{id}/deny:
+     parameters:
+       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+@@ -1333,7 +1333,7 @@ paths:
+     parameters:
+       - { name: accessor, in: path, required: true, schema: { type: string }, description: "Vault Control Group accessor, not a UUID." }
+     post:
+-      summary: CLI alias — approves the pending record matching this accessor (Prompt 19 — previously completely unguarded; CISO-weight)
++      summary: "CLI alias — approves the pending record matching this accessor (Prompt 19 — previously completely unguarded; CISO-weight). Prompt 39: same live Control Group + pinned-version verification as POST /:id/approve"
+       responses:
+         "200":
+           description: OK
+@@ -1342,7 +1342,7 @@ paths:
+               schema: { $ref: "#/components/schemas/ApprovalRecord" }
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "404": { $ref: "#/components/responses/NotFound" }
+-        "409": { description: Not pending }
++        "409": { description: "Not pending, OR (Prompt 39) Vault reports this Control Group request not yet authorized, OR the destroy request's pinned key version no longer matches Vault's live version" }
+ 
+   # ── Cluster / Jobs / Platform ─────────────────────────────────────────
+   /api/v1/cluster:
+diff --git a/state/CURRENT b/state/CURRENT
+index 4cef208..2a35e06 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-38-rotation-correctness
++state/baselines/2026-09-13_test-lifecycle-fix
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index a37c261..823dbbb 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -657,40 +657,131 @@ capture_multitenancy() {
+ # Prompt 28, Deliverable 9 — service accounts, expiry_date coverage/drift,
+ # and offboarding progress. Same "count what's true right now, never a
+ # static/assumed number" discipline every other capture_* function follows.
++#
++# Prompt 39 — two real gaps, found while finishing off the six-stage audit's
++# remainder:
++#  1. Every count below used `${var:-0}` against a psql call whose stderr was
++#     thrown away. Bash's `:-0` fires on an EMPTY value too, not just an
++#     UNSET one — so a psql call that genuinely failed (bad connection,
++#     locked table, a typo'd column after a future migration) silently
++#     printed the same "0" a real, healthy, confirmed-empty table would.
++#     This is exactly the "fabricated PASS" class of bug this whole script
++#     exists to prevent, just for numbers instead of a check verdict.
++#     count_or_unknown() now tells the two apart: a failed query leaves the
++#     field genuinely null (with the failure named in query_errors), never
++#     a guessed 0.
++#  2. This component made zero Vault calls — `offboarding.completed` was
++#     read as a pure DB flag (applications.offboarded_at), never checked
++#     against Vault's own reality the way Prompt 36 already insists on for
++#     the live destroy path itself. An application can only be marked
++#     offboarded once every one of its desired_state rows resolved
++#     (offboarding.js), but nothing here confirms the underlying Vault
++#     key/PKI-role material is actually gone — a stuck worker or a partial
++#     destroy could leave offboarded_at set while real key material still
++#     lives in Vault, and this baseline would never have noticed.
++#     offboarding_live_check() live-GETs every crypto_profiles path
++#     belonging to an offboarded application (namespace-aware) and counts
++#     a 404 as destroyed, a 200 as a real, still-live discrepancy — never
++#     assumed either way on a network/auth failure (UNKNOWN, added to
++#     query_errors, not folded into either count).
+ capture_lifecycle_completion() {
+   local d="$TMP/components/lifecycle_completion"
+   mkdir -p "$d"
++  local -a lc_query_errors=()
++
++  # Runs a count query; on a genuine failure (non-zero psql exit) leaves
++  # the named var EMPTY (never "0") and records the failure — the caller
++  # renders empty as JSON null, not a guessed healthy count.
++  count_or_unknown() {
++    local __resultvar="$1" __label="$2" __sql="$3"
++    local __out __err="/tmp/arc-lc-err.$$"
++    if __out=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c "$__sql" 2>"$__err"); then
++      printf -v "$__resultvar" '%s' "$(tr -d '[:space:]' <<<"$__out")"
++    else
++      printf -v "$__resultvar" ''
++      lc_query_errors+=("$__label: $(tr -d '\n' <"$__err" | cut -c1-200)")
++    fi
++    rm -f "$__err"
++  }
++
++  # Prompt 39 — live-verifies offboarding.completed against Vault itself
++  # instead of trusting the DB flag alone. Reuses the same GET-and-check-
++  # 404 convention offboarding.js's own keyIsActive()/observeExpiryDate()
++  # use — a 404 is a real, positively-observed "destroyed", not an error.
++  # The provisioner token is read transiently from .env for this one live
++  # check and never written to $d — this script's own hard rule (whitelist
++  # fields, never capture secret values) applies here exactly as it does
++  # to LDAP_ADMIN_PASSWORD's existing transient use elsewhere in this file.
++  offboarding_live_check() {
++    local still_live=0 confirmed_destroyed=0 unresolved=0
++    if ! running arcanium-vault_s && ! running arcanium-vault_1; then
++      echo "null null null vault-not-running"
++      return
++    fi
++    local token
++    token="$(grep -E '^VAULT_PROVISIONER_TOKEN=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
++    if [ -z "$token" ]; then
++      echo "null null null no-provisioner-token"
++      return
++    fi
++    local rows
++    rows=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -F'|' -c \
++      "select coalesce(s.vault_namespace,''), cp.vault_path
++         from applications a
++         join crypto_profiles cp on cp.application_id = a.id
++         left join suppliers s on s.id = a.supplier_id
++        where a.offboarded_at is not null;" 2>/dev/null)
++    if [ -z "$rows" ]; then
++      echo "0 0 0 -"
++      return
++    fi
++    while IFS='|' read -r ns path; do
++      [ -z "$path" ] && continue
++      local hdrs=(-H "X-Vault-Token: $token")
++      [ -n "$ns" ] && hdrs+=(-H "X-Vault-Namespace: $ns")
++      local code
++      code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
++        "${hdrs[@]}" "https://127.0.0.1:18200/v1/${path}" 2>/dev/null || echo 000)
++      case "$code" in
++      404) confirmed_destroyed=$((confirmed_destroyed + 1)) ;;
++      200) still_live=$((still_live + 1)) ;;
++      *) unresolved=$((unresolved + 1)) ;;
++      esac
++    done <<<"$rows"
++    echo "$confirmed_destroyed $still_live $unresolved -"
++  }
+ 
+   if ! running arcanium-postgres; then
+     jq -n '{service_accounts: {active: null, revoked: null},
+             expiry_date: {tracked: null, drifted: null},
+-            offboarding: {initiated: null, completed: null},
+-            approval_execution_backlog: null}' \
++            offboarding: {initiated: null, completed: null,
++              completed_verified_destroyed: null, completed_still_live_in_vault: null},
++            approval_execution_backlog: null, query_errors: ["arcanium-postgres not running"]}' \
+       >"$d/lifecycle_completion.json"
+   else
+     local sa_active sa_revoked exp_tracked exp_drifted ob_initiated ob_completed approval_backlog
+-    sa_active=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+-      "select count(*) from service_accounts where revoked_at is null;" 2>/dev/null | tr -d '[:space:]')
+-    sa_revoked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+-      "select count(*) from service_accounts where revoked_at is not null;" 2>/dev/null | tr -d '[:space:]')
+-    exp_tracked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+-      "select count(*) from desired_state where requirement='expiry_date' and archived_at is null;" 2>/dev/null | tr -d '[:space:]')
++    count_or_unknown sa_active "service_accounts.active" \
++      "select count(*) from service_accounts where revoked_at is null;"
++    count_or_unknown sa_revoked "service_accounts.revoked" \
++      "select count(*) from service_accounts where revoked_at is not null;"
++    count_or_unknown exp_tracked "expiry_date.tracked" \
++      "select count(*) from desired_state where requirement='expiry_date' and archived_at is null;"
+     # Counted from the latest reconciliation_runs row per desired_state, not
+     # a stale/cached flag — matches how every other DRIFTED count in this
+     # script (e.g. capture_persistence's own reconciliation figures) is
+     # derived: from the most recent observed run per row, live.
+-    exp_drifted=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++    count_or_unknown exp_drifted "expiry_date.drifted" \
+       "select count(*) from (
+          select distinct on (rr.desired_state_id) rr.desired_state_id, rr.status
+            from reconciliation_runs rr
+            join desired_state ds on ds.id = rr.desired_state_id
+           where ds.requirement = 'expiry_date' and ds.archived_at is null
+           order by rr.desired_state_id, rr.observed_at desc
+-       ) latest where status = 'DRIFTED';" 2>/dev/null | tr -d '[:space:]')
+-    ob_initiated=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+-      "select count(*) from applications where offboarding_initiated_at is not null;" 2>/dev/null | tr -d '[:space:]')
+-    ob_completed=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+-      "select count(*) from applications where offboarded_at is not null;" 2>/dev/null | tr -d '[:space:]')
++       ) latest where status = 'DRIFTED';"
++    count_or_unknown ob_initiated "offboarding.initiated" \
++      "select count(*) from applications where offboarding_initiated_at is not null;"
++    count_or_unknown ob_completed "offboarding.completed" \
++      "select count(*) from applications where offboarded_at is not null;"
+     # Prompt 29, Deliverable 9 — a persistently nonzero count here means
+     # approval-execution.js's own worker step is stuck (silently not
+     # keeping up with real approved destroys), the same class of
+@@ -700,24 +791,55 @@ capture_lifecycle_completion() {
+     # 2026-09-13 — see approval-execution.js's own header) — this count
+     # alone can't distinguish "stuck" from "correctly skipped," only that
+     # something here needs a human look if it stays nonzero across baselines.
+-    approval_backlog=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+-      "select count(*) from approval_requests where status='approved' and action='revoke' and executed_at is null;" 2>/dev/null | tr -d '[:space:]')
++    count_or_unknown approval_backlog "approval_execution_backlog" \
++      "select count(*) from approval_requests where status='approved' and action='revoke' and executed_at is null;"
++
++    local ob_verify
++    ob_verify=$(offboarding_live_check)
++    read -r ob_destroyed ob_live ob_unresolved ob_verify_err <<<"$ob_verify"
++    if [ "$ob_verify_err" != "-" ]; then
++      lc_query_errors+=("offboarding.live_vault_check: $ob_verify_err")
++    fi
++    if [ "$ob_unresolved" != "null" ] && [ "${ob_unresolved:-0}" != "0" ]; then
++      lc_query_errors+=("offboarding.live_vault_check: ${ob_unresolved} path(s) gave a non-404/200 response — left out of both counts, treated as unknown")
++    fi
++
++    local errors_json="[]"
++    if [ "${#lc_query_errors[@]}" -gt 0 ]; then
++      errors_json=$(printf '%s\n' "${lc_query_errors[@]}" | jq -R . | jq -s .)
++    fi
++
+     jq -n \
+-      --arg saa "${sa_active:-0}" --arg sar "${sa_revoked:-0}" \
+-      --arg ext "${exp_tracked:-0}" --arg exd "${exp_drifted:-0}" \
+-      --arg obi "${ob_initiated:-0}" --arg obc "${ob_completed:-0}" \
+-      --arg aeb "${approval_backlog:-0}" \
+-      '{service_accounts: {active: ($saa | tonumber), revoked: ($sar | tonumber)},
+-        expiry_date: {tracked: ($ext | tonumber), drifted: ($exd | tonumber)},
+-        offboarding: {initiated: ($obi | tonumber), completed: ($obc | tonumber)},
+-        approval_execution_backlog: ($aeb | tonumber)}' \
++      --arg saa "${sa_active}" --arg sar "${sa_revoked}" \
++      --arg ext "${exp_tracked}" --arg exd "${exp_drifted}" \
++      --arg obi "${ob_initiated}" --arg obc "${ob_completed}" \
++      --arg obd "${ob_destroyed}" --arg obl "${ob_live}" \
++      --arg aeb "${approval_backlog}" \
++      --argjson errs "$errors_json" \
++      'def n($x): if $x == "" or $x == "null" then null else ($x | tonumber) end;
++       {service_accounts: {active: n($saa), revoked: n($sar)},
++        expiry_date: {tracked: n($ext), drifted: n($exd)},
++        offboarding: {initiated: n($obi), completed: n($obc),
++          completed_verified_destroyed: n($obd),
++          completed_still_live_in_vault: n($obl)},
++        approval_execution_backlog: n($aeb),
++        query_errors: $errs}' \
+       >"$d/lifecycle_completion.json"
++
++    unset -f count_or_unknown offboarding_live_check
+   fi
+ 
+-  if running arcanium-postgres; then
+-    set_status lifecycle_completion CAPTURED
+-  else
++  if ! running arcanium-postgres; then
+     set_status lifecycle_completion UNKNOWN
++  elif jq -e '.query_errors | length > 0' "$d/lifecycle_completion.json" >/dev/null 2>&1; then
++    set_status lifecycle_completion PARTIAL
++  elif jq -e '.offboarding.completed_still_live_in_vault > 0' "$d/lifecycle_completion.json" >/dev/null 2>&1; then
++    # A real, live-confirmed discrepancy (offboarded_at set, key material
++    # still in Vault) is a genuine finding, not a capture failure — surface
++    # it as PARTIAL rather than a clean CAPTURED so it isn't missed.
++    set_status lifecycle_completion PARTIAL
++  else
++    set_status lifecycle_completion CAPTURED
+   fi
+ }
+ 
