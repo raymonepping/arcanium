@@ -1,0 +1,1 @@
+not captured in this baseline — requires an authenticated container exec against softhsm; deferred, not fabricated

@@ -975,6 +975,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/keys/{name}/public-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        /** Download the PUBLIC half of an asymmetric key (PEM) — never a symmetric key or a private key */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/x-pem-file": string;
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description Key not found, or has no public key (symmetric type) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pki/ca-chain": {
         parameters: {
             query?: never;
@@ -982,10 +1030,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** PKI intermediate CA chain (PEM) */
+        /** PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Set to force a file download (Content-Disposition) instead of inline text. */
+                    download?: boolean;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -998,7 +1049,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": string;
+                        "application/x-pem-file": string;
                     };
                 };
             };
@@ -3113,6 +3164,8 @@ export interface components {
             custody?: string;
             hsm_backed?: boolean;
             managed_key_name?: string | null;
+            /** @description True only for an asymmetric key's (rsa-*\/ecdsa-*\/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key. */
+            has_public_key?: boolean;
         };
         ProvisioningJob: {
             /** Format: uuid */

@@ -1,0 +1,16 @@
+ M CHANGELOG.md
+ M Makefile
+ M arcanium/api/openapi/arcanium.yaml
+ M arcanium/api/src/aggregation/intent.js
+ M arcanium/api/src/routes/keys.js
+ M arcanium/api/src/routes/pki.js
+ M arcanium/ui/app/layouts/default.vue
+ M arcanium/ui/app/pages/keys/[id].vue
+ M arcanium/ui/app/types/api.generated.ts
+ M arcanium/ui/app/types/arcanium.ts
+ M openapi/arcanium.yaml
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M state/CURRENT
+?? arcanium/ui/app/pages/pki/
+?? scripts/clean-slate.sh
+?? state/baselines/2026-09-13_pre-prompt-31-public-key-download/

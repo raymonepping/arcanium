@@ -34,6 +34,17 @@
           <button class="text-danger" :disabled="!!busy" @click="doDestroy">
             {{ busy === 'destroy' ? 'Requesting…' : 'Request destroy' }}
           </button>
+          <!-- Prompt 31 — only ever rendered for an asymmetric key's real
+               public component; never present for a symmetric key like
+               payments-api-key, not merely disabled. A plain same-origin
+               link, not a fetch/blob: the API's Content-Disposition header
+               already makes this a real browser download. -->
+          <a
+            v-if="keyData.has_public_key"
+            class="secondary-button"
+            :href="publicKeyUrl"
+            download
+          >Download public key</a>
         </div>
         <p v-if="actionMsg" class="action-msg">{{ actionMsg }}</p>
         <p class="action-note">
@@ -97,7 +108,7 @@
         </div>
       </div>
 
-      <p class="foot-note">Private key material and secrets are never returned by the Arcanium API.</p>
+      <p class="foot-note">Private key material is never returned by the Arcanium API — only the public half of an asymmetric key can ever be downloaded, and only when one exists.</p>
     </div>
   </div>
 </template>
@@ -150,6 +161,12 @@ const custody = computed(() => {
   if (!k) return '—'
   return k.custody ?? (k.exportable ? 'Vault Transit · exportable' : 'Vault Transit (software)')
 })
+
+// Prompt 31 — same /gateway same-origin proxy every other call in this
+// composable uses (useArcaniumApi's $get base), built directly rather
+// than through $get() since this is a real file download, not JSON.
+const config = useRuntimeConfig()
+const publicKeyUrl = computed(() => `${config.public.apiBase}/api/v1/keys/${encodeURIComponent(name)}/public-key`)
 
 const stages = computed(() => {
   const k = keyData.value

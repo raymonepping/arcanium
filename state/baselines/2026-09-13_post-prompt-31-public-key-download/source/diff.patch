@@ -1,0 +1,587 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 29724ac..29ec418 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Added
+ 
++- Public key/CA material download (Prompt 31): the public half of an
++  asymmetric key (`GET /api/v1/keys/:name/public-key`) and the PKI
++  intermediate CA chain, as real file downloads — never a private or
++  symmetric key's bytes, enforced by checking for an actual public-key
++  PEM in Vault's own response rather than a key-type allowlist. New PKI
++  page in the UI (previously API-only, no UI surface at all). Found and
++  fixed along the way: a real, pre-existing custody-accuracy bug where
++  `GET /api/v1/keys/:name` and the unified intent view (Prompt 25) each
++  independently resolved `document-signing-key` against the wrong
++  cluster (primary instead of vault-hsm), showing the wrong custody
++  label and, via the new download route, would have returned the wrong
++  public key entirely. Fixed with one shared resolution helper.
+ - Real OIDC authentication (Keycloak, OpenLDAP-federated) replacing the
+   earlier Vault-userpass-backed session model; roles and tenant scope
+   derive from OIDC groups, not a hardcoded username map. Deny-by-default
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 73a4656..248f6a5 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -202,6 +202,9 @@ components:
+         custody: { type: string, description: "API-derived label — never inferred from the key name." }
+         hsm_backed: { type: boolean }
+         managed_key_name: { type: ["string", "null"] }
++        has_public_key:
++          type: boolean
++          description: "True only for an asymmetric key's (rsa-*/ecdsa-*/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key."
+ 
+     # ── Provisioning jobs ─────────────────────────────────────────────────
+     # Prompt 22, Deliverable 3 — status legally transitions per
+@@ -908,13 +911,24 @@ paths:
+                   message: { type: string }
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "409": { description: No application registered to attach the destroy request to }
++  /api/v1/keys/{name}/public-key:
++    parameters:
++      - { name: name, in: path, required: true, schema: { type: string } }
++    get:
++      summary: Download the PUBLIC half of an asymmetric key (PEM) — never a symmetric key or a private key
++      responses:
++        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "404": { description: "Key not found, or has no public key (symmetric type)" }
+ 
+   # ── PKI ───────────────────────────────────────────────────────────────
+   /api/v1/pki/ca-chain:
+     get:
+-      summary: PKI intermediate CA chain (PEM)
++      summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
++      parameters:
++        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
+       responses:
+-        "200": { description: OK, content: { text/plain: { schema: { type: string } } } }
++        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
+   /api/v1/pki/roles:
+     get:
+       summary: PKI issuance roles
+diff --git a/arcanium/api/src/aggregation/intent.js b/arcanium/api/src/aggregation/intent.js
+index bc54468..2100901 100644
+--- a/arcanium/api/src/aggregation/intent.js
++++ b/arcanium/api/src/aggregation/intent.js
+@@ -19,8 +19,7 @@
+ //     aggregation" this phase's design rules forbid.
+ 
+ import { query } from "../db.js";
+-import { getTransitKey, getHsmTransitKey } from "../vault.js";
+-import { custodyOf } from "../routes/keys.js";
++import { custodyOf, resolveKeyMeta } from "../routes/keys.js";
+ import { getDispositionFor } from "../reconciliation/engine.js";
+ 
+ function keyNameFromPath(vaultPath) {
+@@ -68,14 +67,15 @@ export async function getApplicationIntent(appId) {
+       // profile type alone (aes256-gcm96 does not; rsa/ecdsa do) — only
+       // set true on a live, confirmed read, never guessed. A failed read
+       // leaves `signing` at its current value rather than fabricating one.
++      // Prompt 31 — resolveKeyMeta() is the one shared resolution order
++      // (vault-hsm first, primary cluster as fallback) — this call site
++      // used to duplicate the OLD, backwards order independently (primary
++      // first), which is exactly the bug that made document-signing-key's
++      // custody show wrong here too (see resolveKeyMeta's own comment).
+       try {
+-        live = await getTransitKey(keyName);
++        live = await resolveKeyMeta(keyName);
+       } catch {
+-        try {
+-          live = await getHsmTransitKey(keyName);
+-        } catch {
+-          live = null;
+-        }
++        live = null;
+       }
+       if (live?.supports_signing) requirements.signing = true;
+     }
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index 3191c34..4daf465 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -54,6 +54,32 @@ export function custodyOf(meta) {
+   return "Vault Transit (software)";
+ }
+ 
++// The only kind of "key material" this API ever exposes: the PUBLIC half
++// of an asymmetric key's latest version — never a symmetric key (no public
++// half exists) and never a private/symmetric key byte, regardless of
++// `exportable`. Every key in this deployment is created with
++// exportable=false (see terraform/*/transit.tf, keys.tf); this function
++// does not depend on that flag at all — it only ever returns what Vault's
++// own metadata read already includes, the same way GET /api/v1/pki/ca-chain
++// already exposes public CA material.
++//
++// Deliberately NOT a check against meta.type — found live, the hard way:
++// an HSM-backed Managed Key reports type: "managed_key", not "rsa-4096"
++// (the underlying algorithm is only visible nested under _managedKey), so
++// an rsa-/ecdsa-/ed25519 type-string allowlist silently excludes exactly
++// the one key (document-signing-key) this feature was built for. Vault's
++// own response shape is the real, more robust signal: a symmetric key's
++// `keys.<version>` entry is a bare creation-time number (not an object at
++// all — `{"1": 1789290060}`); an asymmetric OR managed key's is an object
++// with a real public_key PEM string. Checking for that string's actual
++// presence is correct by construction for every current and future key
++// type, not a list this code has to keep in sync with Vault's own types.
++export function publicKeyOf(meta) {
++  const version = String(meta?.latest_version ?? "");
++  const pem = meta?.keys?.[version]?.public_key;
++  return typeof pem === "string" && pem.trim() ? pem : null;
++}
++
+ function projectKey(name, meta) {
+   return {
+     name,
+@@ -72,6 +98,11 @@ function projectKey(name, meta) {
+     custody: custodyOf(meta),
+     hsm_backed: Boolean(meta._managedKey || meta.type === "managed_key"),
+     managed_key_name: meta._managedKey?.name ?? null,
++    // Prompt 31 — the public half of an asymmetric key only; null for
++    // every symmetric key (aes256-gcm96), which has no public half at
++    // all. See publicKeyOf()'s own header comment for what this
++    // deliberately never includes.
++    has_public_key: publicKeyOf(meta) !== null,
+   };
+ }
+ 
+@@ -120,31 +151,89 @@ keysRouter.get("/", async (_req, res, next) => {
+   }
+ });
+ 
+-// GET /api/v1/keys/:name
+-keysRouter.get("/:name", async (req, res, next) => {
+-  const { name } = req.params;
++// Resolves ONE key's metadata with the same precedence as GET /api/v1/keys
++// (the list route, above): vault-hsm wins on a name collision.
++//
++// Prompt 31 — found live, the hard way: GET /:name previously tried the
++// primary cluster FIRST and only consulted vault-hsm on outright failure,
++// which is backwards for document-signing-key specifically — a legacy,
++// unused RSA-4096 Transit key of that same name still exists on the
++// primary cluster (superseded by Prompt 14.1, deliberately left in place,
++// deletion_allowed=false — see terraform/vault-workloads/transit.tf's own
++// comment), so the primary-cluster lookup always SUCCEEDED and the real,
++// in-use HSM-backed Managed Key was never consulted at all. The detail
++// page showed "Vault Transit (software)" custody for a key that is
++// actually SoftHSM-backed — a real, live governance-accuracy bug, not
++// hypothetical: confirmed by comparing the two calls' actual public keys,
++// which are genuinely different key material. Fixed by trying vault-hsm
++// first, matching the list route's own already-correct "HSM wins"
++// precedence — one resolution order, not two independently-drifting ones.
++export async function resolveKeyMeta(name) {
+   try {
+-    const meta = await getTransitKey(name);
+-    return res.json({ ...meta, custody: custodyOf(meta) });
+-  } catch (primaryErr) {
+-    // Not on the primary cluster — try vault-hsm (Managed Key custody).
++    const meta = await getHsmTransitKey(name);
++    return {
++      ...meta,
++      custody: custodyOf(meta),
++      hsm_backed: true,
++      managed_key_name: meta._managedKey?.name ?? null,
++    };
++  } catch (hsmErr) {
+     try {
+-      const meta = await getHsmTransitKey(name);
+-      return res.json({
+-        ...meta,
+-        custody: custodyOf(meta),
+-        hsm_backed: true,
+-        managed_key_name: meta._managedKey?.name ?? null,
+-      });
+-    } catch {
+-      if (primaryErr.vaultStatus === 404) {
++      const meta = await getTransitKey(name);
++      return { ...meta, custody: custodyOf(meta) };
++    } catch (primaryErr) {
++      if (primaryErr.vaultStatus === 404 && hsmErr.vaultStatus === 404) {
+         const e = new Error("key not found");
+         e.status = 404;
+-        return next(e);
++        throw e;
+       }
+-      return next(primaryErr);
++      throw primaryErr;
+     }
+   }
++}
++
++// GET /api/v1/keys/:name
++keysRouter.get("/:name", async (req, res, next) => {
++  try {
++    const meta = await resolveKeyMeta(req.params.name);
++    res.json(meta);
++  } catch (err) {
++    next(err);
++  }
++});
++
++// GET /api/v1/keys/:name/public-key — Prompt 31.
++//
++// The only "download key material" this API will ever offer: the PUBLIC
++// half of an asymmetric key, as a real file download. Never the private
++// key, never a symmetric key's bytes — publicKeyOf() enforces that
++// regardless of what's asked for; a symmetric key (or an asymmetric key
++// with no public_key present) is a 404 here, not an empty/error response
++// that could be mistaken for "this key just happens to have no key".
++keysRouter.get("/:name/public-key", async (req, res, next) => {
++  const { name } = req.params;
++  if (!KEY_NAME_RE.test(name))
++    return res.status(400).json({ error: "invalid key name" });
++
++  let meta;
++  try {
++    meta = await resolveKeyMeta(name);
++  } catch (err) {
++    return next(err);
++  }
++
++  const pem = publicKeyOf(meta);
++  if (!pem) {
++    const e = new Error(
++      "no public key available — this key is symmetric, or has no exported public component",
++    );
++    e.status = 404;
++    return next(e);
++  }
++  res
++    .set("Content-Type", "application/x-pem-file")
++    .set("Content-Disposition", `attachment; filename="${name}-public.pem"`)
++    .send(pem);
+ });
+ 
+ // POST /api/v1/keys
+diff --git a/arcanium/api/src/routes/pki.js b/arcanium/api/src/routes/pki.js
+index c2620d3..348b99b 100644
+--- a/arcanium/api/src/routes/pki.js
++++ b/arcanium/api/src/routes/pki.js
+@@ -6,10 +6,19 @@ import { getPkiCaChain, listPkiRoles } from "../vault.js";
+ export const pkiRouter = Router();
+ 
+ // GET /api/v1/pki/ca-chain
+-pkiRouter.get("/ca-chain", async (_req, res, next) => {
++// ?download=1 — Prompt 31: same PEM, but as a real file download
++// (Content-Disposition) instead of an inline text/plain response, for the
++// UI's "Download CA chain" button. Both forms return public CA material —
++// meant to be shared, same as any CA chain — the flag only changes how the
++// browser presents it, not what's in it.
++pkiRouter.get("/ca-chain", async (req, res, next) => {
+   try {
+     const pem = await getPkiCaChain();
+-    res.set("Content-Type", "text/plain").send(pem);
++    res.set("Content-Type", "application/x-pem-file");
++    if (req.query.download) {
++      res.set("Content-Disposition", 'attachment; filename="arcanium-ca-chain.pem"');
++    }
++    res.send(pem);
+   } catch (err) {
+     next(err);
+   }
+diff --git a/arcanium/ui/app/layouts/default.vue b/arcanium/ui/app/layouts/default.vue
+index 82fcd42..0494a47 100644
+--- a/arcanium/ui/app/layouts/default.vue
++++ b/arcanium/ui/app/layouts/default.vue
+@@ -327,6 +327,7 @@ const NAV_ICONS = {
+   observability: `<svg viewBox="0 0 16 16" fill="none"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/></svg>`,
+   reconciliation: `<svg viewBox="0 0 16 16" fill="none"><path d="M13 4a5 5 0 0 0-8.9-1.6M3 12a5 5 0 0 0 8.9 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M13 1.5V4h-2.5M3 14.5V12h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+   teams: `<svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.3" stroke="currentColor" stroke-width="1.2"/><circle cx="11" cy="6.5" r="1.8" stroke="currentColor" stroke-width="1.1" opacity=".6"/><path d="M1.5 14c0-2.8 1.8-5 4-5s4 2.2 4 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M9.7 9.5c1.8.2 3 1.9 3 4.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity=".6"/></svg>`,
++  pki: `<svg viewBox="0 0 16 16" fill="none"><path d="M8 1.5 13.5 4v3.5c0 3.5-2.3 6.2-5.5 7-3.2-.8-5.5-3.5-5.5-7V4L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M5.5 8l1.8 1.8L10.5 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+ }
+ 
+ const isSupplierAdmin = computed(() => persona.value === 'supplier-admin')
+@@ -337,6 +338,7 @@ const navItems = computed(() => {
+     { to: '/suppliers', label: 'Suppliers', icon: NAV_ICONS.suppliers, platform: true },
+     { to: '/applications', label: 'Applications', icon: NAV_ICONS.applications },
+     { to: '/keys', label: 'Keys', icon: NAV_ICONS.keys },
++    { to: '/pki', label: 'PKI', icon: NAV_ICONS.pki, platform: true },
+     { to: '/reconciliation', label: 'Reconciliation', icon: NAV_ICONS.reconciliation, badge: driftCount.value > 0 ? driftCount.value : undefined, badgeType: 'critical' },
+     { to: '/onboard', label: 'Onboard', icon: NAV_ICONS.onboard },
+     {
+@@ -400,6 +402,7 @@ const ALL_CMDS = [
+   { to: '/suppliers', label: 'Suppliers', category: 'Page', icon: NAV_ICONS.suppliers },
+   { to: '/applications', label: 'Applications', category: 'Page', icon: NAV_ICONS.applications },
+   { to: '/keys', label: 'Key Inventory', category: 'Page', icon: NAV_ICONS.keys },
++  { to: '/pki', label: 'PKI', category: 'Page', icon: NAV_ICONS.pki },
+   { to: '/reconciliation', label: 'Reconciliation', category: 'Page', icon: NAV_ICONS.reconciliation },
+   { to: '/approvals', label: 'Approvals', category: 'Page', icon: NAV_ICONS.approvals },
+   { to: '/evidence', label: 'Evidence Trail', category: 'Page', icon: NAV_ICONS.evidence },
+diff --git a/arcanium/ui/app/pages/keys/[id].vue b/arcanium/ui/app/pages/keys/[id].vue
+index 539a698..fb748cc 100644
+--- a/arcanium/ui/app/pages/keys/[id].vue
++++ b/arcanium/ui/app/pages/keys/[id].vue
+@@ -34,6 +34,17 @@
+           <button class="text-danger" :disabled="!!busy" @click="doDestroy">
+             {{ busy === 'destroy' ? 'Requesting…' : 'Request destroy' }}
+           </button>
++          <!-- Prompt 31 — only ever rendered for an asymmetric key's real
++               public component; never present for a symmetric key like
++               payments-api-key, not merely disabled. A plain same-origin
++               link, not a fetch/blob: the API's Content-Disposition header
++               already makes this a real browser download. -->
++          <a
++            v-if="keyData.has_public_key"
++            class="secondary-button"
++            :href="publicKeyUrl"
++            download
++          >Download public key</a>
+         </div>
+         <p v-if="actionMsg" class="action-msg">{{ actionMsg }}</p>
+         <p class="action-note">
+@@ -97,7 +108,7 @@
+         </div>
+       </div>
+ 
+-      <p class="foot-note">Private key material and secrets are never returned by the Arcanium API.</p>
++      <p class="foot-note">Private key material is never returned by the Arcanium API — only the public half of an asymmetric key can ever be downloaded, and only when one exists.</p>
+     </div>
+   </div>
+ </template>
+@@ -151,6 +162,12 @@ const custody = computed(() => {
+   return k.custody ?? (k.exportable ? 'Vault Transit · exportable' : 'Vault Transit (software)')
+ })
+ 
++// Prompt 31 — same /gateway same-origin proxy every other call in this
++// composable uses (useArcaniumApi's $get base), built directly rather
++// than through $get() since this is a real file download, not JSON.
++const config = useRuntimeConfig()
++const publicKeyUrl = computed(() => `${config.public.apiBase}/api/v1/keys/${encodeURIComponent(name)}/public-key`)
++
+ const stages = computed(() => {
+   const k = keyData.value
+   if (!k) return []
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index 1cef52a..44186af 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -975,6 +975,54 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/api/v1/keys/{name}/public-key": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path: {
++                name: string;
++            };
++            cookie?: never;
++        };
++        /** Download the PUBLIC half of an asymmetric key (PEM) — never a symmetric key or a private key */
++        get: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    name: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description OK */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content: {
++                        "application/x-pem-file": string;
++                    };
++                };
++                400: components["responses"]["BadRequest"];
++                /** @description Key not found, or has no public key (symmetric type) */
++                404: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++            };
++        };
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/api/v1/pki/ca-chain": {
+         parameters: {
+             query?: never;
+@@ -982,10 +1030,13 @@ export interface paths {
+             path?: never;
+             cookie?: never;
+         };
+-        /** PKI intermediate CA chain (PEM) */
++        /** PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session */
+         get: {
+             parameters: {
+-                query?: never;
++                query?: {
++                    /** @description Set to force a file download (Content-Disposition) instead of inline text. */
++                    download?: boolean;
++                };
+                 header?: never;
+                 path?: never;
+                 cookie?: never;
+@@ -998,7 +1049,7 @@ export interface paths {
+                         [name: string]: unknown;
+                     };
+                     content: {
+-                        "text/plain": string;
++                        "application/x-pem-file": string;
+                     };
+                 };
+             };
+@@ -3113,6 +3164,8 @@ export interface components {
+             custody?: string;
+             hsm_backed?: boolean;
+             managed_key_name?: string | null;
++            /** @description True only for an asymmetric key's (rsa-*\/ecdsa-*\/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key. */
++            has_public_key?: boolean;
+         };
+         ProvisioningJob: {
+             /** Format: uuid */
+diff --git a/arcanium/ui/app/types/arcanium.ts b/arcanium/ui/app/types/arcanium.ts
+index 738398d..c55571e 100644
+--- a/arcanium/ui/app/types/arcanium.ts
++++ b/arcanium/ui/app/types/arcanium.ts
+@@ -45,6 +45,9 @@ export interface TransitKey {
+   custody?: string
+   hsm_backed?: boolean
+   managed_key_name?: string | null
++  /** True only for an asymmetric key's latest version — never a symmetric
++   *  key, which has no public half. See GET /keys/{name}/public-key. */
++  has_public_key?: boolean
+ }
+ 
+ export type ApprovalStatus = 'pending' | 'approved' | 'rejected'
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 73a4656..248f6a5 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -202,6 +202,9 @@ components:
+         custody: { type: string, description: "API-derived label — never inferred from the key name." }
+         hsm_backed: { type: boolean }
+         managed_key_name: { type: ["string", "null"] }
++        has_public_key:
++          type: boolean
++          description: "True only for an asymmetric key's (rsa-*/ecdsa-*/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key."
+ 
+     # ── Provisioning jobs ─────────────────────────────────────────────────
+     # Prompt 22, Deliverable 3 — status legally transitions per
+@@ -908,13 +911,24 @@ paths:
+                   message: { type: string }
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "409": { description: No application registered to attach the destroy request to }
++  /api/v1/keys/{name}/public-key:
++    parameters:
++      - { name: name, in: path, required: true, schema: { type: string } }
++    get:
++      summary: Download the PUBLIC half of an asymmetric key (PEM) — never a symmetric key or a private key
++      responses:
++        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "404": { description: "Key not found, or has no public key (symmetric type)" }
+ 
+   # ── PKI ───────────────────────────────────────────────────────────────
+   /api/v1/pki/ca-chain:
+     get:
+-      summary: PKI intermediate CA chain (PEM)
++      summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
++      parameters:
++        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
+       responses:
+-        "200": { description: OK, content: { text/plain: { schema: { type: string } } } }
++        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
+   /api/v1/pki/roles:
+     get:
+       summary: PKI issuance roles
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index 4a2a655..110e6f7 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -472,6 +472,58 @@ else
+   unk "vault.agentManaged live check — arcanium-api not reachable"
+ fi
+ 
++echo "== Prompt 31 — Public Key/CA Material Download =="
++echo
++
++JAR=$(mktemp)
++if ! ($STACK_UP && oidc_login "demo-architect" "$JAR" "Arcanium-arch-2026"); then
++  rm -f "$JAR"
++  JAR=""
++fi
++
++if [ -n "$JAR" ]; then
++  # (a) — a known SYMMETRIC key must never yield public-key material, live,
++  # not only by code inspection. 404, not a 200 with an empty/odd body.
++  SYM_CODE=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/api/v1/keys/payments-api-key/public-key")
++  if [ "$SYM_CODE" = "404" ]; then
++    ok "GET /keys/payments-api-key/public-key (symmetric) -> 404, no key material returned"
++  else
++    bad "GET /keys/payments-api-key/public-key (symmetric) -> $SYM_CODE, expected 404 — a symmetric key must never yield public-key material"
++  fi
++
++  # (b) — the one known asymmetric, HSM-backed key must yield a real PEM
++  # with the correct download headers — the actual point of Deliverable 1,
++  # and the exact case that was live-broken (wrong key returned) before
++  # resolveKeyMeta() fixed the HSM-vs-primary-cluster precedence bug.
++  ASYM_HEADERS=$(curl -sD - -o /tmp/arc31-pubkey.$$ -b "$JAR" "$API/api/v1/keys/document-signing-key/public-key" 2>/dev/null)
++  ASYM_BODY=$(cat /tmp/arc31-pubkey.$$ 2>/dev/null)
++  rm -f /tmp/arc31-pubkey.$$
++  if echo "$ASYM_BODY" | grep -q "BEGIN PUBLIC KEY" &&
++    echo "$ASYM_HEADERS" | grep -qi "Content-Disposition:.*attachment.*document-signing-key-public.pem"; then
++    ok "GET /keys/document-signing-key/public-key -> real PEM + correct Content-Disposition"
++  else
++    bad "GET /keys/document-signing-key/public-key did not return a real PEM with the expected Content-Disposition header"
++  fi
++
++  # (c) — has_public_key in the list view matches live reality for every
++  # key currently in the estate, not just the two spot-checked above.
++  LIST_BODY=$(curl -s -b "$JAR" "$API/api/v1/keys")
++  MISMATCH=$(echo "$LIST_BODY" | jq -r '.[] | select((.type=="managed_key" or (.type|test("^(rsa-|ecdsa-|ed25519)"))) != .has_public_key) | .name' 2>/dev/null)
++  # managed_key/asymmetric type does not guarantee a public_key is present
++  # (a key could theoretically have none) — so this only ever flags the
++  # dangerous direction: has_public_key=true for a plainly symmetric type.
++  FALSE_POSITIVE=$(echo "$LIST_BODY" | jq -r '.[] | select(.type=="aes256-gcm96" and .has_public_key==true) | .name' 2>/dev/null)
++  if [ -z "$FALSE_POSITIVE" ]; then
++    ok "has_public_key is never true for a known-symmetric key across the live key inventory"
++  else
++    bad "has_public_key incorrectly true for a symmetric key: $FALSE_POSITIVE"
++  fi
++
++  rm -f "$JAR"
++else
++  unk "Prompt 31 public-key download checks — identity stack/API not reachable"
++fi
++
+ echo
+ TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+diff --git a/state/CURRENT b/state/CURRENT
+index de0e9c6..8071251 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-30-vault-agent-adoption
++state/baselines/2026-09-13_pre-prompt-31-public-key-download

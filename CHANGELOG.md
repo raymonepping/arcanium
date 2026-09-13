@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Public key/CA material download (Prompt 31): the public half of an
+  asymmetric key (`GET /api/v1/keys/:name/public-key`) and the PKI
+  intermediate CA chain, as real file downloads — never a private or
+  symmetric key's bytes, enforced by checking for an actual public-key
+  PEM in Vault's own response rather than a key-type allowlist. New PKI
+  page in the UI (previously API-only, no UI surface at all). Found and
+  fixed along the way: a real, pre-existing custody-accuracy bug where
+  `GET /api/v1/keys/:name` and the unified intent view (Prompt 25) each
+  independently resolved `document-signing-key` against the wrong
+  cluster (primary instead of vault-hsm), showing the wrong custody
+  label and, via the new download route, would have returned the wrong
+  public key entirely. Fixed with one shared resolution helper.
 - Real OIDC authentication (Keycloak, OpenLDAP-federated) replacing the
   earlier Vault-userpass-backed session model; roles and tenant scope
   derive from OIDC groups, not a hardcoded username map. Deny-by-default

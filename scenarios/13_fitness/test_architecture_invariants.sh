@@ -472,6 +472,58 @@ else
   unk "vault.agentManaged live check — arcanium-api not reachable"
 fi
 
+echo "== Prompt 31 — Public Key/CA Material Download =="
+echo
+
+JAR=$(mktemp)
+if ! ($STACK_UP && oidc_login "demo-architect" "$JAR" "Arcanium-arch-2026"); then
+  rm -f "$JAR"
+  JAR=""
+fi
+
+if [ -n "$JAR" ]; then
+  # (a) — a known SYMMETRIC key must never yield public-key material, live,
+  # not only by code inspection. 404, not a 200 with an empty/odd body.
+  SYM_CODE=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/api/v1/keys/payments-api-key/public-key")
+  if [ "$SYM_CODE" = "404" ]; then
+    ok "GET /keys/payments-api-key/public-key (symmetric) -> 404, no key material returned"
+  else
+    bad "GET /keys/payments-api-key/public-key (symmetric) -> $SYM_CODE, expected 404 — a symmetric key must never yield public-key material"
+  fi
+
+  # (b) — the one known asymmetric, HSM-backed key must yield a real PEM
+  # with the correct download headers — the actual point of Deliverable 1,
+  # and the exact case that was live-broken (wrong key returned) before
+  # resolveKeyMeta() fixed the HSM-vs-primary-cluster precedence bug.
+  ASYM_HEADERS=$(curl -sD - -o /tmp/arc31-pubkey.$$ -b "$JAR" "$API/api/v1/keys/document-signing-key/public-key" 2>/dev/null)
+  ASYM_BODY=$(cat /tmp/arc31-pubkey.$$ 2>/dev/null)
+  rm -f /tmp/arc31-pubkey.$$
+  if echo "$ASYM_BODY" | grep -q "BEGIN PUBLIC KEY" &&
+    echo "$ASYM_HEADERS" | grep -qi "Content-Disposition:.*attachment.*document-signing-key-public.pem"; then
+    ok "GET /keys/document-signing-key/public-key -> real PEM + correct Content-Disposition"
+  else
+    bad "GET /keys/document-signing-key/public-key did not return a real PEM with the expected Content-Disposition header"
+  fi
+
+  # (c) — has_public_key in the list view matches live reality for every
+  # key currently in the estate, not just the two spot-checked above.
+  LIST_BODY=$(curl -s -b "$JAR" "$API/api/v1/keys")
+  MISMATCH=$(echo "$LIST_BODY" | jq -r '.[] | select((.type=="managed_key" or (.type|test("^(rsa-|ecdsa-|ed25519)"))) != .has_public_key) | .name' 2>/dev/null)
+  # managed_key/asymmetric type does not guarantee a public_key is present
+  # (a key could theoretically have none) — so this only ever flags the
+  # dangerous direction: has_public_key=true for a plainly symmetric type.
+  FALSE_POSITIVE=$(echo "$LIST_BODY" | jq -r '.[] | select(.type=="aes256-gcm96" and .has_public_key==true) | .name' 2>/dev/null)
+  if [ -z "$FALSE_POSITIVE" ]; then
+    ok "has_public_key is never true for a known-symmetric key across the live key inventory"
+  else
+    bad "has_public_key incorrectly true for a symmetric key: $FALSE_POSITIVE"
+  fi
+
+  rm -f "$JAR"
+else
+  unk "Prompt 31 public-key download checks — identity stack/API not reachable"
+fi
+
 echo
 TOTAL=$((PASS + FAIL + UNKNOWN))
 echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="

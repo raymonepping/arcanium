@@ -45,6 +45,9 @@ export interface TransitKey {
   custody?: string
   hsm_backed?: boolean
   managed_key_name?: string | null
+  /** True only for an asymmetric key's latest version — never a symmetric
+   *  key, which has no public half. See GET /keys/{name}/public-key. */
+  has_public_key?: boolean
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected'

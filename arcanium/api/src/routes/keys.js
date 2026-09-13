@@ -54,6 +54,32 @@ export function custodyOf(meta) {
   return "Vault Transit (software)";
 }
 
+// The only kind of "key material" this API ever exposes: the PUBLIC half
+// of an asymmetric key's latest version — never a symmetric key (no public
+// half exists) and never a private/symmetric key byte, regardless of
+// `exportable`. Every key in this deployment is created with
+// exportable=false (see terraform/*/transit.tf, keys.tf); this function
+// does not depend on that flag at all — it only ever returns what Vault's
+// own metadata read already includes, the same way GET /api/v1/pki/ca-chain
+// already exposes public CA material.
+//
+// Deliberately NOT a check against meta.type — found live, the hard way:
+// an HSM-backed Managed Key reports type: "managed_key", not "rsa-4096"
+// (the underlying algorithm is only visible nested under _managedKey), so
+// an rsa-/ecdsa-/ed25519 type-string allowlist silently excludes exactly
+// the one key (document-signing-key) this feature was built for. Vault's
+// own response shape is the real, more robust signal: a symmetric key's
+// `keys.<version>` entry is a bare creation-time number (not an object at
+// all — `{"1": 1789290060}`); an asymmetric OR managed key's is an object
+// with a real public_key PEM string. Checking for that string's actual
+// presence is correct by construction for every current and future key
+// type, not a list this code has to keep in sync with Vault's own types.
+export function publicKeyOf(meta) {
+  const version = String(meta?.latest_version ?? "");
+  const pem = meta?.keys?.[version]?.public_key;
+  return typeof pem === "string" && pem.trim() ? pem : null;
+}
+
 function projectKey(name, meta) {
   return {
     name,
@@ -72,6 +98,11 @@ function projectKey(name, meta) {
     custody: custodyOf(meta),
     hsm_backed: Boolean(meta._managedKey || meta.type === "managed_key"),
     managed_key_name: meta._managedKey?.name ?? null,
+    // Prompt 31 — the public half of an asymmetric key only; null for
+    // every symmetric key (aes256-gcm96), which has no public half at
+    // all. See publicKeyOf()'s own header comment for what this
+    // deliberately never includes.
+    has_public_key: publicKeyOf(meta) !== null,
   };
 }
 
@@ -120,31 +151,89 @@ keysRouter.get("/", async (_req, res, next) => {
   }
 });
 
-// GET /api/v1/keys/:name
-keysRouter.get("/:name", async (req, res, next) => {
-  const { name } = req.params;
+// Resolves ONE key's metadata with the same precedence as GET /api/v1/keys
+// (the list route, above): vault-hsm wins on a name collision.
+//
+// Prompt 31 — found live, the hard way: GET /:name previously tried the
+// primary cluster FIRST and only consulted vault-hsm on outright failure,
+// which is backwards for document-signing-key specifically — a legacy,
+// unused RSA-4096 Transit key of that same name still exists on the
+// primary cluster (superseded by Prompt 14.1, deliberately left in place,
+// deletion_allowed=false — see terraform/vault-workloads/transit.tf's own
+// comment), so the primary-cluster lookup always SUCCEEDED and the real,
+// in-use HSM-backed Managed Key was never consulted at all. The detail
+// page showed "Vault Transit (software)" custody for a key that is
+// actually SoftHSM-backed — a real, live governance-accuracy bug, not
+// hypothetical: confirmed by comparing the two calls' actual public keys,
+// which are genuinely different key material. Fixed by trying vault-hsm
+// first, matching the list route's own already-correct "HSM wins"
+// precedence — one resolution order, not two independently-drifting ones.
+export async function resolveKeyMeta(name) {
   try {
-    const meta = await getTransitKey(name);
-    return res.json({ ...meta, custody: custodyOf(meta) });
-  } catch (primaryErr) {
-    // Not on the primary cluster — try vault-hsm (Managed Key custody).
+    const meta = await getHsmTransitKey(name);
+    return {
+      ...meta,
+      custody: custodyOf(meta),
+      hsm_backed: true,
+      managed_key_name: meta._managedKey?.name ?? null,
+    };
+  } catch (hsmErr) {
     try {
-      const meta = await getHsmTransitKey(name);
-      return res.json({
-        ...meta,
-        custody: custodyOf(meta),
-        hsm_backed: true,
-        managed_key_name: meta._managedKey?.name ?? null,
-      });
-    } catch {
-      if (primaryErr.vaultStatus === 404) {
+      const meta = await getTransitKey(name);
+      return { ...meta, custody: custodyOf(meta) };
+    } catch (primaryErr) {
+      if (primaryErr.vaultStatus === 404 && hsmErr.vaultStatus === 404) {
         const e = new Error("key not found");
         e.status = 404;
-        return next(e);
+        throw e;
       }
-      return next(primaryErr);
+      throw primaryErr;
     }
   }
+}
+
+// GET /api/v1/keys/:name
+keysRouter.get("/:name", async (req, res, next) => {
+  try {
+    const meta = await resolveKeyMeta(req.params.name);
+    res.json(meta);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/keys/:name/public-key — Prompt 31.
+//
+// The only "download key material" this API will ever offer: the PUBLIC
+// half of an asymmetric key, as a real file download. Never the private
+// key, never a symmetric key's bytes — publicKeyOf() enforces that
+// regardless of what's asked for; a symmetric key (or an asymmetric key
+// with no public_key present) is a 404 here, not an empty/error response
+// that could be mistaken for "this key just happens to have no key".
+keysRouter.get("/:name/public-key", async (req, res, next) => {
+  const { name } = req.params;
+  if (!KEY_NAME_RE.test(name))
+    return res.status(400).json({ error: "invalid key name" });
+
+  let meta;
+  try {
+    meta = await resolveKeyMeta(name);
+  } catch (err) {
+    return next(err);
+  }
+
+  const pem = publicKeyOf(meta);
+  if (!pem) {
+    const e = new Error(
+      "no public key available — this key is symmetric, or has no exported public component",
+    );
+    e.status = 404;
+    return next(e);
+  }
+  res
+    .set("Content-Type", "application/x-pem-file")
+    .set("Content-Disposition", `attachment; filename="${name}-public.pem"`)
+    .send(pem);
 });
 
 // POST /api/v1/keys

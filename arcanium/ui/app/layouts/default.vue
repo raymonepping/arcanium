@@ -327,6 +327,7 @@ const NAV_ICONS = {
   observability: `<svg viewBox="0 0 16 16" fill="none"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/></svg>`,
   reconciliation: `<svg viewBox="0 0 16 16" fill="none"><path d="M13 4a5 5 0 0 0-8.9-1.6M3 12a5 5 0 0 0 8.9 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M13 1.5V4h-2.5M3 14.5V12h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   teams: `<svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.3" stroke="currentColor" stroke-width="1.2"/><circle cx="11" cy="6.5" r="1.8" stroke="currentColor" stroke-width="1.1" opacity=".6"/><path d="M1.5 14c0-2.8 1.8-5 4-5s4 2.2 4 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M9.7 9.5c1.8.2 3 1.9 3 4.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity=".6"/></svg>`,
+  pki: `<svg viewBox="0 0 16 16" fill="none"><path d="M8 1.5 13.5 4v3.5c0 3.5-2.3 6.2-5.5 7-3.2-.8-5.5-3.5-5.5-7V4L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M5.5 8l1.8 1.8L10.5 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
 }
 
 const isSupplierAdmin = computed(() => persona.value === 'supplier-admin')
@@ -337,6 +338,7 @@ const navItems = computed(() => {
     { to: '/suppliers', label: 'Suppliers', icon: NAV_ICONS.suppliers, platform: true },
     { to: '/applications', label: 'Applications', icon: NAV_ICONS.applications },
     { to: '/keys', label: 'Keys', icon: NAV_ICONS.keys },
+    { to: '/pki', label: 'PKI', icon: NAV_ICONS.pki, platform: true },
     { to: '/reconciliation', label: 'Reconciliation', icon: NAV_ICONS.reconciliation, badge: driftCount.value > 0 ? driftCount.value : undefined, badgeType: 'critical' },
     { to: '/onboard', label: 'Onboard', icon: NAV_ICONS.onboard },
     {
@@ -400,6 +402,7 @@ const ALL_CMDS = [
   { to: '/suppliers', label: 'Suppliers', category: 'Page', icon: NAV_ICONS.suppliers },
   { to: '/applications', label: 'Applications', category: 'Page', icon: NAV_ICONS.applications },
   { to: '/keys', label: 'Key Inventory', category: 'Page', icon: NAV_ICONS.keys },
+  { to: '/pki', label: 'PKI', category: 'Page', icon: NAV_ICONS.pki },
   { to: '/reconciliation', label: 'Reconciliation', category: 'Page', icon: NAV_ICONS.reconciliation },
   { to: '/approvals', label: 'Approvals', category: 'Page', icon: NAV_ICONS.approvals },
   { to: '/evidence', label: 'Evidence Trail', category: 'Page', icon: NAV_ICONS.evidence },

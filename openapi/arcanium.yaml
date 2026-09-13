@@ -202,6 +202,9 @@ components:
         custody: { type: string, description: "API-derived label — never inferred from the key name." }
         hsm_backed: { type: boolean }
         managed_key_name: { type: ["string", "null"] }
+        has_public_key:
+          type: boolean
+          description: "True only for an asymmetric key's (rsa-*/ecdsa-*/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key."
 
     # ── Provisioning jobs ─────────────────────────────────────────────────
     # Prompt 22, Deliverable 3 — status legally transitions per
@@ -908,13 +911,24 @@ paths:
                   message: { type: string }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { description: No application registered to attach the destroy request to }
+  /api/v1/keys/{name}/public-key:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Download the PUBLIC half of an asymmetric key (PEM) — never a symmetric key or a private key
+      responses:
+        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { description: "Key not found, or has no public key (symmetric type)" }
 
   # ── PKI ───────────────────────────────────────────────────────────────
   /api/v1/pki/ca-chain:
     get:
-      summary: PKI intermediate CA chain (PEM)
+      summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
+      parameters:
+        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
       responses:
-        "200": { description: OK, content: { text/plain: { schema: { type: string } } } }
+        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
   /api/v1/pki/roles:
     get:
       summary: PKI issuance roles

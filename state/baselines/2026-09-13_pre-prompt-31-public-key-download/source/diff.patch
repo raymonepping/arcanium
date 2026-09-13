@@ -1,0 +1,175 @@
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index 3191c34..e07a869 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -54,6 +54,23 @@ export function custodyOf(meta) {
+   return "Vault Transit (software)";
+ }
+ 
++// The only kind of "key material" this API ever exposes: the PUBLIC half
++// of an asymmetric key's latest version — never a symmetric key (no public
++// half exists) and never a private/symmetric key byte, regardless of
++// `exportable`. Every key in this deployment is created with
++// exportable=false (see terraform/*/transit.tf, keys.tf); this function
++// does not depend on that flag at all — it only ever returns what Vault's
++// own metadata read already includes for asymmetric types, the same way
++// GET /api/v1/pki/ca-chain already exposes public CA material.
++const ASYMMETRIC_TYPES = /^(rsa-|ecdsa-|ed25519)/;
++
++export function publicKeyOf(meta) {
++  if (!meta?.type || !ASYMMETRIC_TYPES.test(meta.type)) return null;
++  const version = String(meta.latest_version ?? "");
++  const pem = meta.keys?.[version]?.public_key;
++  return pem && pem.trim() ? pem : null;
++}
++
+ function projectKey(name, meta) {
+   return {
+     name,
+@@ -72,6 +89,11 @@ function projectKey(name, meta) {
+     custody: custodyOf(meta),
+     hsm_backed: Boolean(meta._managedKey || meta.type === "managed_key"),
+     managed_key_name: meta._managedKey?.name ?? null,
++    // Prompt 31 — the public half of an asymmetric key only; null for
++    // every symmetric key (aes256-gcm96), which has no public half at
++    // all. See publicKeyOf()'s own header comment for what this
++    // deliberately never includes.
++    has_public_key: publicKeyOf(meta) !== null,
+   };
+ }
+ 
+@@ -147,6 +169,53 @@ keysRouter.get("/:name", async (req, res, next) => {
+   }
+ });
+ 
++// GET /api/v1/keys/:name/public-key — Prompt 31.
++//
++// The only "download key material" this API will ever offer: the PUBLIC
++// half of an asymmetric key, as a real file download. Never the private
++// key, never a symmetric key's bytes — publicKeyOf() enforces that
++// regardless of what's asked for; a symmetric key (or an asymmetric key
++// with no public_key present) is a 404 here, not an empty/error response
++// that could be mistaken for "this key just happens to have no key".
++//
++// Same primary-cluster-then-vault-hsm fallback as GET /:name above, since
++// document-signing-key (the one asymmetric key most likely to actually be
++// downloaded) lives on vault-hsm as a Managed Key, not the primary cluster.
++keysRouter.get("/:name/public-key", async (req, res, next) => {
++  const { name } = req.params;
++  if (!KEY_NAME_RE.test(name))
++    return res.status(400).json({ error: "invalid key name" });
++
++  let meta;
++  try {
++    meta = await getTransitKey(name);
++  } catch (primaryErr) {
++    try {
++      meta = await getHsmTransitKey(name);
++    } catch {
++      if (primaryErr.vaultStatus === 404) {
++        const e = new Error("key not found");
++        e.status = 404;
++        return next(e);
++      }
++      return next(primaryErr);
++    }
++  }
++
++  const pem = publicKeyOf(meta);
++  if (!pem) {
++    const e = new Error(
++      "no public key available — this key is symmetric, or has no exported public component",
++    );
++    e.status = 404;
++    return next(e);
++  }
++  res
++    .set("Content-Type", "application/x-pem-file")
++    .set("Content-Disposition", `attachment; filename="${name}-public.pem"`)
++    .send(pem);
++});
++
+ // POST /api/v1/keys
+ // Prompt 22, Deliverable 4 — found live by the architecture fitness test's
+ // authorize()-coverage check: this route had no role check at all. Creates
+diff --git a/arcanium/api/src/routes/pki.js b/arcanium/api/src/routes/pki.js
+index c2620d3..348b99b 100644
+--- a/arcanium/api/src/routes/pki.js
++++ b/arcanium/api/src/routes/pki.js
+@@ -6,10 +6,19 @@ import { getPkiCaChain, listPkiRoles } from "../vault.js";
+ export const pkiRouter = Router();
+ 
+ // GET /api/v1/pki/ca-chain
+-pkiRouter.get("/ca-chain", async (_req, res, next) => {
++// ?download=1 — Prompt 31: same PEM, but as a real file download
++// (Content-Disposition) instead of an inline text/plain response, for the
++// UI's "Download CA chain" button. Both forms return public CA material —
++// meant to be shared, same as any CA chain — the flag only changes how the
++// browser presents it, not what's in it.
++pkiRouter.get("/ca-chain", async (req, res, next) => {
+   try {
+     const pem = await getPkiCaChain();
+-    res.set("Content-Type", "text/plain").send(pem);
++    res.set("Content-Type", "application/x-pem-file");
++    if (req.query.download) {
++      res.set("Content-Disposition", 'attachment; filename="arcanium-ca-chain.pem"');
++    }
++    res.send(pem);
+   } catch (err) {
+     next(err);
+   }
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 73a4656..248f6a5 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -202,6 +202,9 @@ components:
+         custody: { type: string, description: "API-derived label — never inferred from the key name." }
+         hsm_backed: { type: boolean }
+         managed_key_name: { type: ["string", "null"] }
++        has_public_key:
++          type: boolean
++          description: "True only for an asymmetric key's (rsa-*/ecdsa-*/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key."
+ 
+     # ── Provisioning jobs ─────────────────────────────────────────────────
+     # Prompt 22, Deliverable 3 — status legally transitions per
+@@ -908,13 +911,24 @@ paths:
+                   message: { type: string }
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "409": { description: No application registered to attach the destroy request to }
++  /api/v1/keys/{name}/public-key:
++    parameters:
++      - { name: name, in: path, required: true, schema: { type: string } }
++    get:
++      summary: Download the PUBLIC half of an asymmetric key (PEM) — never a symmetric key or a private key
++      responses:
++        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "404": { description: "Key not found, or has no public key (symmetric type)" }
+ 
+   # ── PKI ───────────────────────────────────────────────────────────────
+   /api/v1/pki/ca-chain:
+     get:
+-      summary: PKI intermediate CA chain (PEM)
++      summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
++      parameters:
++        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
+       responses:
+-        "200": { description: OK, content: { text/plain: { schema: { type: string } } } }
++        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
+   /api/v1/pki/roles:
+     get:
+       summary: PKI issuance roles

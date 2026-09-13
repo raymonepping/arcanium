@@ -19,8 +19,7 @@
 //     aggregation" this phase's design rules forbid.
 
 import { query } from "../db.js";
-import { getTransitKey, getHsmTransitKey } from "../vault.js";
-import { custodyOf } from "../routes/keys.js";
+import { custodyOf, resolveKeyMeta } from "../routes/keys.js";
 import { getDispositionFor } from "../reconciliation/engine.js";
 
 function keyNameFromPath(vaultPath) {
@@ -68,14 +67,15 @@ export async function getApplicationIntent(appId) {
       // profile type alone (aes256-gcm96 does not; rsa/ecdsa do) — only
       // set true on a live, confirmed read, never guessed. A failed read
       // leaves `signing` at its current value rather than fabricating one.
+      // Prompt 31 — resolveKeyMeta() is the one shared resolution order
+      // (vault-hsm first, primary cluster as fallback) — this call site
+      // used to duplicate the OLD, backwards order independently (primary
+      // first), which is exactly the bug that made document-signing-key's
+      // custody show wrong here too (see resolveKeyMeta's own comment).
       try {
-        live = await getTransitKey(keyName);
+        live = await resolveKeyMeta(keyName);
       } catch {
-        try {
-          live = await getHsmTransitKey(keyName);
-        } catch {
-          live = null;
-        }
+        live = null;
       }
       if (live?.supports_signing) requirements.signing = true;
     }
