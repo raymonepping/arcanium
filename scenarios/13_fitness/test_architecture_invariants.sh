@@ -223,25 +223,47 @@ if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
     -H 'Content-Type: application/json' \
     -d '{"url":"http://127.0.0.1:1/unreachable-fitness-sink","events":["reconciliation.drifted"],"description":"fitness test sink (deliberately unreachable)"}')
   WH_ID=$(echo "$WH_CREATE" | jq -r '.id // empty')
-  DS_ID=$(psqlc "SELECT id FROM desired_state WHERE requirement='rotation_period' AND archived_at IS NULL LIMIT 1" | tr -d '[:space:]')
+  # rotation_period's comparator (reconciliation/diff.js compareRotationPeriod(),
+  # Prompt 38) is a deep-equal on desired_value.days vs. the LIVE Vault
+  # key's own configured auto_rotate_period as its FIRST check — so
+  # COMPLIANT is only reachable by matching that real Vault-side value
+  # exactly; an arbitrarily "generous" desired value (e.g. 36500) is just
+  # as much a mismatch as any other and stays DRIFTED forever, and a
+  # blind 30<->45 (or fixed 1-day) toggle is not reliably a state
+  # TRANSITION either, since events only fire on priorStatus != newStatus
+  # (engine.js) — both were real, confirmed sources of test flakiness
+  # (found live, not assumed). Read the key's REAL observed value first,
+  # match it exactly to force COMPLIANT, then diverge from it to force
+  # DRIFTED — the only way to guarantee a genuine transition regardless
+  # of this key's actual Vault configuration.
+  #
+  # Found live, the actual root cause of this check's long-standing
+  # "unk": `LIMIT 1` with no ORDER BY previously trusted whichever
+  # rotation_period row came back first — and that row can have a live
+  # Vault auto_rotate_period of 0 (rotation genuinely disabled), which is
+  # perfectly valid Vault state but the reconciliation API's own PATCH
+  # validation correctly REJECTS ("desired_value.days must be a positive
+  # number") — a declared rotation policy of "0 days" is meaningless and
+  # should never be accepted as an intentional desired state. Any row
+  # whose observed value happens to be 0 can therefore never be used as
+  # this fixture: matching it exactly (the whole point of this technique)
+  # is a rejected PATCH, so BASELINE was silently left empty every time
+  # this check happened to land on such a row. Fixed at the source
+  # (Prompt 41 — payments-api-key's own real rotation_period drift, the
+  # actual reason this kept happening, is fixed separately: Vault's
+  # auto_rotate_period is now genuinely 30 days, matching its declared
+  # policy), but the fixture-selection itself is hardened too, so a
+  # future rotation-disabled key can never reintroduce this same flake:
+  # run reconciliation ONCE for every row, then pick the first
+  # rotation_period row whose observed days is a genuinely positive
+  # number — never just the first row regardless of its observed value.
+  ALL_RUN=$(curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run")
+  FIXTURE=$(echo "$ALL_RUN" | jq -c '[.[] | select(.requirement=="rotation_period" and ((.observed_value.days // 0) > 0))] | first // empty')
+  DS_ID=$(echo "$FIXTURE" | jq -r '.desired_state_id // empty')
   if [ -n "$WH_ID" ] && [ -n "$DS_ID" ]; then
     BEFORE=$(psqlc "SELECT count(*) FROM webhook_deliveries WHERE endpoint_id='$WH_ID'" | tr -d '[:space:]')
     CUR_DAYS=$(psqlc "SELECT desired_value->>'days' FROM desired_state WHERE id='$DS_ID'" | tr -d '[:space:]')
-    # rotation_period's comparator (reconciliation/diff.js compare()) is a
-    # plain deep-equal between desired_value and the LIVE Vault key's own
-    # configured auto_rotate_period — not an age/threshold check. So
-    # COMPLIANT is only reachable by matching that real Vault-side value
-    # exactly; an arbitrarily "generous" desired value (e.g. 36500) is
-    # just as much a mismatch as any other and stays DRIFTED forever, and
-    # a blind 30<->45 (or fixed 1-day) toggle is not reliably a state
-    # TRANSITION either, since events only fire on priorStatus !=
-    # newStatus (engine.js) — both were real, confirmed sources of test
-    # flakiness (found live, not assumed). Read the key's REAL observed
-    # value first, match it exactly to force COMPLIANT, then diverge from
-    # it to force DRIFTED — the only way to guarantee a genuine
-    # transition regardless of this key's actual Vault configuration.
-    OBSERVED_DAYS=$(curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" |
-      jq -r --arg id "$DS_ID" '.[] | select(.desired_state_id==$id) | .observed_value.days // empty')
+    OBSERVED_DAYS=$(echo "$FIXTURE" | jq -r '.observed_value.days // empty')
     if [ -n "$OBSERVED_DAYS" ]; then
       curl -s -b "$JAR" -X PATCH "$API/api/v1/reconciliation/desired-state/$DS_ID" \
         -H 'Content-Type: application/json' \
@@ -280,7 +302,7 @@ if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
     curl -s -b "$JAR" -X POST "$API/api/v1/reconciliation/run" >/dev/null
     curl -s -b "$JAR" -X DELETE "$API/api/v1/webhooks/$WH_ID" >/dev/null
   else
-    unk "webhook delivery recording check — could not create endpoint/fixture"
+    unk "webhook delivery recording check — could not create the webhook endpoint, or no rotation_period row currently has a positive live-observed value to use as a fixture"
   fi
 else
   unk "webhook delivery recording check — identity stack/API/jq not reachable"

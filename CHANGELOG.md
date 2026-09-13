@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The last two tolerated items on the board (Prompt 41), both traced to
+  the same root cause. `payments-api-key`'s `rotation_period`
+  desired_state row (`{days: 30}`) had sat DRIFTED against Vault's real
+  `auto_rotate_period: 0` since an earlier fitness-test cleanup — closed
+  for real via the existing `POST /reconciliation/:run_id/reconcile`
+  path (not by lowering the declared policy to match Vault's neglected
+  state): Vault's `auto_rotate_period` is now genuinely 30 days,
+  confirmed `COMPLIANT` by a live confirmation run. That, in turn, was
+  the actual cause of the fitness suite's long-standing webhook-delivery
+  check `unk`: it picks one `rotation_period` row as a fixture and
+  matches its live-observed value to force a known-COMPLIANT baseline —
+  found live that it always landed on `payments-api-key`'s row, whose
+  observed value was `0` (rotation disabled), and `PATCH /reconciliation/
+  desired-state/:id` correctly rejects a desired value of 0 days
+  ("must be a positive number") — not flakiness, a deterministic failure
+  every run. Fixed at the source, and the fixture selection itself
+  hardened so a future rotation-disabled key can't reintroduce the same
+  trap: the check now runs reconciliation once for every row and picks
+  the first whose observed value is genuinely positive, instead of
+  trusting an arbitrary `LIMIT 1` row regardless of its observed value.
+  Fitness suite: 38/0/0 — the first fully clean run this project has
+  had.
+
 - Five remaining items from the six-stage lifecycle audit's own
   remainder (Prompt 39): LIKE-wildcard escaping, the maturity model's
   shallow custody scoring, `capture-state.sh`'s non-live
