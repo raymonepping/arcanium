@@ -643,6 +643,60 @@ else
   unk "Prompt 33 key lifecycle evidence checks — identity stack/API not reachable"
 fi
 
+echo "== Prompt 36 — Destroy-Path Safety and Correctness =="
+echo
+
+# Static checks only, deliberately — same reasoning as Prompt 29's own
+# section above: a live end-to-end proof of every scenario here (cross-
+# tenant resolution, pinned-version refusal, the concurrency claim) was
+# performed manually against real, disposable fixture keys and applications
+# during this prompt's own execution (two disposable apps — one root, one
+# suppliers/pepsi — a deliberately-planted decoy crypto_profiles row
+# manufacturing a real cross-tenant key-name collision, a live rotation to
+# force a pinned-version mismatch, and two racing psql transactions against
+# the actual FOR UPDATE SKIP LOCKED claim query), all cleaned up afterward
+# with zero trace left in Vault or Postgres. Not repeated here as an
+# automated fitness test for the same reason Prompt 29's own destroy proof
+# isn't: a test that destroys real Vault keys on every CI run is exactly
+# the risk this prompt exists to reduce.
+if grep -q "async function resolveKeyLocation(appId, keyName)" arcanium/api/src/approval-execution.js &&
+  grep -q "FOR UPDATE SKIP LOCKED" arcanium/api/src/approval-execution.js; then
+  ok "resolveKeyLocation() is scoped by the approval's own app_id, not an estate-wide key-name search"
+else
+  bad "resolveKeyLocation() no longer takes appId, or executeApprovedDestroys() lost its FOR UPDATE SKIP LOCKED claim"
+fi
+
+if grep -q "pinned_key_version" arcanium/api/src/approval-execution.js &&
+  grep -q "pinned_key_version" arcanium/api/src/provisioner/key.js; then
+  ok "a destroy request's key version is pinned at request time and re-checked before execution"
+else
+  bad "the pinned-version safety check is missing from approval-execution.js or provisioner/key.js"
+fi
+
+if grep -q "wasAlreadyDeletable" arcanium/api/src/approval-execution.js; then
+  ok "destroyTransitKey() reads live deletion_allowed before mutating it, and restores it on a failed delete"
+else
+  bad "destroyTransitKey() no longer checks/restores deletion_allowed — may force-strip protection on failure"
+fi
+
+if grep -q "hasLiveDestroyIntent(req.key_name, req.app_id)" arcanium/api/src/approval-execution.js; then
+  ok "hasLiveDestroyIntent() is scoped to the approval's own application, not a name-only match across every tenant"
+else
+  bad "hasLiveDestroyIntent() no longer takes an application id — offboarding-branch cross-tenant gap may have returned"
+fi
+
+if grep -q "r.origin === \"orchestration\" && r.operation === \"destroy.requested\"" arcanium/api/src/routes/evidence.js; then
+  ok "the dashboard's Destroy stage tally excludes merely-requested/unexecuted revoke rows"
+else
+  bad "routes/evidence.js may again count a pending/unexecuted destroy request as Destroy-stage evidence"
+fi
+
+if grep -q "reconciliationRouter.post(\"/desired-state\"" arcanium/api/src/routes/reconciliation.js; then
+  ok "a real write path exists to create an expiry_date desired_state row (the destroy gate's primary trigger)"
+else
+  bad "POST /reconciliation/desired-state is missing — the expiry_date trigger has no supported creation path again"
+fi
+
 echo
 TOTAL=$((PASS + FAIL + UNKNOWN))
 echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="

@@ -1,0 +1,20 @@
+ M CHANGELOG.md
+ M Makefile
+ M arcanium/api/openapi/arcanium.yaml
+ M arcanium/api/src/approval-execution.js
+ M arcanium/api/src/db.js
+ M arcanium/api/src/migrations.js
+ M arcanium/api/src/offboarding.js
+ M arcanium/api/src/provisioner/key.js
+ M arcanium/api/src/reconciliation/desiredState.js
+ M arcanium/api/src/reconciliation/engine.js
+ M arcanium/api/src/routes/evidence.js
+ M arcanium/api/src/routes/keys.js
+ M arcanium/api/src/routes/reconciliation.js
+ M arcanium/ui/app/types/api.generated.ts
+ M openapi/arcanium.yaml
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M state/CURRENT
+?? arcanium/api/src/migrations/024_destroy_safety.sql
+?? scripts/clean-slate.sh
+?? state/baselines/2026-09-13_pre-prompt-36-destroy-path-safety/

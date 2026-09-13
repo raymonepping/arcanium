@@ -5,7 +5,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { query } from "./db.js";
+import { query, withTransaction } from "./db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, "migrations");
@@ -42,15 +42,22 @@ export async function runMigrations() {
 
     const sql = await readFile(join(MIGRATIONS_DIR, file), "utf8");
     try {
-      await query("BEGIN");
-      await query(sql);
-      await query(`INSERT INTO schema_migrations (filename) VALUES ($1)`, [
-        file,
-      ]);
-      await query("COMMIT");
+      // Prompt 36 — was BEGIN/query(sql)/INSERT/COMMIT as four separate
+      // pool.query() calls, each of which could land on a different
+      // pooled connection — not actually one atomic transaction. A
+      // migration that partially applied on one connection while the
+      // tracking INSERT landed on another could be silently re-applied
+      // (or half-applied) on next startup. withTransaction() holds one
+      // client for the whole thing.
+      await withTransaction(async (client) => {
+        await client.query(sql);
+        await client.query(
+          `INSERT INTO schema_migrations (filename) VALUES ($1)`,
+          [file],
+        );
+      });
       console.log(`[migration] applied: ${file}`);
     } catch (err) {
-      await query("ROLLBACK").catch(() => {});
       throw new Error(`[migration] failed on ${file}: ${err.message}`);
     }
   }

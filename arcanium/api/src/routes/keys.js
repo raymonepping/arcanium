@@ -29,13 +29,24 @@ export const keysRouter = Router();
 // bug already fixed elsewhere in Prompts 18/19). Resolving it here fixes
 // that gap as a direct byproduct of adding the env lookup this prompt
 // requires, not a separate, deferred fix.
+// Prompt 36 — every route in this file (rotate/rewrap/destroy/detail) only
+// ever operates on ROOT-NAMESPACE keys (a supplier-tenant's own keys go
+// through routes/suppliers.js instead). This function's join previously
+// had no tenant filter at all: `cp.vault_path LIKE '%/' || $1 LIMIT 1`
+// could just as easily match a supplier tenant's crypto_profile for a
+// same-named key as a root-namespace one — an arbitrary pick, not a
+// tenant-safe one, feeding directly into the authorize() tenant/env
+// decision AND into requestKeyDestroy()'s app_id. `a.supplier_id IS NULL`
+// makes this query structurally incapable of matching a supplier-owned
+// application, closing the ambiguity rather than trying to disambiguate a
+// name collision after the fact.
 async function ownerOfKey(name) {
   const { rows } = await query(
-    `SELECT s.vault_namespace, a.environment
+    `SELECT a.id AS application_id, s.vault_namespace, a.environment
        FROM crypto_profiles cp
        JOIN applications a ON a.id = cp.application_id
        LEFT JOIN suppliers s ON s.id = a.supplier_id
-      WHERE cp.vault_path LIKE '%/' || $1
+      WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
       LIMIT 1`,
     [name],
   );
@@ -53,13 +64,20 @@ async function ownerOfKey(name) {
 // directly by a workload's own Terraform-provisioned policy, never
 // modeled through applications/crypto_profiles at all; see Prompt 33 Non-
 // goals.
+// Prompt 36 — same root-namespace-only fix as ownerOfKey() above, for the
+// same reason. Without `a.supplier_id IS NULL`, a root-namespace key could
+// display a SUPPLIER TENANT'S application name/environment as its own
+// "Distribute" evidence whenever a same-named key happened to exist in
+// that tenant's namespace — a real cross-tenant information leak, not
+// just a display bug, since GET /keys/:name is estate-wide (no tenant
+// scope check of its own).
 async function distributionOf(name) {
   const { rows } = await query(
     `SELECT a.name AS application, a.environment, s.vault_namespace AS namespace
        FROM crypto_profiles cp
        JOIN applications a ON a.id = cp.application_id
        LEFT JOIN suppliers s ON s.id = a.supplier_id
-      WHERE cp.vault_path LIKE '%/' || $1
+      WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
       LIMIT 1`,
     [name],
   );
@@ -433,9 +451,14 @@ keysRouter.post("/:name/destroy", async (req, res, next) => {
         action: "destroy_request",
         reason: decision.reason,
       });
+    // Prompt 36 — pass the already-resolved owning application through
+    // (ownerOfKey() just did this real work for the authorize() decision
+    // above) instead of letting requestKeyDestroy() re-resolve it, or fall
+    // back to an arbitrary placeholder.
     const approval = await requestKeyDestroy(
       name,
       req.identity?.user ?? "arcanium-operator",
+      { appId: owner?.application_id },
     );
     res.status(202).json({
       approval,

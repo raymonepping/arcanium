@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Destroy-path safety and correctness (Prompt 36) — triggered by a full
+  six-stage lifecycle audit ("the lifecycle has to be bulletproof"),
+  found four critical, currently-armed gaps in the destroy-approval
+  pipeline: (1) the key to actually delete was resolved via an
+  unordered, un-tenant-scoped `LIKE ... LIMIT 1` — two tenants with a
+  same-named key made the real delete target a coin flip; (2)
+  `deletion_allowed` was force-set before every delete with no read of
+  the key's actual live protection state, and never restored if the
+  delete then failed, permanently stripping a key's own
+  delete-protection as a side effect of a failed attempt; (3) a real
+  TOCTOU window existed between the governance-intent check and the
+  actual delete — an Accept-Exception click in that window did not stop
+  an in-flight destroy, the exact incident this code's own header
+  comment says it was built to prevent, only narrowed to a window, not
+  closed; (4) nothing pinned what a destroy approval was actually raised
+  against, so it executed against whatever a bare key name currently
+  resolved to, including a since-rotated or since-recreated key. Also
+  fixed: the placeholder "first registered application" every destroy
+  request was attached to (closing three separate downstream
+  workarounds this had forced), a matching cross-tenant gap in the
+  offboarding auto-approval trigger, a reconciliation join that could
+  submit a destroy request against the wrong key on a multi-key
+  application, a missing concurrency guard on the destroy-execution
+  claim, a fabricated "Destroy — Demonstrated" dashboard badge that
+  fired on a merely-pending, never-executed request, a genuinely
+  non-atomic `upsertDesiredState()`/migration-runner transaction (each
+  `BEGIN`/`COMMIT` statement could land on a different pooled
+  connection), and the complete absence of any way to create the
+  destroy gate's primary trigger (`expiry_date` desired-state) at all.
+  Verified live against real, disposable Vault keys/applications
+  (including a deliberately-planted cross-tenant name collision, a live
+  key rotation to force a pinned-version mismatch, and two racing
+  Postgres transactions proving the new concurrency claim), all cleaned
+  up afterward with zero trace remaining. Full regression green.
 - SSR hydration mismatch on first unauthenticated page load (Prompt 35,
   `UI_AUDIT.md` Finding 4): a brief flash of Dashboard chrome (never real
   protected data) before self-correcting to the login form, on a cold

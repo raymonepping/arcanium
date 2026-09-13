@@ -1473,6 +1473,34 @@ paths:
   # generic /:run_id routes, so "desired-state" is matched literally,
   # never captured as a run_id. Documented, not restructured — Deliverable
   # 1 is capture-then-enforce, not a redesign of an unambiguous real API.
+  # Prompt 36 — no route to CREATE a desired_state row for anything other
+  # than rotation_period (seeded implicitly at provisioning time) existed
+  # before this. Registered before desired-state/{id} in
+  # reconciliationRouter (a different path shape — no literal-vs-param
+  # ambiguity the way {id}/{run_id} had).
+  /api/v1/reconciliation/desired-state:
+    post:
+      summary: Create (or update, via the same upsert) a desired_state row for any requirement type
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                application_id: { type: string, format: uuid }
+                key_name: { type: string }
+                requirement: { type: string, enum: [rotation_period, expiry_date] }
+                desired_value:
+                  type: object
+                  description: "{days: number} for rotation_period; {not_after: 'YYYY-MM-DD'} for expiry_date"
+                reason: { type: string }
+              required: [application_id, key_name, requirement, desired_value]
+      responses:
+        "201": { description: "Created (or updated, if an identical row already existed)" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: "Application not found, or no crypto profile for this key_name on this application" }
+        "409": { description: "Concurrent creation of the same application/key/requirement row" }
   /api/v1/reconciliation/desired-state/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1484,7 +1512,9 @@ paths:
             schema:
               type: object
               properties:
-                desired_value: { type: object, properties: { days: { type: number } } }
+                desired_value:
+                  type: object
+                  description: "Must match the row's own requirement: {days: number} for rotation_period, {not_after: 'YYYY-MM-DD'} for expiry_date"
                 reason: { type: string }
               required: [desired_value]
       responses:

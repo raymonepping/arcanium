@@ -63,8 +63,15 @@ async function desiredStateRowsFor({ desiredStateId, supplierIds } = {}) {
        FROM desired_state ds
        JOIN applications a ON a.id = ds.application_id
        LEFT JOIN suppliers s ON s.id = a.supplier_id
+       -- Prompt 36 — was matched by application_id + type='transit' only,
+       -- never by key_name: an application with more than one transit
+       -- profile could pick a DIFFERENT key's vault_path than the one
+       -- ds.key_name actually names, feeding a wrong Vault path into
+       -- OBSERVERS/APPLIERS for this row. Matches offboarding.js's own
+       -- already-correct join pattern.
        LEFT JOIN crypto_profiles cp
          ON cp.application_id = ds.application_id AND cp.type = 'transit'
+        AND cp.vault_path LIKE '%/' || ds.key_name
        ${where}
       ORDER BY ds.application_id, ds.key_name`,
     params,
@@ -243,8 +250,10 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
        JOIN desired_state ds ON ds.id = rr.desired_state_id
        JOIN applications a ON a.id = ds.application_id
        LEFT JOIN suppliers s ON s.id = a.supplier_id
+       -- Prompt 36 — same join fix as desiredStateRowsFor() above.
        LEFT JOIN crypto_profiles cp
          ON cp.application_id = ds.application_id AND cp.type = 'transit'
+        AND cp.vault_path LIKE '%/' || ds.key_name
       WHERE rr.id = $1`,
     [runId],
   );
@@ -358,10 +367,23 @@ async function reconcileExpiryDate(
     "destroy_request approval submitted — awaiting four-eyes authorization before any Vault mutation";
   let approval = null;
   try {
-    const keyName = desiredStateRow.vault_path
-      ? desiredStateRow.vault_path.split("/").pop()
-      : desiredStateRow.key_name;
-    approval = await requestKeyDestroy(keyName, actor ?? "arcanium");
+    // Prompt 36 — desiredStateRow.key_name is always correct by
+    // construction (it's the row's own primary identity, no join
+    // involved) — previously this preferred deriving a name from
+    // vault_path instead, which could silently be a DIFFERENT key's path
+    // if the crypto_profiles join matched ambiguously (fixed above, but
+    // key_name never needed the join at all). applicationId/namespace are
+    // passed through explicitly too, closing the same "arbitrary
+    // placeholder application" gap as every other requestKeyDestroy()
+    // call site.
+    approval = await requestKeyDestroy(
+      desiredStateRow.key_name,
+      actor ?? "arcanium",
+      {
+        appId: desiredStateRow.application_id,
+        namespace: desiredStateRow.namespace,
+      },
+    );
   } catch (err) {
     result = "failed";
     detail = err.message;

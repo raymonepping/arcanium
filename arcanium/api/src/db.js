@@ -60,6 +60,34 @@ export async function query(text, params) {
   }
 }
 
+// Prompt 36 — a real transaction, unlike calling query("BEGIN")/query(...)/
+// query("COMMIT") separately: query() is pool.query(), which checks a
+// connection out of the pool and returns it after EVERY single call —
+// there is no guarantee any two of those calls land on the same
+// connection. A BEGIN on one connection, a FOR UPDATE on another, is not
+// a transaction at all: the lock protects nothing, and a stray BEGIN can
+// leave a pooled connection sitting open-in-transaction indefinitely.
+// withTransaction() holds one client for the whole callback and always
+// releases it — the only way BEGIN/…/COMMIT are ever actually atomic.
+// getPool() is read fresh (not a module-load-time reference) so this
+// keeps working correctly across a rotateCreds() pool swap.
+export async function withTransaction(fn) {
+  const p = getPool();
+  if (!p) throw new Error("[db] pool not initialised");
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Ping the database — used by the health endpoint.
 export async function ping() {
   const start = Date.now();

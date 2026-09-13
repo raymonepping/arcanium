@@ -2711,6 +2711,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reconciliation/desired-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create (or update, via the same upsert) a desired_state row for any requirement type */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        application_id: string;
+                        key_name: string;
+                        /** @enum {string} */
+                        requirement: "rotation_period" | "expiry_date";
+                        /** @description {days: number} for rotation_period; {not_after: 'YYYY-MM-DD'} for expiry_date */
+                        desired_value: Record<string, never>;
+                        reason?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Created (or updated, if an identical row already existed) */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                403: components["responses"]["Forbidden"];
+                /** @description Application not found, or no crypto profile for this key_name on this application */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Concurrent creation of the same application/key/requirement row */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reconciliation/desired-state/{id}": {
         parameters: {
             query?: never;
@@ -2739,9 +2802,8 @@ export interface paths {
             requestBody?: {
                 content: {
                     "application/json": {
-                        desired_value: {
-                            days?: number;
-                        };
+                        /** @description Must match the row's own requirement: {days: number} for rotation_period, {not_after: 'YYYY-MM-DD'} for expiry_date */
+                        desired_value: Record<string, never>;
                         reason?: string;
                     };
                 };

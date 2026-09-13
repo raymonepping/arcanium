@@ -75,7 +75,7 @@ evidenceRouter.get("/", async (req, res, next) => {
       await query(
         `SELECT a.updated_at AS ts, a.requester AS actor, a.source, a.action AS operation,
                 'key' AS resource_type, a.key_name AS resource_id, NULL AS namespace,
-                a.supplier_id,
+                a.supplier_id, a.executed_at,
                 CASE a.status WHEN 'approved' THEN 'ok' WHEN 'rejected' THEN 'denied' ELSE 'ok' END AS outcome,
                 'approval' AS origin, s.name AS supplier
          FROM approval_requests a LEFT JOIN suppliers s ON s.id = a.supplier_id
@@ -114,7 +114,29 @@ evidenceRouter.get("/", async (req, res, next) => {
     // Tally every stage over the full scan window BEFORE the display slice, so
     // the UI strip shows real totals even when recent encrypt traffic dominates.
     const stage_counts = Object.fromEntries(KML_STAGES.map((s) => [s, 0]));
-    for (const r of rows) stage_counts[r.lifecycle_stage]++;
+    for (const r of rows) {
+      // Prompt 36 — a "Destroy" classification previously counted toward
+      // this tally (and so the dashboard's "Destroy — Demonstrated"
+      // badge) the instant a revoke request was merely SUBMITTED or
+      // APPROVED, never requiring it to have actually been executed. Two
+      // real sources of that: an approval-origin row with no executed_at
+      // yet (still pending, or approved but approval-execution.js hasn't
+      // run it), and a lifecycle_events 'destroy.requested' row (recorded
+      // at request time, before any approval at all) — both real
+      // governance activity, correctly still shown in the evidence
+      // trail, but neither is proof a key was actually destroyed. Only a
+      // genuinely executed destroy (executed_at set, or the distinct
+      // 'key.destroyed' event approval-execution.js records once the
+      // Vault delete actually succeeds) counts here.
+      if (
+        r.lifecycle_stage === "Destroy" &&
+        ((r.origin === "approval" && !r.executed_at) ||
+          (r.origin === "orchestration" && r.operation === "destroy.requested"))
+      ) {
+        continue;
+      }
+      stage_counts[r.lifecycle_stage]++;
+    }
 
     if (req.query.source)
       rows = rows.filter((r) => r.source === req.query.source);

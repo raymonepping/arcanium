@@ -53,21 +53,19 @@ export async function checkOffboardingCompletion(applicationId) {
   let allResolved = true;
   for (const ds of dsRows) {
     if (ds.archived_at) continue;
-    // Matched by key_name alone, NOT app_id — the same workaround
-    // aggregation/intent.js's own governance section already had to apply
-    // (see its comment above the `approvals` query): provisioner/key.js's
-    // requestKeyDestroy() unconditionally attaches every destroy request's
-    // app_id to "the first registered application" (an FK-satisfying
-    // placeholder, not the key's real owner), so filtering on app_id here
-    // would leave this workflow stuck forever whenever that placeholder
-    // isn't this application. key_name alone is safe: `ds` was already
-    // selected FROM desired_state WHERE application_id = $1, so it's
-    // guaranteed to belong to this application's own key set.
+    // Prompt 36 — now scoped by app_id AND key_name, not key_name alone.
+    // requestKeyDestroy() previously attached every destroy request's
+    // app_id to an arbitrary placeholder application, which is why this
+    // used to have to match by key_name alone across the ENTIRE
+    // approval_requests table — meaning another tenant's approval for a
+    // same-named key could tombstone THIS application's governance row.
+    // Now that requestKeyDestroy() attaches the real owning application
+    // (this same prompt), app_id is trustworthy and closes that gap.
     const { rows: apRows } = await query(
       `SELECT status, executed_at FROM approval_requests
-        WHERE key_name = $1 AND action = 'revoke'
+        WHERE app_id = $1 AND key_name = $2 AND action = 'revoke'
         ORDER BY created_at DESC LIMIT 1`,
-      [ds.key_name],
+      [applicationId, ds.key_name],
     );
     const latest = apRows[0];
     // Prompt 29 — 'approved' alone used to be treated as resolved here, on
@@ -146,9 +144,17 @@ export async function initiateOffboarding(applicationId, actor) {
   for (const ds of dsRows) {
     const active = await keyIsActive(ds.vault_path, ds.namespace);
     if (active) {
+      // Prompt 36 — applicationId is already known here (dsRows was
+      // selected WHERE ds.application_id = $1), so pass it through
+      // explicitly instead of letting requestKeyDestroy() fall back to an
+      // arbitrary placeholder application.
       const approval = await requestKeyDestroy(
         ds.key_name,
         actor ?? "arcanium",
+        {
+          appId: applicationId,
+          namespace: ds.namespace,
+        },
       );
       destroyRequestsSubmitted.push({
         desired_state_id: ds.id,

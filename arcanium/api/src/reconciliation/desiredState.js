@@ -8,7 +8,7 @@
 // always holds the current value + who/why set it; desired_state_history
 // holds every value it held before that, each with its own who/why/groups.
 
-import { query } from "../db.js";
+import { query, withTransaction } from "../db.js";
 
 /**
  * Create-or-update a desired_state row for (application_id, key_name, requirement).
@@ -17,6 +17,14 @@ import { query } from "../db.js";
  * provisioning with the same rotation_days must not manufacture fake intent
  * history.
  */
+// Prompt 36 — rewritten on withTransaction(): the previous version issued
+// BEGIN/SELECT…FOR UPDATE/INSERT/UPDATE/COMMIT as five separate query()
+// calls, each an independently pooled pool.query() that could land on a
+// different connection — meaning this was never actually one atomic
+// transaction, the FOR UPDATE lock protected nothing, and a stray BEGIN
+// could leave a pooled connection open-in-transaction indefinitely. Every
+// statement below now runs on the one client withTransaction() holds for
+// the whole callback.
 export async function upsertDesiredState({
   applicationId,
   keyName,
@@ -27,18 +35,16 @@ export async function upsertDesiredState({
   changedGroups = [],
   changedReason = null,
 }) {
-  await query("BEGIN");
-  try {
-    const { rows: existing } = await query(
+  return withTransaction(async (client) => {
+    const { rows: existing } = await client.query(
       `SELECT * FROM desired_state
         WHERE application_id = $1 AND key_name = $2 AND requirement = $3
         FOR UPDATE`,
       [applicationId, keyName, requirement],
     );
 
-    let result;
     if (!existing.length) {
-      const { rows } = await query(
+      const { rows } = await client.query(
         `INSERT INTO desired_state
            (application_id, key_name, requirement, desired_value, source, version, changed_by, changed_groups, changed_reason)
          VALUES ($1,$2,$3,$4,$5,1,$6,$7,$8)
@@ -54,51 +60,43 @@ export async function upsertDesiredState({
           changedReason,
         ],
       );
-      result = rows[0];
-    } else {
-      const prior = existing[0];
-      const unchanged =
-        JSON.stringify(prior.desired_value) === JSON.stringify(desiredValue);
-      if (unchanged) {
-        await query("COMMIT");
-        return prior;
-      }
-      await query(
-        `INSERT INTO desired_state_history
-           (desired_state_id, version, desired_value, changed_by, changed_groups, changed_reason)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [
-          prior.id,
-          prior.version,
-          JSON.stringify(prior.desired_value),
-          prior.changed_by,
-          prior.changed_groups ?? [],
-          prior.changed_reason,
-        ],
-      );
-      const { rows } = await query(
-        `UPDATE desired_state
-           SET desired_value = $2, version = version + 1, changed_by = $3,
-               changed_groups = $4, changed_reason = $5, updated_at = now()
-         WHERE id = $1
-         RETURNING *`,
-        [
-          prior.id,
-          JSON.stringify(desiredValue),
-          changedBy,
-          changedGroups,
-          changedReason,
-        ],
-      );
-      result = rows[0];
+      return rows[0];
     }
 
-    await query("COMMIT");
-    return result;
-  } catch (err) {
-    await query("ROLLBACK").catch(() => {});
-    throw err;
-  }
+    const prior = existing[0];
+    const unchanged =
+      JSON.stringify(prior.desired_value) === JSON.stringify(desiredValue);
+    if (unchanged) return prior;
+
+    await client.query(
+      `INSERT INTO desired_state_history
+         (desired_state_id, version, desired_value, changed_by, changed_groups, changed_reason)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [
+        prior.id,
+        prior.version,
+        JSON.stringify(prior.desired_value),
+        prior.changed_by,
+        prior.changed_groups ?? [],
+        prior.changed_reason,
+      ],
+    );
+    const { rows } = await client.query(
+      `UPDATE desired_state
+         SET desired_value = $2, version = version + 1, changed_by = $3,
+             changed_groups = $4, changed_reason = $5, updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        prior.id,
+        JSON.stringify(desiredValue),
+        changedBy,
+        changedGroups,
+        changedReason,
+      ],
+    );
+    return rows[0];
+  });
 }
 
 export async function getDesiredState(id) {

@@ -1,0 +1,1377 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e25ece8..cbbb8ee 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Fixed
+ 
++- Destroy-path safety and correctness (Prompt 36) — triggered by a full
++  six-stage lifecycle audit ("the lifecycle has to be bulletproof"),
++  found four critical, currently-armed gaps in the destroy-approval
++  pipeline: (1) the key to actually delete was resolved via an
++  unordered, un-tenant-scoped `LIKE ... LIMIT 1` — two tenants with a
++  same-named key made the real delete target a coin flip; (2)
++  `deletion_allowed` was force-set before every delete with no read of
++  the key's actual live protection state, and never restored if the
++  delete then failed, permanently stripping a key's own
++  delete-protection as a side effect of a failed attempt; (3) a real
++  TOCTOU window existed between the governance-intent check and the
++  actual delete — an Accept-Exception click in that window did not stop
++  an in-flight destroy, the exact incident this code's own header
++  comment says it was built to prevent, only narrowed to a window, not
++  closed; (4) nothing pinned what a destroy approval was actually raised
++  against, so it executed against whatever a bare key name currently
++  resolved to, including a since-rotated or since-recreated key. Also
++  fixed: the placeholder "first registered application" every destroy
++  request was attached to (closing three separate downstream
++  workarounds this had forced), a matching cross-tenant gap in the
++  offboarding auto-approval trigger, a reconciliation join that could
++  submit a destroy request against the wrong key on a multi-key
++  application, a missing concurrency guard on the destroy-execution
++  claim, a fabricated "Destroy — Demonstrated" dashboard badge that
++  fired on a merely-pending, never-executed request, a genuinely
++  non-atomic `upsertDesiredState()`/migration-runner transaction (each
++  `BEGIN`/`COMMIT` statement could land on a different pooled
++  connection), and the complete absence of any way to create the
++  destroy gate's primary trigger (`expiry_date` desired-state) at all.
++  Verified live against real, disposable Vault keys/applications
++  (including a deliberately-planted cross-tenant name collision, a live
++  key rotation to force a pinned-version mismatch, and two racing
++  Postgres transactions proving the new concurrency claim), all cleaned
++  up afterward with zero trace remaining. Full regression green.
+ - SSR hydration mismatch on first unauthenticated page load (Prompt 35,
+   `UI_AUDIT.md` Finding 4): a brief flash of Dashboard chrome (never real
+   protected data) before self-correcting to the login form, on a cold
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 4441d12..323a1b9 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -1473,6 +1473,34 @@ paths:
+   # generic /:run_id routes, so "desired-state" is matched literally,
+   # never captured as a run_id. Documented, not restructured — Deliverable
+   # 1 is capture-then-enforce, not a redesign of an unambiguous real API.
++  # Prompt 36 — no route to CREATE a desired_state row for anything other
++  # than rotation_period (seeded implicitly at provisioning time) existed
++  # before this. Registered before desired-state/{id} in
++  # reconciliationRouter (a different path shape — no literal-vs-param
++  # ambiguity the way {id}/{run_id} had).
++  /api/v1/reconciliation/desired-state:
++    post:
++      summary: Create (or update, via the same upsert) a desired_state row for any requirement type
++      requestBody:
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                application_id: { type: string, format: uuid }
++                key_name: { type: string }
++                requirement: { type: string, enum: [rotation_period, expiry_date] }
++                desired_value:
++                  type: object
++                  description: "{days: number} for rotation_period; {not_after: 'YYYY-MM-DD'} for expiry_date"
++                reason: { type: string }
++              required: [application_id, key_name, requirement, desired_value]
++      responses:
++        "201": { description: "Created (or updated, if an identical row already existed)" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { description: "Application not found, or no crypto profile for this key_name on this application" }
++        "409": { description: "Concurrent creation of the same application/key/requirement row" }
+   /api/v1/reconciliation/desired-state/{id}:
+     parameters:
+       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+@@ -1484,7 +1512,9 @@ paths:
+             schema:
+               type: object
+               properties:
+-                desired_value: { type: object, properties: { days: { type: number } } }
++                desired_value:
++                  type: object
++                  description: "Must match the row's own requirement: {days: number} for rotation_period, {not_after: 'YYYY-MM-DD'} for expiry_date"
+                 reason: { type: string }
+               required: [desired_value]
+       responses:
+diff --git a/arcanium/api/src/approval-execution.js b/arcanium/api/src/approval-execution.js
+index 1397db6..7a95322 100644
+--- a/arcanium/api/src/approval-execution.js
++++ b/arcanium/api/src/approval-execution.js
+@@ -16,8 +16,14 @@
+ // part of the same execution step, not a prerequisite an operator has to
+ // remember to set in advance.
+ 
+-import { query } from "./db.js";
+-import { vaultRequest, vaultRequestNs, getProvisionerToken } from "./vault.js";
++import { query, withTransaction } from "./db.js";
++import {
++  vaultRequest,
++  vaultRequestNs,
++  getProvisionerToken,
++  getTransitKey,
++  getNamespaceTransitKey,
++} from "./vault.js";
+ import { getDispositionFor } from "./reconciliation/engine.js";
+ 
+ // Prompt 29 — found live, the hard way: the first version of this module
+@@ -41,7 +47,17 @@ import { getDispositionFor } from "./reconciliation/engine.js";
+ // the key's owning application currently mid-offboarding. An approval that
+ // matches neither is left unexecuted and logged for human review, never
+ // silently acted on and never silently dropped either.
+-async function hasLiveDestroyIntent(keyName) {
++//
++// Prompt 36 — now takes appId (the approval's own, now-correctly-attached
++// owning application — see provisioner/key.js's requestKeyDestroy())
++// instead of keyName alone. Previously both branches matched by key_name
++// across the WHOLE estate: a DIFFERENT tenant's own same-named key being
++// DRIFTED, or a different tenant's application mid-offboarding, could
++// authorize destroying THIS approval's key. Scoping both branches to the
++// approval's own application closes that; the offboarding branch no
++// longer needs a crypto_profiles join at all — it can check the
++// application's own offboarding status directly by id.
++async function hasLiveDestroyIntent(keyName, appId) {
+   const { rows: dsRows } = await query(
+     `SELECT ds.id, lr.status
+        FROM desired_state ds
+@@ -50,8 +66,9 @@ async function hasLiveDestroyIntent(keyName) {
+           WHERE r.desired_state_id = ds.id
+           ORDER BY r.observed_at DESC LIMIT 1
+        ) lr ON true
+-      WHERE ds.key_name = $1 AND ds.requirement = 'expiry_date' AND ds.archived_at IS NULL`,
+-    [keyName],
++      WHERE ds.application_id = $1 AND ds.key_name = $2
++        AND ds.requirement = 'expiry_date' AND ds.archived_at IS NULL`,
++    [appId, keyName],
+   );
+   for (const ds of dsRows) {
+     if (ds.status !== "DRIFTED") continue;
+@@ -60,51 +77,86 @@ async function hasLiveDestroyIntent(keyName) {
+   }
+ 
+   const { rows: appRows } = await query(
+-    `SELECT a.id FROM applications a
+-       JOIN crypto_profiles cp ON cp.application_id = a.id
+-      WHERE cp.vault_path LIKE '%/' || $1
+-        AND a.offboarding_initiated_at IS NOT NULL
+-        AND a.offboarded_at IS NULL`,
+-    [keyName],
++    `SELECT id FROM applications
++      WHERE id = $1 AND offboarding_initiated_at IS NOT NULL AND offboarded_at IS NULL`,
++    [appId],
+   );
+   return appRows.length > 0;
+ }
+ 
+-// Resolves the Vault path + tenant namespace for a bare key_name — the same
+-// LIKE-based lookup offboarding.js already uses, and for the same reason:
+-// requestKeyDestroy() attaches every destroy request's app_id to "the first
+-// registered application" as an FK-satisfying placeholder, never the key's
+-// real owner, so joining through app_id here would resolve the wrong (or
+-// no) tenant. key_name is the only reliably correct identifier on this row.
+-async function resolveKeyLocation(keyName) {
++// Prompt 36 — resolves the Vault path + tenant namespace for a destroy
++// request's key, scoped to the approval's own (now-correct) application —
++// no longer an estate-wide, unscoped key-name search. Two tenants with a
++// same-named key can no longer collide: crypto_profiles is joined through
++// THIS ONE application only.
++async function resolveKeyLocation(appId, keyName) {
+   const { rows } = await query(
+     `SELECT cp.vault_path, s.vault_namespace AS namespace
+-       FROM crypto_profiles cp
+-       LEFT JOIN applications a ON a.id = cp.application_id
++       FROM applications a
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
+-      WHERE cp.vault_path LIKE '%/' || $1
++       LEFT JOIN crypto_profiles cp
++         ON cp.application_id = a.id AND cp.vault_path LIKE '%/' || $2
++      WHERE a.id = $1
+       LIMIT 1`,
+-    [keyName],
++    [appId, keyName],
+   );
+   return rows[0] ?? { vault_path: null, namespace: null };
+ }
+ 
+-async function destroyTransitKey(keyName, namespace) {
++// Reads a key's live metadata (never assumed) ahead of a destroy — used
++// both to confirm the pinned-version pin (see requestKeyDestroy()'s own
++// comment) and, inside destroyTransitKey(), to avoid blindly force-setting
++// deletion_allowed. Returns null (not throwing) on a 404 — "key not
++// found" is a legitimate, expected outcome here, not an error condition.
++async function readLiveKeyMeta(keyName, namespace) {
++  try {
++    return namespace
++      ? await getNamespaceTransitKey(namespace, keyName)
++      : await getTransitKey(keyName);
++  } catch (err) {
++    if (err.vaultStatus === 404) return null;
++    throw err;
++  }
++}
++
++// Prompt 36 — previously unconditionally forced deletion_allowed=true
++// before every delete, with no read of the key's actual live protection
++// state first, and never restored it if the DELETE that followed then
++// failed (Sentinel EGP, Control Group, a transient error) — leaving a
++// key that was deliberately delete-protected permanently stripped of that
++// protection as a side effect of a failed destroy attempt. Now: reads
++// live metadata first; only flips deletion_allowed if it isn't already
++// true; restores the prior value if DELETE fails; a DELETE 404 (key
++// already gone) is treated as success, not an error, since "the key no
++// longer exists" is exactly the end state a destroy is trying to reach.
++async function destroyTransitKey(keyName, namespace, liveMeta) {
+   const token = getProvisionerToken();
+   const configPath = `transit/keys/${keyName}/config`;
+   const deletePath = `transit/keys/${keyName}`;
+-  if (namespace) {
+-    await vaultRequestNs(
+-      "POST",
+-      configPath,
+-      { deletion_allowed: true },
+-      token,
+-      namespace,
+-    );
+-    await vaultRequestNs("DELETE", deletePath, null, token, namespace);
+-  } else {
+-    await vaultRequest("POST", configPath, { deletion_allowed: true }, token);
+-    await vaultRequest("DELETE", deletePath, null, token);
++  const req = namespace
++    ? (method, path, body) => vaultRequestNs(method, path, body, token, namespace)
++    : (method, path, body) => vaultRequest(method, path, body, token);
++
++  const wasAlreadyDeletable = liveMeta?.deletion_allowed === true;
++  if (!wasAlreadyDeletable) {
++    await req("POST", configPath, { deletion_allowed: true });
++  }
++  try {
++    await req("DELETE", deletePath, null);
++  } catch (err) {
++    if (err.vaultStatus === 404) return; // already gone — the desired end state
++    if (!wasAlreadyDeletable) {
++      // Restore the key's prior protection rather than leave it silently
++      // stripped just because this attempt failed.
++      await req("POST", configPath, { deletion_allowed: false }).catch(
++        (restoreErr) => {
++          console.error(
++            `[approval-execution] failed to restore deletion_allowed=false on '${keyName}' after a failed destroy attempt: ${restoreErr.message} — this key is now delete-unprotected and needs manual review`,
++          );
++        },
++      );
++    }
++    throw err;
+   }
+ }
+ 
+@@ -115,47 +167,125 @@ async function destroyTransitKey(keyName, namespace) {
+  * unexecuted (executed_at stays NULL, retried next tick) on any failure —
+  * never marked executed just because an attempt was made. Safe to call
+  * repeatedly; a request already executed is excluded by the WHERE clause.
++ *
++ * Prompt 36 — each row is now claimed, checked, destroyed, and marked
++ * executed inside ONE real transaction (withTransaction(), FOR UPDATE
++ * SKIP LOCKED) instead of a plain SELECT followed by three separate
++ * pooled statements. This closes two gaps at once: (a) a real TOCTOU
++ * window previously existed between the hasLiveDestroyIntent() check and
++ * the actual delete — an Accept-Exception click in that window did not
++ * stop an in-flight delete, the exact failure mode this module's own
++ * original incident was about, only narrowed to a smaller window before
++ * this fix, not closed; (b) no concurrency guard existed on the claim
++ * itself (unlike worker.js's own job-claim, immediately below this in the
++ * call chain, which already got this right). Holding the row lock across
++ * the live Vault call is deliberate and safe — it blocks a second claim of
++ * THIS row only, never other rows.
+  */
+-export async function executeApprovedDestroys() {
+-  const { rows } = await query(
+-    `SELECT id, key_name FROM approval_requests
+-      WHERE status = 'approved' AND action = 'revoke' AND executed_at IS NULL
+-      ORDER BY updated_at ASC`,
+-  );
++async function claimAndProcessOne(excludeIds) {
++  let claimedId = null;
++  try {
++    return await withTransaction(async (client) => {
++      const { rows } = await client.query(
++        `SELECT id, key_name, app_id, pinned_key_version FROM approval_requests
++          WHERE status = 'approved' AND action = 'revoke' AND executed_at IS NULL
++            AND NOT (id = ANY($1::uuid[]))
++          ORDER BY updated_at ASC
++          FOR UPDATE SKIP LOCKED
++          LIMIT 1`,
++        [excludeIds],
++      );
++      const req = rows[0];
++      if (!req) return null;
++      claimedId = req.id;
+ 
+-  let executed = 0;
+-  let failed = 0;
+-  let skipped = 0;
+-  for (const req of rows) {
+-    try {
+-      if (!(await hasLiveDestroyIntent(req.key_name))) {
+-        skipped++;
++      if (!(await hasLiveDestroyIntent(req.key_name, req.app_id))) {
+         console.warn(
+           `[approval-execution] SKIPPING '${req.key_name}' (approval ${req.id}): approved, but no active governance trigger found (no current DRIFTED expiry_date row, not mid-offboarding) — left unexecuted for human review, not destroyed`,
+         );
+-        continue;
++        return { id: req.id, key_name: req.key_name, outcome: "skipped" };
+       }
+-      const { namespace } = await resolveKeyLocation(req.key_name);
+-      await destroyTransitKey(req.key_name, namespace);
+-      await query(
++
++      const { namespace } = await resolveKeyLocation(req.app_id, req.key_name);
++      const liveMeta = await readLiveKeyMeta(req.key_name, namespace);
++
++      if (!liveMeta) {
++        // Already gone — nothing to destroy. Mark executed so this stops
++        // being retried, without ever having called delete.
++        await client.query(
++          "UPDATE approval_requests SET executed_at = now() WHERE id = $1",
++          [req.id],
++        );
++        return { id: req.id, key_name: req.key_name, outcome: "already-gone" };
++      }
++
++      // Prompt 36 — the pinned-version check. req.pinned_key_version was
++      // captured when this request was RAISED (requestKeyDestroy()); a
++      // NULL pin (couldn't be captured then) never authorizes a delete on
++      // its own, and a live version that no longer matches means the key
++      // has changed (rotated, or destroyed+recreated under the same
++      // name) since this request was reviewed — refuse and leave it for
++      // re-review rather than destroy a key that is no longer the one
++      // approved.
++      if (
++        req.pinned_key_version == null ||
++        liveMeta.latest_version !== req.pinned_key_version
++      ) {
++        console.warn(
++          `[approval-execution] SKIPPING '${req.key_name}' (approval ${req.id}): pinned version ${req.pinned_key_version ?? "unknown"} does not match live version ${liveMeta.latest_version} — the key has changed since this request was raised, left unexecuted for re-review`,
++        );
++        return { id: req.id, key_name: req.key_name, outcome: "version-mismatch" };
++      }
++
++      await destroyTransitKey(req.key_name, namespace, liveMeta);
++      await client.query(
+         "UPDATE approval_requests SET executed_at = now() WHERE id = $1",
+         [req.id],
+       );
+-      await query(
+-        `INSERT INTO lifecycle_events (resource_type, resource_id, event, detail, source)
+-         VALUES ('key', $1, 'key.destroyed', $2, 'local')`,
+-        [req.key_name, JSON.stringify({ approval_id: req.id })],
+-      ).catch(() => {});
+-      executed++;
++      await client
++        .query(
++          `INSERT INTO lifecycle_events (resource_type, resource_id, event, detail, source)
++           VALUES ('key', $1, 'key.destroyed', $2, 'local')`,
++          [req.key_name, JSON.stringify({ approval_id: req.id })],
++        )
++        .catch(() => {});
+       console.log(
+         `[approval-execution] destroyed key '${req.key_name}' (approval ${req.id})`,
+       );
+-    } catch (err) {
+-      failed++;
+-      console.error(
+-        `[approval-execution] failed to execute approved destroy of '${req.key_name}' (approval ${req.id}): ${err.message} — will retry`,
+-      );
+-    }
++      return { id: req.id, key_name: req.key_name, outcome: "executed" };
++    });
++  } catch (err) {
++    console.error(
++      `[approval-execution] failed to execute approved destroy${claimedId ? ` (approval ${claimedId})` : ""}: ${err.message} — will retry next tick`,
++    );
++    return { id: claimedId, outcome: "error" };
++  }
++}
++
++export async function executeApprovedDestroys() {
++  let checked = 0;
++  let executed = 0;
++  let failed = 0;
++  let skipped = 0;
++  // Prompt 36 — excludeIds guarantees forward progress within one call:
++  // a claim that errors (transaction rolled back, executed_at still
++  // NULL) would otherwise be immediately re-claimable by the very next
++  // loop iteration in this SAME tick, spinning on one failing row
++  // forever — precisely the class of "looks like a hang, behaves like
++  // one" incident this codebase has already been burned by once
++  // (auth.global.ts's own documented history). Each id is attempted at
++  // most once per call; a genuinely transient failure gets retried on
++  // the NEXT tick, not the next loop iteration.
++  const excludeIds = [];
++  for (;;) {
++    const result = await claimAndProcessOne(excludeIds);
++    if (!result) break;
++    checked++;
++    if (result.id) excludeIds.push(result.id);
++    if (result.outcome === "executed" || result.outcome === "already-gone")
++      executed++;
++    else if (result.outcome === "error") failed++;
++    else skipped++;
+   }
+-  return { checked: rows.length, executed, failed, skipped };
++  return { checked, executed, failed, skipped };
+ }
+diff --git a/arcanium/api/src/db.js b/arcanium/api/src/db.js
+index a54bd27..4e14e33 100644
+--- a/arcanium/api/src/db.js
++++ b/arcanium/api/src/db.js
+@@ -60,6 +60,34 @@ export async function query(text, params) {
+   }
+ }
+ 
++// Prompt 36 — a real transaction, unlike calling query("BEGIN")/query(...)/
++// query("COMMIT") separately: query() is pool.query(), which checks a
++// connection out of the pool and returns it after EVERY single call —
++// there is no guarantee any two of those calls land on the same
++// connection. A BEGIN on one connection, a FOR UPDATE on another, is not
++// a transaction at all: the lock protects nothing, and a stray BEGIN can
++// leave a pooled connection sitting open-in-transaction indefinitely.
++// withTransaction() holds one client for the whole callback and always
++// releases it — the only way BEGIN/…/COMMIT are ever actually atomic.
++// getPool() is read fresh (not a module-load-time reference) so this
++// keeps working correctly across a rotateCreds() pool swap.
++export async function withTransaction(fn) {
++  const p = getPool();
++  if (!p) throw new Error("[db] pool not initialised");
++  const client = await p.connect();
++  try {
++    await client.query("BEGIN");
++    const result = await fn(client);
++    await client.query("COMMIT");
++    return result;
++  } catch (err) {
++    await client.query("ROLLBACK").catch(() => {});
++    throw err;
++  } finally {
++    client.release();
++  }
++}
++
+ // Ping the database — used by the health endpoint.
+ export async function ping() {
+   const start = Date.now();
+diff --git a/arcanium/api/src/migrations.js b/arcanium/api/src/migrations.js
+index 19f1720..f737de2 100644
+--- a/arcanium/api/src/migrations.js
++++ b/arcanium/api/src/migrations.js
+@@ -5,7 +5,7 @@
+ import { readdir, readFile } from "node:fs/promises";
+ import { join, dirname } from "node:path";
+ import { fileURLToPath } from "node:url";
+-import { query } from "./db.js";
++import { query, withTransaction } from "./db.js";
+ 
+ const __dirname = dirname(fileURLToPath(import.meta.url));
+ const MIGRATIONS_DIR = join(__dirname, "migrations");
+@@ -42,15 +42,22 @@ export async function runMigrations() {
+ 
+     const sql = await readFile(join(MIGRATIONS_DIR, file), "utf8");
+     try {
+-      await query("BEGIN");
+-      await query(sql);
+-      await query(`INSERT INTO schema_migrations (filename) VALUES ($1)`, [
+-        file,
+-      ]);
+-      await query("COMMIT");
++      // Prompt 36 — was BEGIN/query(sql)/INSERT/COMMIT as four separate
++      // pool.query() calls, each of which could land on a different
++      // pooled connection — not actually one atomic transaction. A
++      // migration that partially applied on one connection while the
++      // tracking INSERT landed on another could be silently re-applied
++      // (or half-applied) on next startup. withTransaction() holds one
++      // client for the whole thing.
++      await withTransaction(async (client) => {
++        await client.query(sql);
++        await client.query(
++          `INSERT INTO schema_migrations (filename) VALUES ($1)`,
++          [file],
++        );
++      });
+       console.log(`[migration] applied: ${file}`);
+     } catch (err) {
+-      await query("ROLLBACK").catch(() => {});
+       throw new Error(`[migration] failed on ${file}: ${err.message}`);
+     }
+   }
+diff --git a/arcanium/api/src/offboarding.js b/arcanium/api/src/offboarding.js
+index 8be885f..3c8ff69 100644
+--- a/arcanium/api/src/offboarding.js
++++ b/arcanium/api/src/offboarding.js
+@@ -53,21 +53,19 @@ export async function checkOffboardingCompletion(applicationId) {
+   let allResolved = true;
+   for (const ds of dsRows) {
+     if (ds.archived_at) continue;
+-    // Matched by key_name alone, NOT app_id — the same workaround
+-    // aggregation/intent.js's own governance section already had to apply
+-    // (see its comment above the `approvals` query): provisioner/key.js's
+-    // requestKeyDestroy() unconditionally attaches every destroy request's
+-    // app_id to "the first registered application" (an FK-satisfying
+-    // placeholder, not the key's real owner), so filtering on app_id here
+-    // would leave this workflow stuck forever whenever that placeholder
+-    // isn't this application. key_name alone is safe: `ds` was already
+-    // selected FROM desired_state WHERE application_id = $1, so it's
+-    // guaranteed to belong to this application's own key set.
++    // Prompt 36 — now scoped by app_id AND key_name, not key_name alone.
++    // requestKeyDestroy() previously attached every destroy request's
++    // app_id to an arbitrary placeholder application, which is why this
++    // used to have to match by key_name alone across the ENTIRE
++    // approval_requests table — meaning another tenant's approval for a
++    // same-named key could tombstone THIS application's governance row.
++    // Now that requestKeyDestroy() attaches the real owning application
++    // (this same prompt), app_id is trustworthy and closes that gap.
+     const { rows: apRows } = await query(
+       `SELECT status, executed_at FROM approval_requests
+-        WHERE key_name = $1 AND action = 'revoke'
++        WHERE app_id = $1 AND key_name = $2 AND action = 'revoke'
+         ORDER BY created_at DESC LIMIT 1`,
+-      [ds.key_name],
++      [applicationId, ds.key_name],
+     );
+     const latest = apRows[0];
+     // Prompt 29 — 'approved' alone used to be treated as resolved here, on
+@@ -146,10 +144,14 @@ export async function initiateOffboarding(applicationId, actor) {
+   for (const ds of dsRows) {
+     const active = await keyIsActive(ds.vault_path, ds.namespace);
+     if (active) {
+-      const approval = await requestKeyDestroy(
+-        ds.key_name,
+-        actor ?? "arcanium",
+-      );
++      // Prompt 36 — applicationId is already known here (dsRows was
++      // selected WHERE ds.application_id = $1), so pass it through
++      // explicitly instead of letting requestKeyDestroy() fall back to an
++      // arbitrary placeholder application.
++      const approval = await requestKeyDestroy(ds.key_name, actor ?? "arcanium", {
++        appId: applicationId,
++        namespace: ds.namespace,
++      });
+       destroyRequestsSubmitted.push({
+         desired_state_id: ds.id,
+         key_name: ds.key_name,
+diff --git a/arcanium/api/src/provisioner/key.js b/arcanium/api/src/provisioner/key.js
+index b9fbfe9..e5378cc 100644
+--- a/arcanium/api/src/provisioner/key.js
++++ b/arcanium/api/src/provisioner/key.js
+@@ -6,7 +6,12 @@
+ //   destroy — governance-gated: creates an approval_requests row, returns 202.
+ //             The key is only deleted after the approval resolves.
+ 
+-import { vaultRequest, getProvisionerToken } from "../vault.js";
++import {
++  vaultRequest,
++  getProvisionerToken,
++  getTransitKey,
++  getNamespaceTransitKey,
++} from "../vault.js";
+ import { query } from "../db.js";
+ import { runSteps } from "./steps.js";
+ import { cryptoOp } from "../telemetry/metrics.js";
+@@ -60,25 +65,78 @@ export async function rewrapCiphertext(name, ciphertext) {
+  * Governance-gated destroy. Does NOT delete the key — records an approval request
+  * and returns it. A separate approve step (+ Control Group where the key's
+  * namespace policy carries a control_group stanza) performs the actual deletion.
++ *
++ * Prompt 36 — previously attached every request's app_id to "the first
++ * registered application" (an FK-satisfying placeholder, never the key's
++ * real owner) — three separate modules (approval-execution.js's
++ * hasLiveDestroyIntent(), offboarding.js's approval resolution,
++ * aggregation/intent.js's governance view) each had to work around this
++ * with the same name-only matching this fix closes at the source. Callers
++ * that know their key's real owner (offboarding.js, engine.js's
++ * reconcileExpiryDate()) now pass it explicitly via appId; the one caller
++ * that doesn't (routes/keys.js's root-namespace key detail page) falls
++ * back to a root-namespace-only resolution — safe because that route only
++ * ever operates on root-namespace keys, so a same-named supplier-tenant
++ * key can never be picked instead — and refuses honestly (409) rather
++ * than mis-attaching when no such application exists.
+  */
+-export async function requestKeyDestroy(name, requester = "arcanium-operator") {
+-  // Find an application to attach the approval to (schema requires app_id).
+-  const { rows } = await query(
+-    "SELECT id FROM applications ORDER BY registered_at LIMIT 1",
+-  );
+-  const appId = rows[0]?.id;
+-  if (!appId) {
++export async function requestKeyDestroy(
++  name,
++  requester = "arcanium-operator",
++  { appId, namespace } = {},
++) {
++  let resolvedAppId = appId ?? null;
++  let resolvedSupplierId = null;
++
++  if (resolvedAppId) {
++    const { rows } = await query(
++      "SELECT supplier_id FROM applications WHERE id = $1",
++      [resolvedAppId],
++    );
++    resolvedSupplierId = rows[0]?.supplier_id ?? null;
++  } else {
++    const { rows } = await query(
++      `SELECT a.id, a.supplier_id FROM applications a
++         JOIN crypto_profiles cp ON cp.application_id = a.id
++        WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
++        ORDER BY cp.created_at ASC LIMIT 1`,
++      [name],
++    );
++    resolvedAppId = rows[0]?.id ?? null;
++    resolvedSupplierId = rows[0]?.supplier_id ?? null;
++  }
++  if (!resolvedAppId) {
+     const e = new Error(
+-      "no application registered to attach the destroy request to",
++      "no registered application owns this key — cannot attribute a destroy request to an application",
+     );
+     e.status = 409;
+     throw e;
+   }
++
++  // Prompt 36 — pin the key's live version at request time (read, not
++  // asserted). approval-execution.js re-checks this immediately before
++  // the actual delete; a mismatch means the key has changed (rotated, or
++  // destroyed and recreated under the same name) since this request was
++  // raised, and execution refuses rather than destroying a key that is
++  // no longer the one reviewed. A read failure here (key already gone,
++  // or a transient Vault error) leaves this NULL — approval-execution.js
++  // never treats NULL as "matches," so this can never authorize a delete
++  // on its own.
++  let pinnedKeyVersion = null;
++  try {
++    const meta = namespace
++      ? await getNamespaceTransitKey(namespace, name)
++      : await getTransitKey(name);
++    pinnedKeyVersion = meta?.latest_version ?? null;
++  } catch {
++    /* left NULL deliberately — see comment above */
++  }
++
+   const { rows: ap } = await query(
+-    `INSERT INTO approval_requests (app_id, key_name, action, requester, source)
+-     VALUES ($1,$2,'revoke',$3,'local')
++    `INSERT INTO approval_requests (app_id, key_name, action, requester, source, supplier_id, pinned_key_version)
++     VALUES ($1,$2,'revoke',$3,'local',$4,$5)
+      RETURNING id, key_name, action, status, created_at`,
+-    [appId, name, requester],
++    [resolvedAppId, name, requester, resolvedSupplierId, pinnedKeyVersion],
+   );
+   await query(
+     `INSERT INTO lifecycle_events (resource_type, resource_id, event, detail, source)
+diff --git a/arcanium/api/src/reconciliation/desiredState.js b/arcanium/api/src/reconciliation/desiredState.js
+index bbce339..6c14941 100644
+--- a/arcanium/api/src/reconciliation/desiredState.js
++++ b/arcanium/api/src/reconciliation/desiredState.js
+@@ -8,7 +8,7 @@
+ // always holds the current value + who/why set it; desired_state_history
+ // holds every value it held before that, each with its own who/why/groups.
+ 
+-import { query } from "../db.js";
++import { query, withTransaction } from "../db.js";
+ 
+ /**
+  * Create-or-update a desired_state row for (application_id, key_name, requirement).
+@@ -17,6 +17,14 @@ import { query } from "../db.js";
+  * provisioning with the same rotation_days must not manufacture fake intent
+  * history.
+  */
++// Prompt 36 — rewritten on withTransaction(): the previous version issued
++// BEGIN/SELECT…FOR UPDATE/INSERT/UPDATE/COMMIT as five separate query()
++// calls, each an independently pooled pool.query() that could land on a
++// different connection — meaning this was never actually one atomic
++// transaction, the FOR UPDATE lock protected nothing, and a stray BEGIN
++// could leave a pooled connection open-in-transaction indefinitely. Every
++// statement below now runs on the one client withTransaction() holds for
++// the whole callback.
+ export async function upsertDesiredState({
+   applicationId,
+   keyName,
+@@ -27,18 +35,16 @@ export async function upsertDesiredState({
+   changedGroups = [],
+   changedReason = null,
+ }) {
+-  await query("BEGIN");
+-  try {
+-    const { rows: existing } = await query(
++  return withTransaction(async (client) => {
++    const { rows: existing } = await client.query(
+       `SELECT * FROM desired_state
+         WHERE application_id = $1 AND key_name = $2 AND requirement = $3
+         FOR UPDATE`,
+       [applicationId, keyName, requirement],
+     );
+ 
+-    let result;
+     if (!existing.length) {
+-      const { rows } = await query(
++      const { rows } = await client.query(
+         `INSERT INTO desired_state
+            (application_id, key_name, requirement, desired_value, source, version, changed_by, changed_groups, changed_reason)
+          VALUES ($1,$2,$3,$4,$5,1,$6,$7,$8)
+@@ -54,51 +60,43 @@ export async function upsertDesiredState({
+           changedReason,
+         ],
+       );
+-      result = rows[0];
+-    } else {
+-      const prior = existing[0];
+-      const unchanged =
+-        JSON.stringify(prior.desired_value) === JSON.stringify(desiredValue);
+-      if (unchanged) {
+-        await query("COMMIT");
+-        return prior;
+-      }
+-      await query(
+-        `INSERT INTO desired_state_history
+-           (desired_state_id, version, desired_value, changed_by, changed_groups, changed_reason)
+-         VALUES ($1,$2,$3,$4,$5,$6)`,
+-        [
+-          prior.id,
+-          prior.version,
+-          JSON.stringify(prior.desired_value),
+-          prior.changed_by,
+-          prior.changed_groups ?? [],
+-          prior.changed_reason,
+-        ],
+-      );
+-      const { rows } = await query(
+-        `UPDATE desired_state
+-           SET desired_value = $2, version = version + 1, changed_by = $3,
+-               changed_groups = $4, changed_reason = $5, updated_at = now()
+-         WHERE id = $1
+-         RETURNING *`,
+-        [
+-          prior.id,
+-          JSON.stringify(desiredValue),
+-          changedBy,
+-          changedGroups,
+-          changedReason,
+-        ],
+-      );
+-      result = rows[0];
++      return rows[0];
+     }
+ 
+-    await query("COMMIT");
+-    return result;
+-  } catch (err) {
+-    await query("ROLLBACK").catch(() => {});
+-    throw err;
+-  }
++    const prior = existing[0];
++    const unchanged =
++      JSON.stringify(prior.desired_value) === JSON.stringify(desiredValue);
++    if (unchanged) return prior;
++
++    await client.query(
++      `INSERT INTO desired_state_history
++         (desired_state_id, version, desired_value, changed_by, changed_groups, changed_reason)
++       VALUES ($1,$2,$3,$4,$5,$6)`,
++      [
++        prior.id,
++        prior.version,
++        JSON.stringify(prior.desired_value),
++        prior.changed_by,
++        prior.changed_groups ?? [],
++        prior.changed_reason,
++      ],
++    );
++    const { rows } = await client.query(
++      `UPDATE desired_state
++         SET desired_value = $2, version = version + 1, changed_by = $3,
++             changed_groups = $4, changed_reason = $5, updated_at = now()
++       WHERE id = $1
++       RETURNING *`,
++      [
++        prior.id,
++        JSON.stringify(desiredValue),
++        changedBy,
++        changedGroups,
++        changedReason,
++      ],
++    );
++    return rows[0];
++  });
+ }
+ 
+ export async function getDesiredState(id) {
+diff --git a/arcanium/api/src/reconciliation/engine.js b/arcanium/api/src/reconciliation/engine.js
+index f9afde9..a793bb5 100644
+--- a/arcanium/api/src/reconciliation/engine.js
++++ b/arcanium/api/src/reconciliation/engine.js
+@@ -63,8 +63,15 @@ async function desiredStateRowsFor({ desiredStateId, supplierIds } = {}) {
+        FROM desired_state ds
+        JOIN applications a ON a.id = ds.application_id
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
++       -- Prompt 36 — was matched by application_id + type='transit' only,
++       -- never by key_name: an application with more than one transit
++       -- profile could pick a DIFFERENT key's vault_path than the one
++       -- ds.key_name actually names, feeding a wrong Vault path into
++       -- OBSERVERS/APPLIERS for this row. Matches offboarding.js's own
++       -- already-correct join pattern.
+        LEFT JOIN crypto_profiles cp
+          ON cp.application_id = ds.application_id AND cp.type = 'transit'
++        AND cp.vault_path LIKE '%/' || ds.key_name
+        ${where}
+       ORDER BY ds.application_id, ds.key_name`,
+     params,
+@@ -243,8 +250,10 @@ export async function reconcileRun(runId, { actor, actorGroups }) {
+        JOIN desired_state ds ON ds.id = rr.desired_state_id
+        JOIN applications a ON a.id = ds.application_id
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
++       -- Prompt 36 — same join fix as desiredStateRowsFor() above.
+        LEFT JOIN crypto_profiles cp
+          ON cp.application_id = ds.application_id AND cp.type = 'transit'
++        AND cp.vault_path LIKE '%/' || ds.key_name
+       WHERE rr.id = $1`,
+     [runId],
+   );
+@@ -358,10 +367,20 @@ async function reconcileExpiryDate(
+     "destroy_request approval submitted — awaiting four-eyes authorization before any Vault mutation";
+   let approval = null;
+   try {
+-    const keyName = desiredStateRow.vault_path
+-      ? desiredStateRow.vault_path.split("/").pop()
+-      : desiredStateRow.key_name;
+-    approval = await requestKeyDestroy(keyName, actor ?? "arcanium");
++    // Prompt 36 — desiredStateRow.key_name is always correct by
++    // construction (it's the row's own primary identity, no join
++    // involved) — previously this preferred deriving a name from
++    // vault_path instead, which could silently be a DIFFERENT key's path
++    // if the crypto_profiles join matched ambiguously (fixed above, but
++    // key_name never needed the join at all). applicationId/namespace are
++    // passed through explicitly too, closing the same "arbitrary
++    // placeholder application" gap as every other requestKeyDestroy()
++    // call site.
++    approval = await requestKeyDestroy(
++      desiredStateRow.key_name,
++      actor ?? "arcanium",
++      { appId: desiredStateRow.application_id, namespace: desiredStateRow.namespace },
++    );
+   } catch (err) {
+     result = "failed";
+     detail = err.message;
+diff --git a/arcanium/api/src/routes/evidence.js b/arcanium/api/src/routes/evidence.js
+index 5d12869..28e4679 100644
+--- a/arcanium/api/src/routes/evidence.js
++++ b/arcanium/api/src/routes/evidence.js
+@@ -75,7 +75,7 @@ evidenceRouter.get("/", async (req, res, next) => {
+       await query(
+         `SELECT a.updated_at AS ts, a.requester AS actor, a.source, a.action AS operation,
+                 'key' AS resource_type, a.key_name AS resource_id, NULL AS namespace,
+-                a.supplier_id,
++                a.supplier_id, a.executed_at,
+                 CASE a.status WHEN 'approved' THEN 'ok' WHEN 'rejected' THEN 'denied' ELSE 'ok' END AS outcome,
+                 'approval' AS origin, s.name AS supplier
+          FROM approval_requests a LEFT JOIN suppliers s ON s.id = a.supplier_id
+@@ -114,7 +114,29 @@ evidenceRouter.get("/", async (req, res, next) => {
+     // Tally every stage over the full scan window BEFORE the display slice, so
+     // the UI strip shows real totals even when recent encrypt traffic dominates.
+     const stage_counts = Object.fromEntries(KML_STAGES.map((s) => [s, 0]));
+-    for (const r of rows) stage_counts[r.lifecycle_stage]++;
++    for (const r of rows) {
++      // Prompt 36 — a "Destroy" classification previously counted toward
++      // this tally (and so the dashboard's "Destroy — Demonstrated"
++      // badge) the instant a revoke request was merely SUBMITTED or
++      // APPROVED, never requiring it to have actually been executed. Two
++      // real sources of that: an approval-origin row with no executed_at
++      // yet (still pending, or approved but approval-execution.js hasn't
++      // run it), and a lifecycle_events 'destroy.requested' row (recorded
++      // at request time, before any approval at all) — both real
++      // governance activity, correctly still shown in the evidence
++      // trail, but neither is proof a key was actually destroyed. Only a
++      // genuinely executed destroy (executed_at set, or the distinct
++      // 'key.destroyed' event approval-execution.js records once the
++      // Vault delete actually succeeds) counts here.
++      if (
++        r.lifecycle_stage === "Destroy" &&
++        ((r.origin === "approval" && !r.executed_at) ||
++          (r.origin === "orchestration" && r.operation === "destroy.requested"))
++      ) {
++        continue;
++      }
++      stage_counts[r.lifecycle_stage]++;
++    }
+ 
+     if (req.query.source)
+       rows = rows.filter((r) => r.source === req.query.source);
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index 874a11b..c01846d 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -29,13 +29,24 @@ export const keysRouter = Router();
+ // bug already fixed elsewhere in Prompts 18/19). Resolving it here fixes
+ // that gap as a direct byproduct of adding the env lookup this prompt
+ // requires, not a separate, deferred fix.
++// Prompt 36 — every route in this file (rotate/rewrap/destroy/detail) only
++// ever operates on ROOT-NAMESPACE keys (a supplier-tenant's own keys go
++// through routes/suppliers.js instead). This function's join previously
++// had no tenant filter at all: `cp.vault_path LIKE '%/' || $1 LIMIT 1`
++// could just as easily match a supplier tenant's crypto_profile for a
++// same-named key as a root-namespace one — an arbitrary pick, not a
++// tenant-safe one, feeding directly into the authorize() tenant/env
++// decision AND into requestKeyDestroy()'s app_id. `a.supplier_id IS NULL`
++// makes this query structurally incapable of matching a supplier-owned
++// application, closing the ambiguity rather than trying to disambiguate a
++// name collision after the fact.
+ async function ownerOfKey(name) {
+   const { rows } = await query(
+-    `SELECT s.vault_namespace, a.environment
++    `SELECT a.id AS application_id, s.vault_namespace, a.environment
+        FROM crypto_profiles cp
+        JOIN applications a ON a.id = cp.application_id
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
+-      WHERE cp.vault_path LIKE '%/' || $1
++      WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
+       LIMIT 1`,
+     [name],
+   );
+@@ -53,13 +64,20 @@ async function ownerOfKey(name) {
+ // directly by a workload's own Terraform-provisioned policy, never
+ // modeled through applications/crypto_profiles at all; see Prompt 33 Non-
+ // goals.
++// Prompt 36 — same root-namespace-only fix as ownerOfKey() above, for the
++// same reason. Without `a.supplier_id IS NULL`, a root-namespace key could
++// display a SUPPLIER TENANT'S application name/environment as its own
++// "Distribute" evidence whenever a same-named key happened to exist in
++// that tenant's namespace — a real cross-tenant information leak, not
++// just a display bug, since GET /keys/:name is estate-wide (no tenant
++// scope check of its own).
+ async function distributionOf(name) {
+   const { rows } = await query(
+     `SELECT a.name AS application, a.environment, s.vault_namespace AS namespace
+        FROM crypto_profiles cp
+        JOIN applications a ON a.id = cp.application_id
+        LEFT JOIN suppliers s ON s.id = a.supplier_id
+-      WHERE cp.vault_path LIKE '%/' || $1
++      WHERE cp.vault_path LIKE '%/' || $1 AND a.supplier_id IS NULL
+       LIMIT 1`,
+     [name],
+   );
+@@ -433,9 +451,14 @@ keysRouter.post("/:name/destroy", async (req, res, next) => {
+         action: "destroy_request",
+         reason: decision.reason,
+       });
++    // Prompt 36 — pass the already-resolved owning application through
++    // (ownerOfKey() just did this real work for the authorize() decision
++    // above) instead of letting requestKeyDestroy() re-resolve it, or fall
++    // back to an arbitrary placeholder.
+     const approval = await requestKeyDestroy(
+       name,
+       req.identity?.user ?? "arcanium-operator",
++      { appId: owner?.application_id },
+     );
+     res.status(202).json({
+       approval,
+diff --git a/arcanium/api/src/routes/reconciliation.js b/arcanium/api/src/routes/reconciliation.js
+index 6cc0d2d..40ac9d6 100644
+--- a/arcanium/api/src/routes/reconciliation.js
++++ b/arcanium/api/src/routes/reconciliation.js
+@@ -233,6 +233,52 @@ reconciliationRouter.post("/run", async (req, res, next) => {
+   }
+ });
+ 
++// Prompt 36 — desired_state's actual requirement types (mirrors
++// reconciliation/engine.js's OBSERVERS/APPLIERS/COMPARATORS registration —
++// not a schema CHECK constraint, so both the PATCH and POST routes below
++// validate against this the same way, rather than trusting the DB to
++// reject an unsupported requirement).
++const REQUIREMENTS = new Set(["rotation_period", "expiry_date"]);
++const NOT_AFTER_RE = /^\d{4}-\d{2}-\d{2}$/;
++const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
++
++// Shared by PATCH (editing an existing row, requirement fixed by the row
++// itself) and POST (creating a new row, requirement caller-supplied) —
++// found live while fixing PATCH: it validated only desired_value.days and
++// wrote {days} unconditionally, regardless of the row's own requirement.
++// Applied to an expiry_date row that would silently overwrite
++// {not_after: ...} with {days: N}, after which compareExpiryDate() can
++// only ever return UNKNOWN for that row again — one of the reasons the
++// destroy gate's expiry_date trigger has never been reachable through any
++// real, safe workflow. Returns an error string, or null when valid.
++function validateDesiredValue(requirement, desired_value) {
++  if (!REQUIREMENTS.has(requirement))
++    return `requirement must be one of: ${[...REQUIREMENTS].join(", ")}`;
++  if (!desired_value || typeof desired_value !== "object")
++    return "desired_value is required";
++  if (requirement === "rotation_period") {
++    if (!Number.isFinite(desired_value.days) || desired_value.days <= 0)
++      return "desired_value.days must be a positive number";
++    return null;
++  }
++  // expiry_date
++  if (
++    typeof desired_value.not_after !== "string" ||
++    !NOT_AFTER_RE.test(desired_value.not_after)
++  )
++    return "desired_value.not_after must be an ISO date string (YYYY-MM-DD)";
++  return null;
++}
++
++// Shape desired_value into exactly what upsertDesiredState() should store —
++// never the raw request body, so a caller can't smuggle extra keys into a
++// column the comparators (diff.js) key off precisely.
++function shapeDesiredValue(requirement, desired_value) {
++  return requirement === "rotation_period"
++    ? { days: desired_value.days }
++    : { not_after: desired_value.not_after };
++}
++
+ // PATCH /api/v1/reconciliation/desired-state/:id
+ // Edits the desired value itself (e.g. 30 days -> 90 days) — the write path
+ // the domain model in Deliverable 1 exists for (input/36's "who changed the
+@@ -267,23 +313,20 @@ reconciliationRouter.patch("/desired-state/:id", async (req, res, next) => {
+       });
+ 
+     const { desired_value, reason } = req.body ?? {};
+-    if (
+-      !desired_value ||
+-      typeof desired_value !== "object" ||
+-      !Number.isFinite(desired_value.days) ||
+-      desired_value.days <= 0
+-    ) {
+-      return res.status(400).json({
+-        error: "desired_value.days must be a positive number",
+-        field: "desired_value",
+-      });
+-    }
++    const validationError = validateDesiredValue(
++      existing.requirement,
++      desired_value,
++    );
++    if (validationError)
++      return res
++        .status(400)
++        .json({ error: validationError, field: "desired_value" });
+ 
+     const updated = await upsertDesiredState({
+       applicationId: existing.application_id,
+       keyName: existing.key_name,
+       requirement: existing.requirement,
+-      desiredValue: { days: desired_value.days },
++      desiredValue: shapeDesiredValue(existing.requirement, desired_value),
+       source: "operator",
+       changedBy: req.identity?.user ?? "arcanium",
+       changedGroups: req.identity?.groups ?? [],
+@@ -295,6 +338,94 @@ reconciliationRouter.patch("/desired-state/:id", async (req, res, next) => {
+   }
+ });
+ 
++// POST /api/v1/reconciliation/desired-state — Prompt 36.
++//
++// Creates (or updates, via the same upsert) a desired_state row for any
++// requirement type. Found live during the full lifecycle audit: no API
++// path could create an expiry_date row at all — provisionApplication()
++// only ever seeds rotation_period, and PATCH only edits an id that already
++// exists — meaning the destroy gate's primary trigger
++// (hasLiveDestroyIntent()'s expiry_date branch) was untested by any
++// supported workflow. This is the minimal write path that closes that,
++// reusing upsertDesiredState() as-is rather than a second creation
++// mechanism.
++reconciliationRouter.post("/desired-state", async (req, res, next) => {
++  try {
++    const { application_id, key_name, requirement, desired_value, reason } =
++      req.body ?? {};
++    if (!application_id || !UUID_RE.test(application_id))
++      return res
++        .status(400)
++        .json({ error: "application_id is required (UUID)", field: "application_id" });
++    if (!key_name || !KEY_NAME_RE.test(key_name))
++      return res
++        .status(400)
++        .json({ error: "key_name is required", field: "key_name" });
++    const validationError = validateDesiredValue(requirement, desired_value);
++    if (validationError)
++      return res
++        .status(400)
++        .json({ error: validationError, field: "desired_value" });
++
++    const { rows: appRows } = await query(
++      `SELECT a.id, a.supplier_id, a.environment, s.vault_namespace
++         FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
++        WHERE a.id = $1`,
++      [application_id],
++    );
++    if (!appRows.length) return next(notFound());
++    const scope = await tenantScope(req);
++    if (scope.scoped && !scope.supplierIds.includes(appRows[0].supplier_id))
++      return next(notFound());
++    const decision = authorize({
++      identity: req.identity,
++      action: "provision",
++      tenant: appRows[0].vault_namespace ?? null,
++      env: appRows[0].environment ?? null,
++    });
++    if (decision.decision !== "ALLOW")
++      return res.status(403).json({
++        error: "forbidden",
++        action: "provision",
++        reason: decision.reason,
++      });
++
++    // The key must genuinely belong to this application — never declare
++    // policy intent (let alone a destroy-triggering expiry_date) against a
++    // key_name typo or a key this application doesn't actually own. Same
++    // vault_path-suffix match used everywhere else a key_name is resolved
++    // through crypto_profiles (offboarding.js, engine.js).
++    const { rows: cpRows } = await query(
++      `SELECT 1 FROM crypto_profiles
++        WHERE application_id = $1 AND vault_path LIKE '%/' || $2`,
++      [application_id, key_name],
++    );
++    if (!cpRows.length)
++      return res.status(404).json({
++        error:
++          "no crypto profile for this key_name on this application — nothing to declare policy against",
++      });
++
++    const created = await upsertDesiredState({
++      applicationId: application_id,
++      keyName: key_name,
++      requirement,
++      desiredValue: shapeDesiredValue(requirement, desired_value),
++      source: "operator",
++      changedBy: req.identity?.user ?? "arcanium",
++      changedGroups: req.identity?.groups ?? [],
++      changedReason: reason ?? null,
++    });
++    res.status(201).json(created);
++  } catch (err) {
++    if (err.code === "23505")
++      return res
++        .status(409)
++        .json({ error: "a desired_state row for this application/key/requirement already exists" });
++    next(err);
++  }
++});
++
+ // GET /api/v1/reconciliation/:run_id
+ reconciliationRouter.get("/:run_id", async (req, res, next) => {
+   try {
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index fd34053..92c9364 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -2711,6 +2711,69 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/api/v1/reconciliation/desired-state": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        /** Create (or update, via the same upsert) a desired_state row for any requirement type */
++        post: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path?: never;
++                cookie?: never;
++            };
++            requestBody?: {
++                content: {
++                    "application/json": {
++                        /** Format: uuid */
++                        application_id: string;
++                        key_name: string;
++                        /** @enum {string} */
++                        requirement: "rotation_period" | "expiry_date";
++                        /** @description {days: number} for rotation_period; {not_after: 'YYYY-MM-DD'} for expiry_date */
++                        desired_value: Record<string, never>;
++                        reason?: string;
++                    };
++                };
++            };
++            responses: {
++                /** @description Created (or updated, if an identical row already existed) */
++                201: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                400: components["responses"]["BadRequest"];
++                403: components["responses"]["Forbidden"];
++                /** @description Application not found, or no crypto profile for this key_name on this application */
++                404: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++                /** @description Concurrent creation of the same application/key/requirement row */
++                409: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
++                };
++            };
++        };
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/api/v1/reconciliation/desired-state/{id}": {
+         parameters: {
+             query?: never;
+@@ -2739,9 +2802,8 @@ export interface paths {
+             requestBody?: {
+                 content: {
+                     "application/json": {
+-                        desired_value: {
+-                            days?: number;
+-                        };
++                        /** @description Must match the row's own requirement: {days: number} for rotation_period, {not_after: 'YYYY-MM-DD'} for expiry_date */
++                        desired_value: Record<string, never>;
+                         reason?: string;
+                     };
+                 };
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 4441d12..323a1b9 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -1473,6 +1473,34 @@ paths:
+   # generic /:run_id routes, so "desired-state" is matched literally,
+   # never captured as a run_id. Documented, not restructured — Deliverable
+   # 1 is capture-then-enforce, not a redesign of an unambiguous real API.
++  # Prompt 36 — no route to CREATE a desired_state row for anything other
++  # than rotation_period (seeded implicitly at provisioning time) existed
++  # before this. Registered before desired-state/{id} in
++  # reconciliationRouter (a different path shape — no literal-vs-param
++  # ambiguity the way {id}/{run_id} had).
++  /api/v1/reconciliation/desired-state:
++    post:
++      summary: Create (or update, via the same upsert) a desired_state row for any requirement type
++      requestBody:
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                application_id: { type: string, format: uuid }
++                key_name: { type: string }
++                requirement: { type: string, enum: [rotation_period, expiry_date] }
++                desired_value:
++                  type: object
++                  description: "{days: number} for rotation_period; {not_after: 'YYYY-MM-DD'} for expiry_date"
++                reason: { type: string }
++              required: [application_id, key_name, requirement, desired_value]
++      responses:
++        "201": { description: "Created (or updated, if an identical row already existed)" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { description: "Application not found, or no crypto profile for this key_name on this application" }
++        "409": { description: "Concurrent creation of the same application/key/requirement row" }
+   /api/v1/reconciliation/desired-state/{id}:
+     parameters:
+       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+@@ -1484,7 +1512,9 @@ paths:
+             schema:
+               type: object
+               properties:
+-                desired_value: { type: object, properties: { days: { type: number } } }
++                desired_value:
++                  type: object
++                  description: "Must match the row's own requirement: {days: number} for rotation_period, {not_after: 'YYYY-MM-DD'} for expiry_date"
+                 reason: { type: string }
+               required: [desired_value]
+       responses:
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index 118f4a9..62f441f 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -643,6 +643,60 @@ else
+   unk "Prompt 33 key lifecycle evidence checks — identity stack/API not reachable"
+ fi
+ 
++echo "== Prompt 36 — Destroy-Path Safety and Correctness =="
++echo
++
++# Static checks only, deliberately — same reasoning as Prompt 29's own
++# section above: a live end-to-end proof of every scenario here (cross-
++# tenant resolution, pinned-version refusal, the concurrency claim) was
++# performed manually against real, disposable fixture keys and applications
++# during this prompt's own execution (two disposable apps — one root, one
++# suppliers/pepsi — a deliberately-planted decoy crypto_profiles row
++# manufacturing a real cross-tenant key-name collision, a live rotation to
++# force a pinned-version mismatch, and two racing psql transactions against
++# the actual FOR UPDATE SKIP LOCKED claim query), all cleaned up afterward
++# with zero trace left in Vault or Postgres. Not repeated here as an
++# automated fitness test for the same reason Prompt 29's own destroy proof
++# isn't: a test that destroys real Vault keys on every CI run is exactly
++# the risk this prompt exists to reduce.
++if grep -q "async function resolveKeyLocation(appId, keyName)" arcanium/api/src/approval-execution.js &&
++  grep -q "FOR UPDATE SKIP LOCKED" arcanium/api/src/approval-execution.js; then
++  ok "resolveKeyLocation() is scoped by the approval's own app_id, not an estate-wide key-name search"
++else
++  bad "resolveKeyLocation() no longer takes appId, or executeApprovedDestroys() lost its FOR UPDATE SKIP LOCKED claim"
++fi
++
++if grep -q "pinned_key_version" arcanium/api/src/approval-execution.js &&
++  grep -q "pinned_key_version" arcanium/api/src/provisioner/key.js; then
++  ok "a destroy request's key version is pinned at request time and re-checked before execution"
++else
++  bad "the pinned-version safety check is missing from approval-execution.js or provisioner/key.js"
++fi
++
++if grep -q "wasAlreadyDeletable" arcanium/api/src/approval-execution.js; then
++  ok "destroyTransitKey() reads live deletion_allowed before mutating it, and restores it on a failed delete"
++else
++  bad "destroyTransitKey() no longer checks/restores deletion_allowed — may force-strip protection on failure"
++fi
++
++if grep -q "hasLiveDestroyIntent(req.key_name, req.app_id)" arcanium/api/src/approval-execution.js; then
++  ok "hasLiveDestroyIntent() is scoped to the approval's own application, not a name-only match across every tenant"
++else
++  bad "hasLiveDestroyIntent() no longer takes an application id — offboarding-branch cross-tenant gap may have returned"
++fi
++
++if grep -q "r.origin === \"orchestration\" && r.operation === \"destroy.requested\"" arcanium/api/src/routes/evidence.js; then
++  ok "the dashboard's Destroy stage tally excludes merely-requested/unexecuted revoke rows"
++else
++  bad "routes/evidence.js may again count a pending/unexecuted destroy request as Destroy-stage evidence"
++fi
++
++if grep -q "reconciliationRouter.post(\"/desired-state\"" arcanium/api/src/routes/reconciliation.js; then
++  ok "a real write path exists to create an expiry_date desired_state row (the destroy gate's primary trigger)"
++else
++  bad "POST /reconciliation/desired-state is missing — the expiry_date trigger has no supported creation path again"
++fi
++
+ echo
+ TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+diff --git a/state/CURRENT b/state/CURRENT
+index a9d1f6e..ef8ba65 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-35-ssr-hydration-mismatch
++state/baselines/2026-09-13_pre-prompt-36-destroy-path-safety

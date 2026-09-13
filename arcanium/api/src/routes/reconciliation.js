@@ -233,6 +233,52 @@ reconciliationRouter.post("/run", async (req, res, next) => {
   }
 });
 
+// Prompt 36 — desired_state's actual requirement types (mirrors
+// reconciliation/engine.js's OBSERVERS/APPLIERS/COMPARATORS registration —
+// not a schema CHECK constraint, so both the PATCH and POST routes below
+// validate against this the same way, rather than trusting the DB to
+// reject an unsupported requirement).
+const REQUIREMENTS = new Set(["rotation_period", "expiry_date"]);
+const NOT_AFTER_RE = /^\d{4}-\d{2}-\d{2}$/;
+const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
+
+// Shared by PATCH (editing an existing row, requirement fixed by the row
+// itself) and POST (creating a new row, requirement caller-supplied) —
+// found live while fixing PATCH: it validated only desired_value.days and
+// wrote {days} unconditionally, regardless of the row's own requirement.
+// Applied to an expiry_date row that would silently overwrite
+// {not_after: ...} with {days: N}, after which compareExpiryDate() can
+// only ever return UNKNOWN for that row again — one of the reasons the
+// destroy gate's expiry_date trigger has never been reachable through any
+// real, safe workflow. Returns an error string, or null when valid.
+function validateDesiredValue(requirement, desired_value) {
+  if (!REQUIREMENTS.has(requirement))
+    return `requirement must be one of: ${[...REQUIREMENTS].join(", ")}`;
+  if (!desired_value || typeof desired_value !== "object")
+    return "desired_value is required";
+  if (requirement === "rotation_period") {
+    if (!Number.isFinite(desired_value.days) || desired_value.days <= 0)
+      return "desired_value.days must be a positive number";
+    return null;
+  }
+  // expiry_date
+  if (
+    typeof desired_value.not_after !== "string" ||
+    !NOT_AFTER_RE.test(desired_value.not_after)
+  )
+    return "desired_value.not_after must be an ISO date string (YYYY-MM-DD)";
+  return null;
+}
+
+// Shape desired_value into exactly what upsertDesiredState() should store —
+// never the raw request body, so a caller can't smuggle extra keys into a
+// column the comparators (diff.js) key off precisely.
+function shapeDesiredValue(requirement, desired_value) {
+  return requirement === "rotation_period"
+    ? { days: desired_value.days }
+    : { not_after: desired_value.not_after };
+}
+
 // PATCH /api/v1/reconciliation/desired-state/:id
 // Edits the desired value itself (e.g. 30 days -> 90 days) — the write path
 // the domain model in Deliverable 1 exists for (input/36's "who changed the
@@ -267,23 +313,20 @@ reconciliationRouter.patch("/desired-state/:id", async (req, res, next) => {
       });
 
     const { desired_value, reason } = req.body ?? {};
-    if (
-      !desired_value ||
-      typeof desired_value !== "object" ||
-      !Number.isFinite(desired_value.days) ||
-      desired_value.days <= 0
-    ) {
-      return res.status(400).json({
-        error: "desired_value.days must be a positive number",
-        field: "desired_value",
-      });
-    }
+    const validationError = validateDesiredValue(
+      existing.requirement,
+      desired_value,
+    );
+    if (validationError)
+      return res
+        .status(400)
+        .json({ error: validationError, field: "desired_value" });
 
     const updated = await upsertDesiredState({
       applicationId: existing.application_id,
       keyName: existing.key_name,
       requirement: existing.requirement,
-      desiredValue: { days: desired_value.days },
+      desiredValue: shapeDesiredValue(existing.requirement, desired_value),
       source: "operator",
       changedBy: req.identity?.user ?? "arcanium",
       changedGroups: req.identity?.groups ?? [],
@@ -291,6 +334,96 @@ reconciliationRouter.patch("/desired-state/:id", async (req, res, next) => {
     });
     res.json(updated);
   } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/reconciliation/desired-state — Prompt 36.
+//
+// Creates (or updates, via the same upsert) a desired_state row for any
+// requirement type. Found live during the full lifecycle audit: no API
+// path could create an expiry_date row at all — provisionApplication()
+// only ever seeds rotation_period, and PATCH only edits an id that already
+// exists — meaning the destroy gate's primary trigger
+// (hasLiveDestroyIntent()'s expiry_date branch) was untested by any
+// supported workflow. This is the minimal write path that closes that,
+// reusing upsertDesiredState() as-is rather than a second creation
+// mechanism.
+reconciliationRouter.post("/desired-state", async (req, res, next) => {
+  try {
+    const { application_id, key_name, requirement, desired_value, reason } =
+      req.body ?? {};
+    if (!application_id || !UUID_RE.test(application_id))
+      return res.status(400).json({
+        error: "application_id is required (UUID)",
+        field: "application_id",
+      });
+    if (!key_name || !KEY_NAME_RE.test(key_name))
+      return res
+        .status(400)
+        .json({ error: "key_name is required", field: "key_name" });
+    const validationError = validateDesiredValue(requirement, desired_value);
+    if (validationError)
+      return res
+        .status(400)
+        .json({ error: validationError, field: "desired_value" });
+
+    const { rows: appRows } = await query(
+      `SELECT a.id, a.supplier_id, a.environment, s.vault_namespace
+         FROM applications a LEFT JOIN suppliers s ON s.id = a.supplier_id
+        WHERE a.id = $1`,
+      [application_id],
+    );
+    if (!appRows.length) return next(notFound());
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(appRows[0].supplier_id))
+      return next(notFound());
+    const decision = authorize({
+      identity: req.identity,
+      action: "provision",
+      tenant: appRows[0].vault_namespace ?? null,
+      env: appRows[0].environment ?? null,
+    });
+    if (decision.decision !== "ALLOW")
+      return res.status(403).json({
+        error: "forbidden",
+        action: "provision",
+        reason: decision.reason,
+      });
+
+    // The key must genuinely belong to this application — never declare
+    // policy intent (let alone a destroy-triggering expiry_date) against a
+    // key_name typo or a key this application doesn't actually own. Same
+    // vault_path-suffix match used everywhere else a key_name is resolved
+    // through crypto_profiles (offboarding.js, engine.js).
+    const { rows: cpRows } = await query(
+      `SELECT 1 FROM crypto_profiles
+        WHERE application_id = $1 AND vault_path LIKE '%/' || $2`,
+      [application_id, key_name],
+    );
+    if (!cpRows.length)
+      return res.status(404).json({
+        error:
+          "no crypto profile for this key_name on this application — nothing to declare policy against",
+      });
+
+    const created = await upsertDesiredState({
+      applicationId: application_id,
+      keyName: key_name,
+      requirement,
+      desiredValue: shapeDesiredValue(requirement, desired_value),
+      source: "operator",
+      changedBy: req.identity?.user ?? "arcanium",
+      changedGroups: req.identity?.groups ?? [],
+      changedReason: reason ?? null,
+    });
+    res.status(201).json(created);
+  } catch (err) {
+    if (err.code === "23505")
+      return res.status(409).json({
+        error:
+          "a desired_state row for this application/key/requirement already exists",
+      });
     next(err);
   }
 });
