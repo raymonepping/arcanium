@@ -1,0 +1,12 @@
+ M CHANGELOG.md
+ M Makefile
+ M arcanium/api/openapi/arcanium.yaml
+ M arcanium/api/src/routes/applications.js
+ M arcanium/api/src/routes/health.js
+ M arcanium/api/src/vault.js
+ M openapi/arcanium.yaml
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M state/CURRENT
+?? arcanium/api/src/migrations/025_evidence_survives_app_delete.sql
+?? scripts/clean-slate.sh
+?? state/baselines/2026-09-13_pre-prompt-42-review-findings/

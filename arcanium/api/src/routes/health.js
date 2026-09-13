@@ -1,7 +1,7 @@
 // routes/health.js — liveness, readiness and full status endpoints.
 
 import { Router } from "express";
-import { getStatus } from "../vault.js";
+import { getStatus, checkDbLeaseTtl } from "../vault.js";
 import { ping } from "../db.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -32,22 +32,34 @@ healthRouter.get("/ready", async (_req, res) => {
       .json({ status: "unavailable", reason: "vault not authenticated" });
   }
   // Prompt 29 — catch a wedged rotation BEFORE the credential actually
-  // expires, not only after ping() starts failing. Prompt 30: under
-  // Vault-Agent-managed rotation, "expiry imminent" is sufficient on its
-  // own — arcanium-vault-agent's own auth/render retry state is not
-  // observable from this process (by design, see vault.js's own header),
-  // so requiring a paired lastDbRotationError here (Prompt 29's original
-  // condition) would never fire under this architecture even when
-  // genuinely stale. If Agent is doing its job the file refreshes well
-  // before expiry; imminent expiry alone already means it hasn't.
-  const expirySoon =
-    vaultState.dbCredsExpiry &&
-    new Date(vaultState.dbCredsExpiry).getTime() - Date.now() < 60_000;
-  if (expirySoon) {
+  // expires, not only after ping() starts failing.
+  // Prompt 42 — found live: the original check inferred expiry from a
+  // locally-computed dbCredsExpiry (fileWriteTime + lease_duration),
+  // which never updates while Agent silently renews the SAME lease in
+  // place — the file only changes when a genuinely NEW credential is
+  // issued. That made this fire on a credential that was, in Vault's own
+  // real record, nowhere near expiring (confirmed live: arcanium-api sat
+  // `unhealthy` for hours with a FailingStreak in the hundreds while
+  // every actual query succeeded). checkDbLeaseTtl() asks Vault directly
+  // for the lease's real remaining TTL, which correctly reflects Agent's
+  // renewals since it's the same lease_id being renewed. A failed lease
+  // check (Vault unreachable, or no lease_id captured yet) is "could not
+  // verify," not "confirmed stale" — it falls through to ping(), the
+  // actual, definitive check, rather than fabricating unhealthy from a
+  // failed side-check.
+  const lease = await checkDbLeaseTtl();
+  const leaseExpiringSoon = lease.ttlSeconds !== null && lease.ttlSeconds < 60;
+  // A rotation the API itself failed to pick up (Agent rendered a new
+  // credential, but rotateCreds() threw) is a real, evidenced problem —
+  // unlike the removed heuristic above, this is never fabricated: it's
+  // only ever set from an actual caught error re-reading/rotating.
+  if (leaseExpiringSoon || vaultState.lastDbRotationError) {
     return res.status(503).json({
       status: "unavailable",
-      reason: "db credential expires soon with no fresher render observed",
-      dbCredsExpiry: vaultState.dbCredsExpiry,
+      reason: leaseExpiringSoon
+        ? "db credential lease has under 60s of real TTL remaining (live Vault lookup)"
+        : "the last database credential rotation attempt failed",
+      leaseTtlSeconds: lease.ttlSeconds,
       ...(vaultState.lastDbRotationError
         ? { lastDbRotationError: vaultState.lastDbRotationError }
         : {}),
@@ -79,6 +91,11 @@ healthRouter.get("/", async (_req, res) => {
     dbError = err.message;
   }
 
+  // Prompt 42 — the live Vault lease TTL, alongside the locally-computed
+  // (and, per its own comment in vault.js, sometimes stale) dbCredsExpiry
+  // estimate — a human comparing the two here can see the gap directly.
+  const lease = await checkDbLeaseTtl();
+
   const healthy = vaultState.authenticated && dbReachable;
   const status = healthy ? 200 : 503;
 
@@ -103,6 +120,8 @@ healthRouter.get("/", async (_req, res) => {
       reachable: dbReachable,
       latencyMs: dbLatencyMs,
       dbCredsExpiry: vaultState.dbCredsExpiry,
+      leaseTtlSeconds: lease.ttlSeconds,
+      ...(lease.error ? { leaseCheckError: lease.error } : {}),
       lastDbRotationAt: vaultState.lastDbRotationAt,
       ...(vaultState.lastDbRotationError
         ? { lastDbRotationError: vaultState.lastDbRotationError }

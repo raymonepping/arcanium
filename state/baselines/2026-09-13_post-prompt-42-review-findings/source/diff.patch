@@ -1,0 +1,364 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f2b9d77..edeb300 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Fixed
+ 
++- Four findings from a fresh, independently-run review with no prior
++  project context (Prompt 42), all confirmed live before and after:
++  - **False "unhealthy" readiness.** `arcanium-api` had been sitting
++    `unhealthy` in `podman ps` for hours at a stretch (confirmed live:
++    `FailingStreak: 232`) while fully functional the whole time.
++    `/health/ready` inferred credential staleness from a locally-computed
++    `fileWriteTime + lease_duration`, on the assumption that Vault
++    Agent's template re-renders before the credential goes stale — false:
++    Agent renews the same lease in place, silently, for hours; the
++    template only re-renders on a genuinely new credential. Fixed by
++    asking Vault directly (`sys/leases/lookup`, using the `lease_id`
++    the template already rendered but never used) for the lease's real,
++    continuously-accurate TTL — verified live with arcanium-api's own
++    real AppRole token, not root. Cached 30s to avoid a live Vault call
++    on every readiness poll.
++  - **`DELETE /api/v1/applications/:id` destroyed governance history.**
++    `approval_requests.app_id` was `ON DELETE CASCADE` — reproduced live
++    with a disposable fixture: an approved destroy request (including
++    its real Vault Control Group authorization) vanished with the
++    application, no trace. `desired_state.application_id` had no
++    `ON DELETE` clause, so an application WITH reconciliation history
++    instead failed the delete outright. Both foreign keys are now
++    `ON DELETE SET NULL` (migration `025`) — checked first that
++    `scenarios/17_terraform_provider`'s `terraform destroy` relies on
++    this route succeeding for a fresh, no-history application, so the
++    fix couldn't be "require offboarding first." Reproduced the original
++    bug, then reran the identical fixture after the fix: the approval
++    row now survives, every column intact, only the dangling app link
++    nulled.
++  - **OpenAPI mislabeled that route "Deprovision."** Corrected to
++    describe what it actually does (registry-only, no Vault
++    interaction, history-preserving) and points to the real governed
++    teardown, `POST /:id/offboard`.
++  - **The fitness suite's "no hard-delete of evidence" check was
++    source-text only** and structurally couldn't see the schema-level
++    cascade above — it passed the whole time that bug was live. Added a
++    schema-aware companion check (`pg_constraint`, live against the
++    running database) that queries for exactly this class of bug instead
++    of grepping for a literal `DELETE FROM` statement.
++  - Full regression green: fitness suite (39/0/0 — the only suite that's
++    ever been fully clean twice in a row), negative-auth (31/0),
++    terraform-provider scenario (8/0, confirming the no-history case is
++    unaffected), verify-stack (53/1/0, `arcanium-api` now genuinely
++    reporting healthy). State captured pre/post.
++
+ - The last two tolerated items on the board (Prompt 41), both traced to
+   the same root cause. `payments-api-key`'s `rotation_period`
+   desired_state row (`{days: 30}`) had sat DRIFTED against Vault's real
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index adcde03..0c99395 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -773,7 +773,15 @@ paths:
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "404": { $ref: "#/components/responses/NotFound" }
+     delete:
+-      summary: Deprovision the application (Prompt 19 — previously completely unguarded)
++      summary: "Delete the application's registry record only (Prompt 19 — previously completely unguarded; Prompt 42 — corrected description)"
++      description: >-
++        Registry-only delete: removes the applications row and its
++        crypto_profiles. Never touches Vault — no Transit key, PKI role, or
++        AppRole/policy is removed. Approval and reconciliation history for
++        this application survives (app_id/application_id is set to null on
++        those rows, never cascade-deleted). For a governed teardown that
++        also cleans up Vault-side resources, use
++        POST /api/v1/applications/{id}/offboard instead.
+       responses:
+         "204": { description: Deleted }
+         "401": { $ref: "#/components/responses/Unauthorized" }
+diff --git a/arcanium/api/src/routes/applications.js b/arcanium/api/src/routes/applications.js
+index 7297819..6a828e3 100644
+--- a/arcanium/api/src/routes/applications.js
++++ b/arcanium/api/src/routes/applications.js
+@@ -310,6 +310,18 @@ applicationsRouter.patch("/:id", async (req, res, next) => {
+ // stays within the matrix's ordinary "limited" destroy_request semantics —
+ // a supplier-admin may delete their own tenant's application, not
+ // arbitrary ones.
++//
++// Prompt 42 — this is a REGISTRY-ONLY delete, found live (independent
++// review) to be mislabeled in openapi/arcanium.yaml as "Deprovision,"
++// implying Vault-side cleanup that never happened here — this route
++// never touches Vault at all; POST /:id/offboard is the real governed
++// teardown. crypto_profiles cascades away with the application (a
++// deliberate, existing decision — live configuration, not history).
++// approval_requests/desired_state used to cascade/RESTRICT respectively;
++// migration 025 makes both ON DELETE SET NULL instead, so an
++// application's governance and reconciliation history survives its own
++// deletion (every column intact, only the now-dangling application link
++// nulled) rather than being silently destroyed or blocking the delete.
+ applicationsRouter.delete("/:id", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
+diff --git a/arcanium/api/src/routes/health.js b/arcanium/api/src/routes/health.js
+index 1ff3794..3c47d17 100644
+--- a/arcanium/api/src/routes/health.js
++++ b/arcanium/api/src/routes/health.js
+@@ -1,7 +1,7 @@
+ // routes/health.js — liveness, readiness and full status endpoints.
+ 
+ import { Router } from "express";
+-import { getStatus } from "../vault.js";
++import { getStatus, checkDbLeaseTtl } from "../vault.js";
+ import { ping } from "../db.js";
+ import { readFileSync } from "node:fs";
+ import { fileURLToPath } from "node:url";
+@@ -32,22 +32,35 @@ healthRouter.get("/ready", async (_req, res) => {
+       .json({ status: "unavailable", reason: "vault not authenticated" });
+   }
+   // Prompt 29 — catch a wedged rotation BEFORE the credential actually
+-  // expires, not only after ping() starts failing. Prompt 30: under
+-  // Vault-Agent-managed rotation, "expiry imminent" is sufficient on its
+-  // own — arcanium-vault-agent's own auth/render retry state is not
+-  // observable from this process (by design, see vault.js's own header),
+-  // so requiring a paired lastDbRotationError here (Prompt 29's original
+-  // condition) would never fire under this architecture even when
+-  // genuinely stale. If Agent is doing its job the file refreshes well
+-  // before expiry; imminent expiry alone already means it hasn't.
+-  const expirySoon =
+-    vaultState.dbCredsExpiry &&
+-    new Date(vaultState.dbCredsExpiry).getTime() - Date.now() < 60_000;
+-  if (expirySoon) {
++  // expires, not only after ping() starts failing.
++  // Prompt 42 — found live: the original check inferred expiry from a
++  // locally-computed dbCredsExpiry (fileWriteTime + lease_duration),
++  // which never updates while Agent silently renews the SAME lease in
++  // place — the file only changes when a genuinely NEW credential is
++  // issued. That made this fire on a credential that was, in Vault's own
++  // real record, nowhere near expiring (confirmed live: arcanium-api sat
++  // `unhealthy` for hours with a FailingStreak in the hundreds while
++  // every actual query succeeded). checkDbLeaseTtl() asks Vault directly
++  // for the lease's real remaining TTL, which correctly reflects Agent's
++  // renewals since it's the same lease_id being renewed. A failed lease
++  // check (Vault unreachable, or no lease_id captured yet) is "could not
++  // verify," not "confirmed stale" — it falls through to ping(), the
++  // actual, definitive check, rather than fabricating unhealthy from a
++  // failed side-check.
++  const lease = await checkDbLeaseTtl();
++  const leaseExpiringSoon =
++    lease.ttlSeconds !== null && lease.ttlSeconds < 60;
++  // A rotation the API itself failed to pick up (Agent rendered a new
++  // credential, but rotateCreds() threw) is a real, evidenced problem —
++  // unlike the removed heuristic above, this is never fabricated: it's
++  // only ever set from an actual caught error re-reading/rotating.
++  if (leaseExpiringSoon || vaultState.lastDbRotationError) {
+     return res.status(503).json({
+       status: "unavailable",
+-      reason: "db credential expires soon with no fresher render observed",
+-      dbCredsExpiry: vaultState.dbCredsExpiry,
++      reason: leaseExpiringSoon
++        ? "db credential lease has under 60s of real TTL remaining (live Vault lookup)"
++        : "the last database credential rotation attempt failed",
++      leaseTtlSeconds: lease.ttlSeconds,
+       ...(vaultState.lastDbRotationError
+         ? { lastDbRotationError: vaultState.lastDbRotationError }
+         : {}),
+@@ -79,6 +92,11 @@ healthRouter.get("/", async (_req, res) => {
+     dbError = err.message;
+   }
+ 
++  // Prompt 42 — the live Vault lease TTL, alongside the locally-computed
++  // (and, per its own comment in vault.js, sometimes stale) dbCredsExpiry
++  // estimate — a human comparing the two here can see the gap directly.
++  const lease = await checkDbLeaseTtl();
++
+   const healthy = vaultState.authenticated && dbReachable;
+   const status = healthy ? 200 : 503;
+ 
+@@ -103,6 +121,8 @@ healthRouter.get("/", async (_req, res) => {
+       reachable: dbReachable,
+       latencyMs: dbLatencyMs,
+       dbCredsExpiry: vaultState.dbCredsExpiry,
++      leaseTtlSeconds: lease.ttlSeconds,
++      ...(lease.error ? { leaseCheckError: lease.error } : {}),
+       lastDbRotationAt: vaultState.lastDbRotationAt,
+       ...(vaultState.lastDbRotationError
+         ? { lastDbRotationError: vaultState.lastDbRotationError }
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index 8b4a2fc..460b89b 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -101,6 +101,7 @@ const state = {
+   token: null,
+   dbCreds: null,
+   dbCredsExpiry: null,
++  dbCredsLeaseId: null,
+   // Prompt 30 — "authenticated" now means "we have successfully read a
+   // non-empty token from Agent's sink file at least once," not "this
+   // process itself completed an AppRole login." tokenExpiry/loginAttempts
+@@ -179,6 +180,7 @@ export async function init() {
+   const creds = readDbCredsFile();
+   state.dbCreds = { username: creds.username, password: creds.password };
+   state.dbCredsExpiry = new Date(Date.now() + creds.lease_duration * 1000);
++  state.dbCredsLeaseId = creds.lease_id ?? null;
+   state.lastDbRotationAt = new Date();
+   console.log(
+     `[vault] db credentials read from arcanium-vault-agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
+@@ -218,6 +220,7 @@ export async function init() {
+         await rotateCreds(next.username, next.password);
+         state.dbCreds = { username: next.username, password: next.password };
+         state.dbCredsExpiry = new Date(Date.now() + next.lease_duration * 1000);
++        state.dbCredsLeaseId = next.lease_id ?? null;
+         state.lastDbRotationAt = new Date();
+         state.lastDbRotationError = null;
+         console.log(
+@@ -237,10 +240,71 @@ export function getDbCredentials() {
+   return state.dbCreds;
+ }
+ 
++// Prompt 42 — found live: `/health/ready` used to infer credential
++// staleness from dbCredsExpiry (fileWriteTime + lease_duration at the
++// moment this file was last read), on the assumption that Agent's
++// template re-renders well before the credential actually goes stale.
++// That assumption is false — Agent's own lease-renewal loop keeps the
++// SAME credential alive by renewing its lease in place, silently, for
++// hours; the template only re-renders when Vault issues a genuinely NEW
++// credential (a completely different event). Result, confirmed live:
++// arcanium-api sat `unhealthy` in `podman ps` for over an hour, with a
++// FailingStreak in the hundreds, while every actual database query kept
++// succeeding the entire time.
++//
++// The template already renders `lease_id` (compose/arcanium/vault-agent/
++// config.hcl) — previously unused. This asks Vault directly, via
++// `sys/leases/lookup`, for the lease's real remaining TTL — the one
++// number that actually reflects Agent's background renewals, since
++// Agent renews this exact lease_id. Verified live with arcanium-api's
++// own real Agent-rendered AppRole token (not root): it already carries
++// `sys/leases/*` read via the `arcanium-admin` policy attached to that
++// role, so no new Vault grant was needed. Cached briefly to avoid a live
++// Vault round-trip on every 15-second readiness poll — same pattern
++// suppliers/isolation.js already uses for its own live cross-tenant probe.
++const LEASE_TTL_CACHE_MS = 30_000;
++let leaseTtlCache = { ttlSeconds: null, checkedAt: 0, error: null };
++
++export async function checkDbLeaseTtl() {
++  const leaseId = state.dbCredsLeaseId;
++  if (!leaseId) {
++    return { ttlSeconds: null, error: "no lease_id on record yet" };
++  }
++  const now = Date.now();
++  if (now - leaseTtlCache.checkedAt < LEASE_TTL_CACHE_MS) {
++    return leaseTtlCache;
++  }
++  try {
++    const res = await vaultRequest(
++      "PUT",
++      "sys/leases/lookup",
++      { lease_id: leaseId },
++      state.token,
++    );
++    leaseTtlCache = {
++      ttlSeconds: typeof res?.data?.ttl === "number" ? res.data.ttl : null,
++      checkedAt: now,
++      error: null,
++    };
++  } catch (err) {
++    // Vault unreachable, or the lease genuinely no longer exists — either
++    // way this is "could not verify," never "confirmed expiring." The
++    // caller (health.js) falls back to the real ping() check rather than
++    // fabricating unhealthy from a failed side-check.
++    leaseTtlCache = { ttlSeconds: null, checkedAt: now, error: err.message };
++  }
++  return leaseTtlCache;
++}
++
+ export function getStatus() {
+   return {
+     authenticated: state.authenticated,
+     tokenExpiry: state.tokenExpiry,
++    // Locally-computed estimate only (fileWriteTime + lease_duration at
++    // last render) — does NOT reflect Agent's own background lease
++    // renewals of the same credential, so it can understate real
++    // freshness by hours. Informational for /health's human-facing
++    // output; readiness itself uses checkDbLeaseTtl()'s live Vault read.
+     dbCredsExpiry: state.dbCredsExpiry,
+     loginAttempts: state.loginAttempts,
+     lastDbRotationAt: state.lastDbRotationAt,
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index adcde03..0c99395 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -773,7 +773,15 @@ paths:
+         "403": { $ref: "#/components/responses/Forbidden" }
+         "404": { $ref: "#/components/responses/NotFound" }
+     delete:
+-      summary: Deprovision the application (Prompt 19 — previously completely unguarded)
++      summary: "Delete the application's registry record only (Prompt 19 — previously completely unguarded; Prompt 42 — corrected description)"
++      description: >-
++        Registry-only delete: removes the applications row and its
++        crypto_profiles. Never touches Vault — no Transit key, PKI role, or
++        AppRole/policy is removed. Approval and reconciliation history for
++        this application survives (app_id/application_id is set to null on
++        those rows, never cascade-deleted). For a governed teardown that
++        also cleans up Vault-side resources, use
++        POST /api/v1/applications/{id}/offboard instead.
+       responses:
+         "204": { description: Deleted }
+         "401": { $ref: "#/components/responses/Unauthorized" }
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index 029b08c..99dc31e 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -337,6 +337,33 @@ else
+   bad "a hard DELETE of an evidence/history table was found: $HITS"
+ fi
+ 
++# (e) — schema-level companion to check (d) above. Found live by an
++# independent review, Prompt 42: a textual grep for "DELETE FROM
++# approval_requests" would have found nothing — approval_requests.app_id
++# was ON DELETE CASCADE, so deleting an APPLICATION silently destroyed
++# its approval/governance history as a side effect, with no DELETE
++# statement anywhere naming approval_requests at all. Check (d) is
++# structurally blind to this class of bug; this one queries the schema
++# itself, not source text, for any evidence-bearing table with a CASCADE
++# foreign key that could destroy its own rows as a side effect of some
++# OTHER table's delete.
++if podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA -c "select 1" >/dev/null 2>&1; then
++  CASCADE_HITS=$(psqlc "
++    select conrelid::regclass::text || ' -> ' || confrelid::regclass::text || ' (' || conname || ')'
++      from pg_constraint
++     where contype = 'f' and confdeltype = 'c'
++       and conrelid::regclass::text in
++           ('approval_requests','desired_state','evidence','reconciliation_runs','control_assessments');
++  " | sed '/^$/d')
++  if [ -z "$CASCADE_HITS" ]; then
++    ok "no evidence-bearing table (approval_requests/desired_state/evidence/reconciliation_runs/control_assessments) has an ON DELETE CASCADE foreign key — checked against the live schema, not just source text"
++  else
++    bad "an evidence-bearing table has an ON DELETE CASCADE foreign key that could silently destroy its own rows as a side effect of another table's delete: $CASCADE_HITS"
++  fi
++else
++  unk "evidence-cascade schema check — arcanium-postgres not reachable"
++fi
++
+ echo "== Prompt 29 — Resilience Hardening =="
+ echo
+ 
+diff --git a/state/CURRENT b/state/CURRENT
+index 79adfa3..b7fa277 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-41-tolerated-items-closed
++state/baselines/2026-09-13_pre-prompt-42-review-findings

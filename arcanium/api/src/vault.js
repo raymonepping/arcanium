@@ -101,6 +101,7 @@ const state = {
   token: null,
   dbCreds: null,
   dbCredsExpiry: null,
+  dbCredsLeaseId: null,
   // Prompt 30 — "authenticated" now means "we have successfully read a
   // non-empty token from Agent's sink file at least once," not "this
   // process itself completed an AppRole login." tokenExpiry/loginAttempts
@@ -179,6 +180,7 @@ export async function init() {
   const creds = readDbCredsFile();
   state.dbCreds = { username: creds.username, password: creds.password };
   state.dbCredsExpiry = new Date(Date.now() + creds.lease_duration * 1000);
+  state.dbCredsLeaseId = creds.lease_id ?? null;
   state.lastDbRotationAt = new Date();
   console.log(
     `[vault] db credentials read from arcanium-vault-agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
@@ -218,6 +220,7 @@ export async function init() {
         await rotateCreds(next.username, next.password);
         state.dbCreds = { username: next.username, password: next.password };
         state.dbCredsExpiry = new Date(Date.now() + next.lease_duration * 1000);
+        state.dbCredsLeaseId = next.lease_id ?? null;
         state.lastDbRotationAt = new Date();
         state.lastDbRotationError = null;
         console.log(
@@ -237,10 +240,71 @@ export function getDbCredentials() {
   return state.dbCreds;
 }
 
+// Prompt 42 — found live: `/health/ready` used to infer credential
+// staleness from dbCredsExpiry (fileWriteTime + lease_duration at the
+// moment this file was last read), on the assumption that Agent's
+// template re-renders well before the credential actually goes stale.
+// That assumption is false — Agent's own lease-renewal loop keeps the
+// SAME credential alive by renewing its lease in place, silently, for
+// hours; the template only re-renders when Vault issues a genuinely NEW
+// credential (a completely different event). Result, confirmed live:
+// arcanium-api sat `unhealthy` in `podman ps` for over an hour, with a
+// FailingStreak in the hundreds, while every actual database query kept
+// succeeding the entire time.
+//
+// The template already renders `lease_id` (compose/arcanium/vault-agent/
+// config.hcl) — previously unused. This asks Vault directly, via
+// `sys/leases/lookup`, for the lease's real remaining TTL — the one
+// number that actually reflects Agent's background renewals, since
+// Agent renews this exact lease_id. Verified live with arcanium-api's
+// own real Agent-rendered AppRole token (not root): it already carries
+// `sys/leases/*` read via the `arcanium-admin` policy attached to that
+// role, so no new Vault grant was needed. Cached briefly to avoid a live
+// Vault round-trip on every 15-second readiness poll — same pattern
+// suppliers/isolation.js already uses for its own live cross-tenant probe.
+const LEASE_TTL_CACHE_MS = 30_000;
+let leaseTtlCache = { ttlSeconds: null, checkedAt: 0, error: null };
+
+export async function checkDbLeaseTtl() {
+  const leaseId = state.dbCredsLeaseId;
+  if (!leaseId) {
+    return { ttlSeconds: null, error: "no lease_id on record yet" };
+  }
+  const now = Date.now();
+  if (now - leaseTtlCache.checkedAt < LEASE_TTL_CACHE_MS) {
+    return leaseTtlCache;
+  }
+  try {
+    const res = await vaultRequest(
+      "PUT",
+      "sys/leases/lookup",
+      { lease_id: leaseId },
+      state.token,
+    );
+    leaseTtlCache = {
+      ttlSeconds: typeof res?.data?.ttl === "number" ? res.data.ttl : null,
+      checkedAt: now,
+      error: null,
+    };
+  } catch (err) {
+    // Vault unreachable, or the lease genuinely no longer exists — either
+    // way this is "could not verify," never "confirmed expiring." The
+    // caller (health.js) falls back to the real ping() check rather than
+    // fabricating unhealthy from a failed side-check.
+    leaseTtlCache = { ttlSeconds: null, checkedAt: now, error: err.message };
+  }
+  return leaseTtlCache;
+}
+
 export function getStatus() {
   return {
     authenticated: state.authenticated,
     tokenExpiry: state.tokenExpiry,
+    // Locally-computed estimate only (fileWriteTime + lease_duration at
+    // last render) — does NOT reflect Agent's own background lease
+    // renewals of the same credential, so it can understate real
+    // freshness by hours. Informational for /health's human-facing
+    // output; readiness itself uses checkDbLeaseTtl()'s live Vault read.
     dbCredsExpiry: state.dbCredsExpiry,
     loginAttempts: state.loginAttempts,
     lastDbRotationAt: state.lastDbRotationAt,

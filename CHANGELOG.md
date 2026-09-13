@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Four findings from a fresh, independently-run review with no prior
+  project context (Prompt 42), all confirmed live before and after:
+  - **False "unhealthy" readiness.** `arcanium-api` had been sitting
+    `unhealthy` in `podman ps` for hours at a stretch (confirmed live:
+    `FailingStreak: 232`) while fully functional the whole time.
+    `/health/ready` inferred credential staleness from a locally-computed
+    `fileWriteTime + lease_duration`, on the assumption that Vault
+    Agent's template re-renders before the credential goes stale — false:
+    Agent renews the same lease in place, silently, for hours; the
+    template only re-renders on a genuinely new credential. Fixed by
+    asking Vault directly (`sys/leases/lookup`, using the `lease_id`
+    the template already rendered but never used) for the lease's real,
+    continuously-accurate TTL — verified live with arcanium-api's own
+    real AppRole token, not root. Cached 30s to avoid a live Vault call
+    on every readiness poll.
+  - **`DELETE /api/v1/applications/:id` destroyed governance history.**
+    `approval_requests.app_id` was `ON DELETE CASCADE` — reproduced live
+    with a disposable fixture: an approved destroy request (including
+    its real Vault Control Group authorization) vanished with the
+    application, no trace. `desired_state.application_id` had no
+    `ON DELETE` clause, so an application WITH reconciliation history
+    instead failed the delete outright. Both foreign keys are now
+    `ON DELETE SET NULL` (migration `025`) — checked first that
+    `scenarios/17_terraform_provider`'s `terraform destroy` relies on
+    this route succeeding for a fresh, no-history application, so the
+    fix couldn't be "require offboarding first." Reproduced the original
+    bug, then reran the identical fixture after the fix: the approval
+    row now survives, every column intact, only the dangling app link
+    nulled.
+  - **OpenAPI mislabeled that route "Deprovision."** Corrected to
+    describe what it actually does (registry-only, no Vault
+    interaction, history-preserving) and points to the real governed
+    teardown, `POST /:id/offboard`.
+  - **The fitness suite's "no hard-delete of evidence" check was
+    source-text only** and structurally couldn't see the schema-level
+    cascade above — it passed the whole time that bug was live. Added a
+    schema-aware companion check (`pg_constraint`, live against the
+    running database) that queries for exactly this class of bug instead
+    of grepping for a literal `DELETE FROM` statement.
+  - Full regression green: fitness suite (39/0/0 — the only suite that's
+    ever been fully clean twice in a row), negative-auth (31/0),
+    terraform-provider scenario (8/0, confirming the no-history case is
+    unaffected), verify-stack (53/1/0, `arcanium-api` now genuinely
+    reporting healthy). State captured pre/post.
+
 - The last two tolerated items on the board (Prompt 41), both traced to
   the same root cause. `payments-api-key`'s `rotation_period`
   desired_state row (`{days: 30}`) had sat DRIFTED against Vault's real

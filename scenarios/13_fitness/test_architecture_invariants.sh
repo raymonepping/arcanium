@@ -337,6 +337,33 @@ else
   bad "a hard DELETE of an evidence/history table was found: $HITS"
 fi
 
+# (e) — schema-level companion to check (d) above. Found live by an
+# independent review, Prompt 42: a textual grep for "DELETE FROM
+# approval_requests" would have found nothing — approval_requests.app_id
+# was ON DELETE CASCADE, so deleting an APPLICATION silently destroyed
+# its approval/governance history as a side effect, with no DELETE
+# statement anywhere naming approval_requests at all. Check (d) is
+# structurally blind to this class of bug; this one queries the schema
+# itself, not source text, for any evidence-bearing table with a CASCADE
+# foreign key that could destroy its own rows as a side effect of some
+# OTHER table's delete.
+if podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA -c "select 1" >/dev/null 2>&1; then
+  CASCADE_HITS=$(psqlc "
+    select conrelid::regclass::text || ' -> ' || confrelid::regclass::text || ' (' || conname || ')'
+      from pg_constraint
+     where contype = 'f' and confdeltype = 'c'
+       and conrelid::regclass::text in
+           ('approval_requests','desired_state','evidence','reconciliation_runs','control_assessments');
+  " | sed '/^$/d')
+  if [ -z "$CASCADE_HITS" ]; then
+    ok "no evidence-bearing table (approval_requests/desired_state/evidence/reconciliation_runs/control_assessments) has an ON DELETE CASCADE foreign key — checked against the live schema, not just source text"
+  else
+    bad "an evidence-bearing table has an ON DELETE CASCADE foreign key that could silently destroy its own rows as a side effect of another table's delete: $CASCADE_HITS"
+  fi
+else
+  unk "evidence-cascade schema check — arcanium-postgres not reachable"
+fi
+
 echo "== Prompt 29 — Resilience Hardening =="
 echo
 

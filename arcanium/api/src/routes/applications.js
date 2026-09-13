@@ -310,6 +310,18 @@ applicationsRouter.patch("/:id", async (req, res, next) => {
 // stays within the matrix's ordinary "limited" destroy_request semantics —
 // a supplier-admin may delete their own tenant's application, not
 // arbitrary ones.
+//
+// Prompt 42 — this is a REGISTRY-ONLY delete, found live (independent
+// review) to be mislabeled in openapi/arcanium.yaml as "Deprovision,"
+// implying Vault-side cleanup that never happened here — this route
+// never touches Vault at all; POST /:id/offboard is the real governed
+// teardown. crypto_profiles cascades away with the application (a
+// deliberate, existing decision — live configuration, not history).
+// approval_requests/desired_state used to cascade/RESTRICT respectively;
+// migration 025 makes both ON DELETE SET NULL instead, so an
+// application's governance and reconciliation history survives its own
+// deletion (every column intact, only the now-dangling application link
+// nulled) rather than being silently destroyed or blocking the delete.
 applicationsRouter.delete("/:id", async (req, res, next) => {
   try {
     validateUuid(req.params.id);

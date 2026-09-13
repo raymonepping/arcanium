@@ -773,7 +773,15 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
-      summary: Deprovision the application (Prompt 19 — previously completely unguarded)
+      summary: "Delete the application's registry record only (Prompt 19 — previously completely unguarded; Prompt 42 — corrected description)"
+      description: >-
+        Registry-only delete: removes the applications row and its
+        crypto_profiles. Never touches Vault — no Transit key, PKI role, or
+        AppRole/policy is removed. Approval and reconciliation history for
+        this application survives (app_id/application_id is set to null on
+        those rows, never cascade-deleted). For a governed teardown that
+        also cleans up Vault-side resources, use
+        POST /api/v1/applications/{id}/offboard instead.
       responses:
         "204": { description: Deleted }
         "401": { $ref: "#/components/responses/Unauthorized" }
