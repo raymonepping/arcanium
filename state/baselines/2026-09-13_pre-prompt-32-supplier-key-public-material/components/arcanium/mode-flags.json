@@ -1,0 +1,7 @@
+{
+  "ARCANIUM_AUTH_ENABLED": "true",
+  "ARCANIUM_DEMO_PERSONA_SWITCH": "true",
+  "PROVISION_MODE": "(unset)",
+  "NODE_ENV": "(unset)",
+  "POSTGRES_DB": "arcanium_db"
+}

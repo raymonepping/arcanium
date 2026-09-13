@@ -1034,7 +1034,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description Set to force a file download (Content-Disposition) instead of inline text. */
+                    /** @description Set to force a file download (application/x-pem-file, Content-Disposition) instead of the default inline text/plain response. */
                     download?: boolean;
                 };
                 header?: never;
@@ -1043,13 +1043,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description OK */
+                /** @description OK — text/plain by default; application/x-pem-file with ?download=1 */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/x-pem-file": string;
+                        "text/plain": string;
                     };
                 };
             };
@@ -1368,16 +1368,67 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description OK (empty array on a 403 namespace boundary — by design, not an error) */
+                /** @description OK (empty array on a 403 namespace boundary — by design, not an error). Prompt 32 — full TransitKey metadata per key, not bare name strings. */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": {
-                            [key: string]: unknown;
-                        }[];
+                        "application/json": components["schemas"]["TransitKey"][];
                     };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suppliers/{id}/keys/{name}/public-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Download the public half of a supplier tenant's asymmetric Transit key (Prompt 32)
+         * @description Namespace-scoped equivalent of GET /api/v1/keys/{name}/public-key. Never returns private/symmetric key material. Tenant-scoped the same way as GET /api/v1/suppliers/{id}/keys.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PEM-encoded public key, as a file attachment */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/x-pem-file": string;
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description Supplier not found, key not found, or has no public key (symmetric type) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };

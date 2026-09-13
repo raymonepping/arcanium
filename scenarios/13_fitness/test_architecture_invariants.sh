@@ -524,6 +524,80 @@ else
   unk "Prompt 31 public-key download checks — identity stack/API not reachable"
 fi
 
+echo "== Prompt 32 — Supplier-Scoped Public Key Material =="
+echo
+
+# The real production arcanium-api AppRole token, not root — proves the
+# Deliverable 1 Vault policy grant actually took effect live, the same way
+# it was verified by hand while writing prompts/base_project/
+# 32_01_supplier_key_public_material.md, but as a repeatable fitness check.
+API_TOKEN=$(podman exec arcanium-vault-agent cat /vault/secrets/token 2>/dev/null)
+if [ -n "$API_TOKEN" ]; then
+  VAULT_ENV_ADDR="https://127.0.0.1:18200"
+  VAULT_ENV_CACERT="$(pwd)/vault-tls/ca-chain.pem"
+  PEPSI_LIST=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_CACERT="$VAULT_ENV_CACERT" VAULT_TOKEN="$API_TOKEN" VAULT_NAMESPACE=suppliers/pepsi vault list -format=json transit/keys 2>/dev/null)
+  if echo "$PEPSI_LIST" | grep -q "pepsi-signing-key"; then
+    ok "arcanium-api's real token can LIST suppliers/pepsi's transit keys (policy grant live)"
+  else
+    bad "arcanium-api's real token could not LIST suppliers/pepsi's transit keys — Deliverable 1 policy grant not in effect"
+  fi
+
+  COKE_TYPE=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_CACERT="$VAULT_ENV_CACERT" VAULT_TOKEN="$API_TOKEN" VAULT_NAMESPACE=suppliers/cocacola vault read -field=type transit/keys/cocacola-signing-key 2>/dev/null)
+  if [ "$COKE_TYPE" = "rsa-4096" ]; then
+    ok "arcanium-api's real token can READ suppliers/cocacola's transit key metadata (policy grant live)"
+  else
+    bad "arcanium-api's real token could not READ suppliers/cocacola's transit key metadata (got '$COKE_TYPE')"
+  fi
+else
+  unk "Prompt 32 live Vault policy grant checks — arcanium-vault-agent not reachable"
+fi
+
+JAR=$(mktemp)
+if ! ($STACK_UP && oidc_login "demo-pepsi" "$JAR" "Arcanium-pepsi-2026"); then
+  rm -f "$JAR"
+  JAR=""
+fi
+
+if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
+  # GET /suppliers/:id/keys must now return real {name, type, has_public_key}
+  # objects — previously bare key-name strings, masked by the 403 that
+  # always collapsed this route to [] before Deliverable 1's policy grant.
+  # Resolve pepsi's real supplier id from Postgres first, the same way the
+  # negative-auth suite resolves cocacola's.
+  PEPSI_SUPPLIER=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
+    -c "SELECT id FROM suppliers WHERE vault_namespace='suppliers/pepsi' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+
+  if [ -n "$PEPSI_SUPPLIER" ]; then
+    KEYS_BODY=$(curl -s -b "$JAR" "$API/api/v1/suppliers/$PEPSI_SUPPLIER/keys")
+    NAME=$(echo "$KEYS_BODY" | jq -r '.[0].name // empty' 2>/dev/null)
+    HAS_PK=$(echo "$KEYS_BODY" | jq -r '.[0].has_public_key // empty' 2>/dev/null)
+    if [ "$NAME" = "pepsi-signing-key" ] && [ "$HAS_PK" = "true" ]; then
+      ok "GET /suppliers/:id/keys returns real {name, type, has_public_key} objects, not bare strings"
+    else
+      bad "GET /suppliers/:id/keys did not return pepsi-signing-key with has_public_key=true (got: $KEYS_BODY)"
+    fi
+
+    # The new namespace-scoped download route — real PEM, correct headers,
+    # for the caller's OWN tenant (cross-tenant denial is covered separately
+    # by scenarios/11_security_foundation/test_negative_auth.sh).
+    PK_HEADERS=$(curl -sD - -o /tmp/arc32-pubkey.$$ -b "$JAR" \
+      "$API/api/v1/suppliers/$PEPSI_SUPPLIER/keys/pepsi-signing-key/public-key" 2>/dev/null)
+    PK_BODY=$(cat /tmp/arc32-pubkey.$$ 2>/dev/null)
+    rm -f /tmp/arc32-pubkey.$$
+    if echo "$PK_BODY" | grep -q "BEGIN PUBLIC KEY" &&
+      echo "$PK_HEADERS" | grep -qi "Content-Disposition:.*attachment.*pepsi-signing-key-public.pem"; then
+      ok "GET /suppliers/:id/keys/pepsi-signing-key/public-key -> real PEM + correct Content-Disposition"
+    else
+      bad "GET /suppliers/:id/keys/pepsi-signing-key/public-key did not return a real PEM with the expected Content-Disposition header"
+    fi
+  else
+    unk "Prompt 32 supplier key/public-key checks — no suppliers/pepsi row found"
+  fi
+  rm -f "$JAR"
+else
+  unk "Prompt 32 supplier key/public-key checks — identity stack/API not reachable"
+fi
+
 echo
 TOTAL=$((PASS + FAIL + UNKNOWN))
 echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="

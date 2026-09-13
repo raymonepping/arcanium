@@ -129,15 +129,25 @@
           </div>
           <div v-else-if="!supplierKeys.length" class="empty-sm">No keys found.</div>
           <div v-else class="key-list">
-            <NuxtLink
-              v-for="k in supplierKeys"
-              :key="k.name"
-              :to="`/keys/${k.name}`"
-              class="key-row"
-            >
+            <div v-for="k in supplierKeys" :key="k.name" class="key-row">
               <span class="key-name mono">{{ k.name }}</span>
               <span class="key-type">{{ k.type }}</span>
-            </NuxtLink>
+              <!-- Prompt 32 — a plain same-origin link, not a fetch/blob:
+                   the API's Content-Disposition header already makes this a
+                   real browser download. Only rendered when the key's
+                   metadata reports a real public component (never for a
+                   symmetric key). The old :to="/keys/${k.name}" navigation
+                   is deliberately not restored here — that shared detail
+                   page only ever resolves root-namespace/HSM keys, so it
+                   would never actually find a supplier-namespace key; see
+                   Prompt 32 Non-goals. -->
+              <a
+                v-if="k.has_public_key"
+                class="key-download"
+                :href="supplierKeyPublicKeyUrl(k.name)"
+                download
+              >Download public key</a>
+            </div>
           </div>
         </div>
       </div>
@@ -173,6 +183,14 @@ const supplierApps = ref<Application[]>([])
 const keysLoading = ref(true)
 const keysAccessDenied = ref(false)
 const supplierKeys = ref<TransitKey[]>([])
+
+// Prompt 32 — same pattern as keys/[id].vue's publicKeyUrl: a direct
+// same-origin URL, not a $fetch()/blob round trip, since this is a real
+// file download and the API's Content-Disposition header already drives it.
+const config = useRuntimeConfig()
+function supplierKeyPublicKeyUrl(name: string) {
+  return `${config.public.apiBase}/api/v1/suppliers/${id}/keys/${encodeURIComponent(name)}/public-key`
+}
 
 useHead({ title: computed(() => supplier.value?.name ?? 'Supplier') })
 
@@ -341,6 +359,11 @@ onMounted(async () => {
 .key-row:hover { background: var(--arc-bg-elevated); }
 .key-name { font-size: 12px; flex: 1; }
 .key-type { font-size: 11px; color: var(--arc-text-muted); }
+.key-download {
+  font-size: 11px; color: var(--arc-action-bright); text-decoration: none;
+  white-space: nowrap;
+}
+.key-download:hover { text-decoration: underline; }
 
 .denied-notice {
   display: flex; align-items: flex-start; gap: 12px; padding: 16px 12px;

@@ -3,7 +3,8 @@
 import { Router } from "express";
 import { supplierFields } from "../supplier-validation.js";
 import { query } from "../db.js";
-import { listNamespaceTransitKeys } from "../vault.js";
+import { listNamespaceTransitKeys, getNamespaceTransitKey } from "../vault.js";
+import { projectKey, publicKeyOf } from "./keys.js";
 import { createJob, runOrQueue } from "../provisioner/steps.js";
 import {
   provisionSupplier,
@@ -315,6 +316,17 @@ suppliersRouter.get("/:id/applications", async (req, res, next) => {
 // above, found the same way: existence-only check, no tenant-scope check.
 // A pepsi-admin passing cocacola's supplier id could read cocacola's
 // Transit key inventory.
+//
+// Prompt 32 — previously returned bare key-name strings from
+// listNamespaceTransitKeys(); the supplier detail page's template already
+// assumed full {name, type, ...} objects (v-for="k in supplierKeys" ...
+// {{ k.name }}), a dormant bug masked until now by the 403 below always
+// collapsing this route to []. Now that the Vault policy grant (Deliverable
+// 1) makes the list call actually succeed, each key's full metadata is
+// fetched and projected through the same projectKey() root-namespace keys
+// use — including has_public_key, so the UI can offer the same "download
+// public key" action namespaced keys get here as root-namespace keys get
+// on the key detail page.
 suppliersRouter.get("/:id/keys", async (req, res, next) => {
   try {
     validateUuid(req.params.id);
@@ -326,13 +338,72 @@ suppliersRouter.get("/:id/keys", async (req, res, next) => {
       [req.params.id],
     );
     if (!rows.length) throw notFound();
-    const keys = await listNamespaceTransitKeys(rows[0].vault_namespace);
+    const namespace = rows[0].vault_namespace;
+    const names = await listNamespaceTransitKeys(namespace);
+    const keys = await Promise.all(
+      names.map(async (name) => {
+        try {
+          const meta = await getNamespaceTransitKey(namespace, name);
+          return projectKey(name, meta);
+        } catch {
+          // A key that vanished between LIST and GET, or one this token
+          // can't read for some other reason — surface the name only
+          // rather than failing the whole inventory.
+          return { name, type: null, has_public_key: false };
+        }
+      }),
+    );
     res.json(keys);
   } catch (err) {
     // 403 = arcanium-api token has no LIST permission in the supplier namespace.
     // Return an empty array rather than propagating as 500 — the namespace boundary
     // is by design; operators use vault CLI or the supplier's own credentials.
     if (err.vaultStatus === 403) return res.json([]);
+    next(err);
+  }
+});
+
+// GET /api/v1/suppliers/:id/keys/:name/public-key — Prompt 32.
+// Namespace-scoped equivalent of GET /api/v1/keys/:name/public-key: same
+// tenant-scope check as GET /:id/keys above, then the same
+// getNamespaceTransitKey() + publicKeyOf() + PEM-download response shape
+// Prompt 31's root-namespace route already uses. 404 when the key has no
+// public component (symmetric, or not found), exactly as before — never a
+// 403 that would confirm/deny a cross-tenant key's existence.
+suppliersRouter.get("/:id/keys/:name/public-key", async (req, res, next) => {
+  try {
+    validateUuid(req.params.id);
+    if (!NAME_RE.test(req.params.name))
+      return res.status(400).json({ error: "invalid key name" });
+    const scope = await tenantScope(req);
+    if (scope.scoped && !scope.supplierIds.includes(req.params.id))
+      throw notFound();
+    const { rows } = await query(
+      "SELECT vault_namespace FROM suppliers WHERE id = $1",
+      [req.params.id],
+    );
+    if (!rows.length) throw notFound();
+
+    let meta;
+    try {
+      meta = await getNamespaceTransitKey(
+        rows[0].vault_namespace,
+        req.params.name,
+      );
+    } catch (err) {
+      if (err.vaultStatus === 404 || err.vaultStatus === 403) throw notFound();
+      throw err;
+    }
+    const pem = publicKeyOf(meta);
+    if (!pem) throw notFound();
+    res
+      .set("Content-Type", "application/x-pem-file")
+      .set(
+        "Content-Disposition",
+        `attachment; filename="${req.params.name}-public.pem"`,
+      )
+      .send(pem);
+  } catch (err) {
     next(err);
   }
 });

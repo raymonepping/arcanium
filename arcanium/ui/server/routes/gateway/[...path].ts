@@ -50,6 +50,26 @@ export default defineEventHandler(async (event) => {
     // Forward the session cookie the API sets (login / logout).
     const setCookie = r.headers.get('set-cookie')
     if (setCookie) appendResponseHeader(event, 'set-cookie', setCookie)
+    // Prompt 32 — found live via Playwright, not curl (curl was only ever
+    // pointed at arcanium-api directly on :3001, never through this
+    // gateway on :3000 — the same blind spot Prompt 31's own verification
+    // had). This proxy forwarded no upstream header but Set-Cookie, so
+    // Content-Disposition — the suggested filename for every "download
+    // public key" / "download CA chain" link (Prompt 31's root-key route,
+    // Prompt 32's supplier-key route, and pki/ca-chain?download=1) — was
+    // silently dropped for every request that ever went through here.
+    // Content-Type happened to still show up correctly, but only as a side
+    // effect of h3's send() auto-deriving it from a Blob's own .type when
+    // ofetch can't text-parse a non-JSON content-type (the same Blob
+    // behavior already found this session on the PKI page's inline
+    // display) — not because this code forwarded it. Forwarding these two
+    // explicitly, not every upstream header indiscriminately (e.g. this
+    // proxy's own re-serialization can change Content-Length) is the
+    // narrower, safer fix.
+    const contentType = r.headers.get('content-type')
+    const contentDisposition = r.headers.get('content-disposition')
+    if (contentType) setHeader(event, 'content-type', contentType)
+    if (contentDisposition) setHeader(event, 'content-disposition', contentDisposition)
     return r._data
   } catch (error: unknown) {
     const code = (error as { statusCode?: number }).statusCode || 502

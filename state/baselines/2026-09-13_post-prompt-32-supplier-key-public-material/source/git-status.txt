@@ -1,0 +1,17 @@
+ M CHANGELOG.md
+ M arcanium/api/openapi/arcanium.yaml
+ M arcanium/api/src/routes/keys.js
+ M arcanium/api/src/routes/pki.js
+ M arcanium/api/src/routes/suppliers.js
+ M arcanium/api/src/vault.js
+ M arcanium/ui/app/composables/useArcaniumApi.ts
+ M arcanium/ui/app/pages/suppliers/[id].vue
+ M arcanium/ui/app/types/api.generated.ts
+ M arcanium/ui/server/routes/gateway/[...path].ts
+ M openapi/arcanium.yaml
+ M scenarios/11_security_foundation/test_negative_auth.sh
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M state/CURRENT
+ M terraform/vault-platform/policies.tf
+?? state/baselines/2026-09-13_pre-prompt-32-supplier-key-public-material-post-impl/
+?? state/baselines/2026-09-13_pre-prompt-32-supplier-key-public-material/

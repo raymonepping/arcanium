@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Supplier-scoped public key material download (Prompt 32): the same
+  public-key download offered for root-namespace keys now also works for
+  a supplier tenant's own Transit keys (`pepsi-signing-key`,
+  `cocacola-signing-key`) via `GET /api/v1/suppliers/:id/keys/:name/public-key`.
+  Required a new, read-only Vault policy grant
+  (`suppliers/+/transit/keys*`, wildcarded across every tenant namespace
+  rather than hardcoded per-tenant) — verified live, before and after,
+  against `arcanium-api`'s own real AppRole token, not root. Also fixed a
+  dormant bug this made newly reachable: `GET /api/v1/suppliers/:id/keys`
+  previously returned bare key-name strings while the supplier page's
+  template already expected full `{name, type, has_public_key}` objects
+  (masked until now by a 403 that always collapsed the route to `[]`).
+  Found and fixed along the way, via Playwright driving the real browser
+  UI rather than curl-only checks: `ui/server/routes/gateway/[...path].ts`
+  forwarded no upstream response header but `Set-Cookie`, silently
+  dropping `Content-Disposition` (the suggested filename) for every
+  "download public key"/"download CA chain" link that goes through it —
+  including Prompt 31's own root-key download and the PKI CA chain
+  download, both already shipped. Fixed by forwarding `content-type` and
+  `content-disposition` explicitly.
 - Public key/CA material download (Prompt 31): the public half of an
   asymmetric key (`GET /api/v1/keys/:name/public-key`) and the PKI
   intermediate CA chain, as real file downloads — never a private or

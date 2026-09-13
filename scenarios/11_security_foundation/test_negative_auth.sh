@@ -372,6 +372,16 @@ if session_ok "${JAR[pepsi]}" && [ -n "$COKE_SUPPLIER" ]; then
   S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/suppliers/$COKE_SUPPLIER/keys")
   [ "$S" = "404" ] && ok "pepsi-admin GET cocacola's /suppliers/:id/keys -> 404" ||
     bad "pepsi-admin GET cocacola's /suppliers/:id/keys (got $S)"
+
+  # Prompt 32 — the new namespace-scoped public-key download route must
+  # respect the same tenant-scope check as :id/keys above: a pepsi-admin
+  # supplying cocacola's supplier id (regardless of key name — tenantScope()
+  # is checked before the key name is even looked at) must get 404, never
+  # a 403 that would confirm the supplier/key's existence to the wrong
+  # tenant, and never a 200 leaking cocacola's public key material.
+  S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/suppliers/$COKE_SUPPLIER/keys/cocacola-signing-key/public-key")
+  [ "$S" = "404" ] && ok "pepsi-admin GET cocacola's key public-key route -> 404" ||
+    bad "pepsi-admin GET cocacola's key public-key route (got $S)"
 else
   unk "pepsi-admin cross-tenant /suppliers/:id/applications+/keys checks — no session or no supplier fixture"
 fi

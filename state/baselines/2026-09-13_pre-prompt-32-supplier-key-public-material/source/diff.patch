@@ -1,0 +1,147 @@
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 248f6a5..7cab815 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -926,9 +926,9 @@ paths:
+     get:
+       summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
+       parameters:
+-        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
++        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (application/x-pem-file, Content-Disposition) instead of the default inline text/plain response." }
+       responses:
+-        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
++        "200": { description: "OK — text/plain by default; application/x-pem-file with ?download=1", content: { text/plain: { schema: { type: string } } } }
+   /api/v1/pki/roles:
+     get:
+       summary: PKI issuance roles
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index 4daf465..5a580ac 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -176,11 +176,22 @@ export async function resolveKeyMeta(name) {
+       custody: custodyOf(meta),
+       hsm_backed: true,
+       managed_key_name: meta._managedKey?.name ?? null,
++      // Found live via Playwright, not the earlier curl-based check (which
++      // happened to verify the LIST route's projectKey() output, a
++      // different code path that already had this field) — this function
++      // builds its own return shape and had simply never included it, so
++      // the key DETAIL page (which is what actually renders the download
++      // button) never received has_public_key at all.
++      has_public_key: publicKeyOf(meta) !== null,
+     };
+   } catch (hsmErr) {
+     try {
+       const meta = await getTransitKey(name);
+-      return { ...meta, custody: custodyOf(meta) };
++      return {
++        ...meta,
++        custody: custodyOf(meta),
++        has_public_key: publicKeyOf(meta) !== null,
++      };
+     } catch (primaryErr) {
+       if (primaryErr.vaultStatus === 404 && hsmErr.vaultStatus === 404) {
+         const e = new Error("key not found");
+diff --git a/arcanium/api/src/routes/pki.js b/arcanium/api/src/routes/pki.js
+index 8624954..4d7abb5 100644
+--- a/arcanium/api/src/routes/pki.js
++++ b/arcanium/api/src/routes/pki.js
+@@ -7,19 +7,30 @@ export const pkiRouter = Router();
+ 
+ // GET /api/v1/pki/ca-chain
+ // ?download=1 — Prompt 31: same PEM, but as a real file download
+-// (Content-Disposition) instead of an inline text/plain response, for the
+-// UI's "Download CA chain" button. Both forms return public CA material —
+-// meant to be shared, same as any CA chain — the flag only changes how the
+-// browser presents it, not what's in it.
++// (Content-Disposition) instead of an inline response, for the UI's
++// "Download CA chain" button. Both forms return public CA material —
++// meant to be shared, same as any CA chain — the flag only changes how
++// the browser presents it, not what's in it.
++//
++// Found live via Playwright, not curl (curl doesn't care about
++// client-side Content-Type-driven parsing): switching this response
++// unconditionally to application/x-pem-file broke the PKI page's own
++// inline display — ofetch/$fetch only auto-parses a response as text for
++// a small set of recognized text-ish Content-Types, and silently returns
++// a Blob for anything else, which the page then rendered as the literal
++// string "[object Blob]". The inline (non-download) response stays
++// text/plain, exactly what it was before this prompt; only ?download=1
++// gets the file-download Content-Type, matching what a browser actually
++// needs to trigger a save-as for an <a download> link.
+ pkiRouter.get("/ca-chain", async (req, res, next) => {
+   try {
+     const pem = await getPkiCaChain();
+-    res.set("Content-Type", "application/x-pem-file");
+     if (req.query.download) {
+-      res.set(
+-        "Content-Disposition",
+-        'attachment; filename="arcanium-ca-chain.pem"',
+-      );
++      res
++        .set("Content-Type", "application/x-pem-file")
++        .set("Content-Disposition", 'attachment; filename="arcanium-ca-chain.pem"');
++    } else {
++      res.set("Content-Type", "text/plain");
+     }
+     res.send(pem);
+   } catch (err) {
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index 44186af..cfdbe61 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -1034,7 +1034,7 @@ export interface paths {
+         get: {
+             parameters: {
+                 query?: {
+-                    /** @description Set to force a file download (Content-Disposition) instead of inline text. */
++                    /** @description Set to force a file download (application/x-pem-file, Content-Disposition) instead of the default inline text/plain response. */
+                     download?: boolean;
+                 };
+                 header?: never;
+@@ -1043,13 +1043,13 @@ export interface paths {
+             };
+             requestBody?: never;
+             responses: {
+-                /** @description OK */
++                /** @description OK — text/plain by default; application/x-pem-file with ?download=1 */
+                 200: {
+                     headers: {
+                         [name: string]: unknown;
+                     };
+                     content: {
+-                        "application/x-pem-file": string;
++                        "text/plain": string;
+                     };
+                 };
+             };
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 248f6a5..7cab815 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -926,9 +926,9 @@ paths:
+     get:
+       summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
+       parameters:
+-        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
++        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (application/x-pem-file, Content-Disposition) instead of the default inline text/plain response." }
+       responses:
+-        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
++        "200": { description: "OK — text/plain by default; application/x-pem-file with ?download=1", content: { text/plain: { schema: { type: string } } } }
+   /api/v1/pki/roles:
+     get:
+       summary: PKI issuance roles

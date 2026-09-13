@@ -149,6 +149,21 @@ resource "vault_policy" "arcanium_transit" {
     path "transit/keys/arcanium-webhook-signing" {
       capabilities = ["create", "read", "update"]
     }
+    # Prompt 32 — read-only visibility into every supplier tenant's own
+    # Transit keys (list + read metadata/public material only, never
+    # create/update/delete). Wildcard (+), not one rule per tenant name —
+    # verified live before this was written: this pattern also covers an
+    # ad-hoc, non-Terraform-tracked tenant namespace (suppliers/fanta
+    # genuinely exists, created outside any .tf file) the same way as a
+    # Terraform-managed one (suppliers/pepsi, suppliers/cocacola) — a
+    # per-tenant-name rule would silently miss any tenant not hardcoded
+    # here, including ones nothing else in this codebase tracks either.
+    path "suppliers/+/transit/keys" {
+      capabilities = ["list"]
+    }
+    path "suppliers/+/transit/keys/*" {
+      capabilities = ["read"]
+    }
   EOT
 }
 

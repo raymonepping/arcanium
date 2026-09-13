@@ -1,0 +1,689 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 29ec418..e7b46bf 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Added
+ 
++- Supplier-scoped public key material download (Prompt 32): the same
++  public-key download offered for root-namespace keys now also works for
++  a supplier tenant's own Transit keys (`pepsi-signing-key`,
++  `cocacola-signing-key`) via `GET /api/v1/suppliers/:id/keys/:name/public-key`.
++  Required a new, read-only Vault policy grant
++  (`suppliers/+/transit/keys*`, wildcarded across every tenant namespace
++  rather than hardcoded per-tenant) — verified live, before and after,
++  against `arcanium-api`'s own real AppRole token, not root. Also fixed a
++  dormant bug this made newly reachable: `GET /api/v1/suppliers/:id/keys`
++  previously returned bare key-name strings while the supplier page's
++  template already expected full `{name, type, has_public_key}` objects
++  (masked until now by a 403 that always collapsed the route to `[]`).
++  Found and fixed along the way, via Playwright driving the real browser
++  UI rather than curl-only checks: `ui/server/routes/gateway/[...path].ts`
++  forwarded no upstream response header but `Set-Cookie`, silently
++  dropping `Content-Disposition` (the suggested filename) for every
++  "download public key"/"download CA chain" link that goes through it —
++  including Prompt 31's own root-key download and the PKI CA chain
++  download, both already shipped. Fixed by forwarding `content-type` and
++  `content-disposition` explicitly.
+ - Public key/CA material download (Prompt 31): the public half of an
+   asymmetric key (`GET /api/v1/keys/:name/public-key`) and the PKI
+   intermediate CA chain, as real file downloads — never a private or
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 248f6a5..000ae0a 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -926,9 +926,9 @@ paths:
+     get:
+       summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
+       parameters:
+-        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
++        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (application/x-pem-file, Content-Disposition) instead of the default inline text/plain response." }
+       responses:
+-        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
++        "200": { description: "OK — text/plain by default; application/x-pem-file with ?download=1", content: { text/plain: { schema: { type: string } } } }
+   /api/v1/pki/roles:
+     get:
+       summary: PKI issuance roles
+@@ -1023,10 +1023,28 @@ paths:
+       summary: This supplier's Transit key inventory (namespace-scoped)
+       responses:
+         "200":
+-          description: "OK (empty array on a 403 namespace boundary — by design, not an error)"
++          description: "OK (empty array on a 403 namespace boundary — by design, not an error). Prompt 32 — full TransitKey metadata per key, not bare name strings."
+           content:
+             application/json:
+-              schema: { type: array, items: { type: object, additionalProperties: true } }
++              schema: { type: array, items: { $ref: "#/components/schemas/TransitKey" } }
++  /api/v1/suppliers/{id}/keys/{name}/public-key:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++      - { name: name, in: path, required: true, schema: { type: string } }
++    get:
++      summary: Download the public half of a supplier tenant's asymmetric Transit key (Prompt 32)
++      description: >-
++        Namespace-scoped equivalent of GET /api/v1/keys/{name}/public-key.
++        Never returns private/symmetric key material. Tenant-scoped the same
++        way as GET /api/v1/suppliers/{id}/keys.
++      responses:
++        "200":
++          description: PEM-encoded public key, as a file attachment
++          content:
++            application/x-pem-file:
++              schema: { type: string }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "404": { description: "Supplier not found, key not found, or has no public key (symmetric type)" }
+ 
+   # ── Teams (Prompt 27) ────────────────────────────────────────────────
+   /api/v1/teams:
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index 4daf465..f4840e2 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -80,7 +80,10 @@ export function publicKeyOf(meta) {
+   return typeof pem === "string" && pem.trim() ? pem : null;
+ }
+ 
+-function projectKey(name, meta) {
++// Prompt 32 — exported so suppliers.js can project namespace-scoped key
++// metadata (getNamespaceTransitKey()) through the exact same shape as
++// root-namespace keys, instead of hand-rolling a second projection.
++export function projectKey(name, meta) {
+   return {
+     name,
+     type: meta.type,
+@@ -176,11 +179,22 @@ export async function resolveKeyMeta(name) {
+       custody: custodyOf(meta),
+       hsm_backed: true,
+       managed_key_name: meta._managedKey?.name ?? null,
++      // Found live via Playwright, not the earlier curl-based check (which
++      // happened to verify the LIST route's projectKey() output, a
++      // different code path that already had this field) — this function
++      // builds its own return shape and had simply never included it, so
++      // the key DETAIL page (which is what actually renders the download
++      // button) never received has_public_key at all.
++      has_public_key: publicKeyOf(meta) !== null,
+     };
+   } catch (hsmErr) {
+     try {
+       const meta = await getTransitKey(name);
+-      return { ...meta, custody: custodyOf(meta) };
++      return {
++        ...meta,
++        custody: custodyOf(meta),
++        has_public_key: publicKeyOf(meta) !== null,
++      };
+     } catch (primaryErr) {
+       if (primaryErr.vaultStatus === 404 && hsmErr.vaultStatus === 404) {
+         const e = new Error("key not found");
+diff --git a/arcanium/api/src/routes/pki.js b/arcanium/api/src/routes/pki.js
+index 8624954..4d7abb5 100644
+--- a/arcanium/api/src/routes/pki.js
++++ b/arcanium/api/src/routes/pki.js
+@@ -7,19 +7,30 @@ export const pkiRouter = Router();
+ 
+ // GET /api/v1/pki/ca-chain
+ // ?download=1 — Prompt 31: same PEM, but as a real file download
+-// (Content-Disposition) instead of an inline text/plain response, for the
+-// UI's "Download CA chain" button. Both forms return public CA material —
+-// meant to be shared, same as any CA chain — the flag only changes how the
+-// browser presents it, not what's in it.
++// (Content-Disposition) instead of an inline response, for the UI's
++// "Download CA chain" button. Both forms return public CA material —
++// meant to be shared, same as any CA chain — the flag only changes how
++// the browser presents it, not what's in it.
++//
++// Found live via Playwright, not curl (curl doesn't care about
++// client-side Content-Type-driven parsing): switching this response
++// unconditionally to application/x-pem-file broke the PKI page's own
++// inline display — ofetch/$fetch only auto-parses a response as text for
++// a small set of recognized text-ish Content-Types, and silently returns
++// a Blob for anything else, which the page then rendered as the literal
++// string "[object Blob]". The inline (non-download) response stays
++// text/plain, exactly what it was before this prompt; only ?download=1
++// gets the file-download Content-Type, matching what a browser actually
++// needs to trigger a save-as for an <a download> link.
+ pkiRouter.get("/ca-chain", async (req, res, next) => {
+   try {
+     const pem = await getPkiCaChain();
+-    res.set("Content-Type", "application/x-pem-file");
+     if (req.query.download) {
+-      res.set(
+-        "Content-Disposition",
+-        'attachment; filename="arcanium-ca-chain.pem"',
+-      );
++      res
++        .set("Content-Type", "application/x-pem-file")
++        .set("Content-Disposition", 'attachment; filename="arcanium-ca-chain.pem"');
++    } else {
++      res.set("Content-Type", "text/plain");
+     }
+     res.send(pem);
+   } catch (err) {
+diff --git a/arcanium/api/src/routes/suppliers.js b/arcanium/api/src/routes/suppliers.js
+index 5e6bf9f..c68b21a 100644
+--- a/arcanium/api/src/routes/suppliers.js
++++ b/arcanium/api/src/routes/suppliers.js
+@@ -3,7 +3,11 @@
+ import { Router } from "express";
+ import { supplierFields } from "../supplier-validation.js";
+ import { query } from "../db.js";
+-import { listNamespaceTransitKeys } from "../vault.js";
++import {
++  listNamespaceTransitKeys,
++  getNamespaceTransitKey,
++} from "../vault.js";
++import { projectKey, publicKeyOf } from "./keys.js";
+ import { createJob, runOrQueue } from "../provisioner/steps.js";
+ import {
+   provisionSupplier,
+@@ -315,6 +319,17 @@ suppliersRouter.get("/:id/applications", async (req, res, next) => {
+ // above, found the same way: existence-only check, no tenant-scope check.
+ // A pepsi-admin passing cocacola's supplier id could read cocacola's
+ // Transit key inventory.
++//
++// Prompt 32 — previously returned bare key-name strings from
++// listNamespaceTransitKeys(); the supplier detail page's template already
++// assumed full {name, type, ...} objects (v-for="k in supplierKeys" ...
++// {{ k.name }}), a dormant bug masked until now by the 403 below always
++// collapsing this route to []. Now that the Vault policy grant (Deliverable
++// 1) makes the list call actually succeed, each key's full metadata is
++// fetched and projected through the same projectKey() root-namespace keys
++// use — including has_public_key, so the UI can offer the same "download
++// public key" action namespaced keys get here as root-namespace keys get
++// on the key detail page.
+ suppliersRouter.get("/:id/keys", async (req, res, next) => {
+   try {
+     validateUuid(req.params.id);
+@@ -326,7 +341,21 @@ suppliersRouter.get("/:id/keys", async (req, res, next) => {
+       [req.params.id],
+     );
+     if (!rows.length) throw notFound();
+-    const keys = await listNamespaceTransitKeys(rows[0].vault_namespace);
++    const namespace = rows[0].vault_namespace;
++    const names = await listNamespaceTransitKeys(namespace);
++    const keys = await Promise.all(
++      names.map(async (name) => {
++        try {
++          const meta = await getNamespaceTransitKey(namespace, name);
++          return projectKey(name, meta);
++        } catch {
++          // A key that vanished between LIST and GET, or one this token
++          // can't read for some other reason — surface the name only
++          // rather than failing the whole inventory.
++          return { name, type: null, has_public_key: false };
++        }
++      }),
++    );
+     res.json(keys);
+   } catch (err) {
+     // 403 = arcanium-api token has no LIST permission in the supplier namespace.
+@@ -336,3 +365,45 @@ suppliersRouter.get("/:id/keys", async (req, res, next) => {
+     next(err);
+   }
+ });
++
++// GET /api/v1/suppliers/:id/keys/:name/public-key — Prompt 32.
++// Namespace-scoped equivalent of GET /api/v1/keys/:name/public-key: same
++// tenant-scope check as GET /:id/keys above, then the same
++// getNamespaceTransitKey() + publicKeyOf() + PEM-download response shape
++// Prompt 31's root-namespace route already uses. 404 when the key has no
++// public component (symmetric, or not found), exactly as before — never a
++// 403 that would confirm/deny a cross-tenant key's existence.
++suppliersRouter.get("/:id/keys/:name/public-key", async (req, res, next) => {
++  try {
++    validateUuid(req.params.id);
++    if (!NAME_RE.test(req.params.name))
++      return res.status(400).json({ error: "invalid key name" });
++    const scope = await tenantScope(req);
++    if (scope.scoped && !scope.supplierIds.includes(req.params.id))
++      throw notFound();
++    const { rows } = await query(
++      "SELECT vault_namespace FROM suppliers WHERE id = $1",
++      [req.params.id],
++    );
++    if (!rows.length) throw notFound();
++
++    let meta;
++    try {
++      meta = await getNamespaceTransitKey(rows[0].vault_namespace, req.params.name);
++    } catch (err) {
++      if (err.vaultStatus === 404 || err.vaultStatus === 403) throw notFound();
++      throw err;
++    }
++    const pem = publicKeyOf(meta);
++    if (!pem) throw notFound();
++    res
++      .set("Content-Type", "application/x-pem-file")
++      .set(
++        "Content-Disposition",
++        `attachment; filename="${req.params.name}-public.pem"`,
++      )
++      .send(pem);
++  } catch (err) {
++    next(err);
++  }
++});
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index 698a5c5..cb6e30a 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -413,6 +413,21 @@ export async function listNamespaceTransitKeys(namespace) {
+   }
+ }
+ 
++// Prompt 32 — namespaced equivalent of getTransitKey(), for supplier-tenant
++// keys (suppliers/pepsi, suppliers/cocacola, ...). Same shape of response as
++// the root-namespace call, so callers can reuse projectKey()/publicKeyOf()
++// unchanged.
++export async function getNamespaceTransitKey(namespace, name) {
++  const res = await vaultRequestNs(
++    "GET",
++    `transit/keys/${encodeURIComponent(name)}`,
++    null,
++    state.token,
++    namespace,
++  );
++  return res.data;
++}
++
+ // ── vault-hsm read client (Prompt 14.1 — Managed Key custody) ──────────────
+ // A separate, read-only AppRole session against vault-hsm so the API can show
+ // the SoftHSM-backed document-signing-key in the inventory with correct custody.
+diff --git a/arcanium/ui/app/composables/useArcaniumApi.ts b/arcanium/ui/app/composables/useArcaniumApi.ts
+index b0aa8ea..de6cb6a 100644
+--- a/arcanium/ui/app/composables/useArcaniumApi.ts
++++ b/arcanium/ui/app/composables/useArcaniumApi.ts
+@@ -114,7 +114,9 @@ export function useArcaniumApi() {
+     suppliers: () => $get<Supplier[]>('/api/v1/suppliers'),
+     supplier:  (id: string) => $get<Supplier>(`/api/v1/suppliers/${id}`),
+     supplierApplications: (id: string) => $get<Application[]>(`/api/v1/suppliers/${id}/applications`),
+-    supplierKeys: (id: string) => $get<TransitKey[] | string[]>(`/api/v1/suppliers/${id}/keys`),
++    // Prompt 32 — always full TransitKey objects now (previously bare name
++    // strings, masked by the namespace 403 always collapsing this to []).
++    supplierKeys: (id: string) => $get<TransitKey[]>(`/api/v1/suppliers/${id}/keys`),
+ 
+     // ── Applications ───────────────────────────────────────
+     applications: () => $get<GenApplication[]>('/api/v1/applications'),
+diff --git a/arcanium/ui/app/pages/suppliers/[id].vue b/arcanium/ui/app/pages/suppliers/[id].vue
+index dc4a8bc..71a4cea 100644
+--- a/arcanium/ui/app/pages/suppliers/[id].vue
++++ b/arcanium/ui/app/pages/suppliers/[id].vue
+@@ -129,15 +129,25 @@
+           </div>
+           <div v-else-if="!supplierKeys.length" class="empty-sm">No keys found.</div>
+           <div v-else class="key-list">
+-            <NuxtLink
+-              v-for="k in supplierKeys"
+-              :key="k.name"
+-              :to="`/keys/${k.name}`"
+-              class="key-row"
+-            >
++            <div v-for="k in supplierKeys" :key="k.name" class="key-row">
+               <span class="key-name mono">{{ k.name }}</span>
+               <span class="key-type">{{ k.type }}</span>
+-            </NuxtLink>
++              <!-- Prompt 32 — a plain same-origin link, not a fetch/blob:
++                   the API's Content-Disposition header already makes this a
++                   real browser download. Only rendered when the key's
++                   metadata reports a real public component (never for a
++                   symmetric key). The old :to="/keys/${k.name}" navigation
++                   is deliberately not restored here — that shared detail
++                   page only ever resolves root-namespace/HSM keys, so it
++                   would never actually find a supplier-namespace key; see
++                   Prompt 32 Non-goals. -->
++              <a
++                v-if="k.has_public_key"
++                class="key-download"
++                :href="supplierKeyPublicKeyUrl(k.name)"
++                download
++              >Download public key</a>
++            </div>
+           </div>
+         </div>
+       </div>
+@@ -174,6 +184,14 @@ const keysLoading = ref(true)
+ const keysAccessDenied = ref(false)
+ const supplierKeys = ref<TransitKey[]>([])
+ 
++// Prompt 32 — same pattern as keys/[id].vue's publicKeyUrl: a direct
++// same-origin URL, not a $fetch()/blob round trip, since this is a real
++// file download and the API's Content-Disposition header already drives it.
++const config = useRuntimeConfig()
++function supplierKeyPublicKeyUrl(name: string) {
++  return `${config.public.apiBase}/api/v1/suppliers/${id}/keys/${encodeURIComponent(name)}/public-key`
++}
++
+ useHead({ title: computed(() => supplier.value?.name ?? 'Supplier') })
+ 
+ function formatDate(ts: string) {
+@@ -341,6 +359,11 @@ onMounted(async () => {
+ .key-row:hover { background: var(--arc-bg-elevated); }
+ .key-name { font-size: 12px; flex: 1; }
+ .key-type { font-size: 11px; color: var(--arc-text-muted); }
++.key-download {
++  font-size: 11px; color: var(--arc-action-bright); text-decoration: none;
++  white-space: nowrap;
++}
++.key-download:hover { text-decoration: underline; }
+ 
+ .denied-notice {
+   display: flex; align-items: flex-start; gap: 12px; padding: 16px 12px;
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index 44186af..b73f67e 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -1034,7 +1034,7 @@ export interface paths {
+         get: {
+             parameters: {
+                 query?: {
+-                    /** @description Set to force a file download (Content-Disposition) instead of inline text. */
++                    /** @description Set to force a file download (application/x-pem-file, Content-Disposition) instead of the default inline text/plain response. */
+                     download?: boolean;
+                 };
+                 header?: never;
+@@ -1043,13 +1043,13 @@ export interface paths {
+             };
+             requestBody?: never;
+             responses: {
+-                /** @description OK */
++                /** @description OK — text/plain by default; application/x-pem-file with ?download=1 */
+                 200: {
+                     headers: {
+                         [name: string]: unknown;
+                     };
+                     content: {
+-                        "application/x-pem-file": string;
++                        "text/plain": string;
+                     };
+                 };
+             };
+@@ -1368,16 +1368,67 @@ export interface paths {
+             };
+             requestBody?: never;
+             responses: {
+-                /** @description OK (empty array on a 403 namespace boundary — by design, not an error) */
++                /** @description OK (empty array on a 403 namespace boundary — by design, not an error). Prompt 32 — full TransitKey metadata per key, not bare name strings. */
+                 200: {
+                     headers: {
+                         [name: string]: unknown;
+                     };
+                     content: {
+-                        "application/json": {
+-                            [key: string]: unknown;
+-                        }[];
++                        "application/json": components["schemas"]["TransitKey"][];
++                    };
++                };
++            };
++        };
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/suppliers/{id}/keys/{name}/public-key": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path: {
++                id: string;
++                name: string;
++            };
++            cookie?: never;
++        };
++        /**
++         * Download the public half of a supplier tenant's asymmetric Transit key (Prompt 32)
++         * @description Namespace-scoped equivalent of GET /api/v1/keys/{name}/public-key. Never returns private/symmetric key material. Tenant-scoped the same way as GET /api/v1/suppliers/{id}/keys.
++         */
++        get: {
++            parameters: {
++                query?: never;
++                header?: never;
++                path: {
++                    id: string;
++                    name: string;
++                };
++                cookie?: never;
++            };
++            requestBody?: never;
++            responses: {
++                /** @description PEM-encoded public key, as a file attachment */
++                200: {
++                    headers: {
++                        [name: string]: unknown;
+                     };
++                    content: {
++                        "application/x-pem-file": string;
++                    };
++                };
++                400: components["responses"]["BadRequest"];
++                /** @description Supplier not found, key not found, or has no public key (symmetric type) */
++                404: {
++                    headers: {
++                        [name: string]: unknown;
++                    };
++                    content?: never;
+                 };
+             };
+         };
+diff --git a/arcanium/ui/server/routes/gateway/[...path].ts b/arcanium/ui/server/routes/gateway/[...path].ts
+index 50dbc30..32a51c8 100644
+--- a/arcanium/ui/server/routes/gateway/[...path].ts
++++ b/arcanium/ui/server/routes/gateway/[...path].ts
+@@ -50,6 +50,26 @@ export default defineEventHandler(async (event) => {
+     // Forward the session cookie the API sets (login / logout).
+     const setCookie = r.headers.get('set-cookie')
+     if (setCookie) appendResponseHeader(event, 'set-cookie', setCookie)
++    // Prompt 32 — found live via Playwright, not curl (curl was only ever
++    // pointed at arcanium-api directly on :3001, never through this
++    // gateway on :3000 — the same blind spot Prompt 31's own verification
++    // had). This proxy forwarded no upstream header but Set-Cookie, so
++    // Content-Disposition — the suggested filename for every "download
++    // public key" / "download CA chain" link (Prompt 31's root-key route,
++    // Prompt 32's supplier-key route, and pki/ca-chain?download=1) — was
++    // silently dropped for every request that ever went through here.
++    // Content-Type happened to still show up correctly, but only as a side
++    // effect of h3's send() auto-deriving it from a Blob's own .type when
++    // ofetch can't text-parse a non-JSON content-type (the same Blob
++    // behavior already found this session on the PKI page's inline
++    // display) — not because this code forwarded it. Forwarding these two
++    // explicitly, not every upstream header indiscriminately (e.g. this
++    // proxy's own re-serialization can change Content-Length) is the
++    // narrower, safer fix.
++    const contentType = r.headers.get('content-type')
++    const contentDisposition = r.headers.get('content-disposition')
++    if (contentType) setHeader(event, 'content-type', contentType)
++    if (contentDisposition) setHeader(event, 'content-disposition', contentDisposition)
+     return r._data
+   } catch (error: unknown) {
+     const code = (error as { statusCode?: number }).statusCode || 502
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 248f6a5..000ae0a 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -926,9 +926,9 @@ paths:
+     get:
+       summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
+       parameters:
+-        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
++        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (application/x-pem-file, Content-Disposition) instead of the default inline text/plain response." }
+       responses:
+-        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
++        "200": { description: "OK — text/plain by default; application/x-pem-file with ?download=1", content: { text/plain: { schema: { type: string } } } }
+   /api/v1/pki/roles:
+     get:
+       summary: PKI issuance roles
+@@ -1023,10 +1023,28 @@ paths:
+       summary: This supplier's Transit key inventory (namespace-scoped)
+       responses:
+         "200":
+-          description: "OK (empty array on a 403 namespace boundary — by design, not an error)"
++          description: "OK (empty array on a 403 namespace boundary — by design, not an error). Prompt 32 — full TransitKey metadata per key, not bare name strings."
+           content:
+             application/json:
+-              schema: { type: array, items: { type: object, additionalProperties: true } }
++              schema: { type: array, items: { $ref: "#/components/schemas/TransitKey" } }
++  /api/v1/suppliers/{id}/keys/{name}/public-key:
++    parameters:
++      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
++      - { name: name, in: path, required: true, schema: { type: string } }
++    get:
++      summary: Download the public half of a supplier tenant's asymmetric Transit key (Prompt 32)
++      description: >-
++        Namespace-scoped equivalent of GET /api/v1/keys/{name}/public-key.
++        Never returns private/symmetric key material. Tenant-scoped the same
++        way as GET /api/v1/suppliers/{id}/keys.
++      responses:
++        "200":
++          description: PEM-encoded public key, as a file attachment
++          content:
++            application/x-pem-file:
++              schema: { type: string }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "404": { description: "Supplier not found, key not found, or has no public key (symmetric type)" }
+ 
+   # ── Teams (Prompt 27) ────────────────────────────────────────────────
+   /api/v1/teams:
+diff --git a/scenarios/11_security_foundation/test_negative_auth.sh b/scenarios/11_security_foundation/test_negative_auth.sh
+index f63e8c5..7638734 100755
+--- a/scenarios/11_security_foundation/test_negative_auth.sh
++++ b/scenarios/11_security_foundation/test_negative_auth.sh
+@@ -372,6 +372,16 @@ if session_ok "${JAR[pepsi]}" && [ -n "$COKE_SUPPLIER" ]; then
+   S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/suppliers/$COKE_SUPPLIER/keys")
+   [ "$S" = "404" ] && ok "pepsi-admin GET cocacola's /suppliers/:id/keys -> 404" ||
+     bad "pepsi-admin GET cocacola's /suppliers/:id/keys (got $S)"
++
++  # Prompt 32 — the new namespace-scoped public-key download route must
++  # respect the same tenant-scope check as :id/keys above: a pepsi-admin
++  # supplying cocacola's supplier id (regardless of key name — tenantScope()
++  # is checked before the key name is even looked at) must get 404, never
++  # a 403 that would confirm the supplier/key's existence to the wrong
++  # tenant, and never a 200 leaking cocacola's public key material.
++  S=$(status_of -b "${JAR[pepsi]}" "$API/api/v1/suppliers/$COKE_SUPPLIER/keys/cocacola-signing-key/public-key")
++  [ "$S" = "404" ] && ok "pepsi-admin GET cocacola's key public-key route -> 404" ||
++    bad "pepsi-admin GET cocacola's key public-key route (got $S)"
+ else
+   unk "pepsi-admin cross-tenant /suppliers/:id/applications+/keys checks — no session or no supplier fixture"
+ fi
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index 110e6f7..0a99a0d 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -524,6 +524,80 @@ else
+   unk "Prompt 31 public-key download checks — identity stack/API not reachable"
+ fi
+ 
++echo "== Prompt 32 — Supplier-Scoped Public Key Material =="
++echo
++
++# The real production arcanium-api AppRole token, not root — proves the
++# Deliverable 1 Vault policy grant actually took effect live, the same way
++# it was verified by hand while writing prompts/base_project/
++# 32_01_supplier_key_public_material.md, but as a repeatable fitness check.
++API_TOKEN=$(podman exec arcanium-vault-agent cat /vault/secrets/token 2>/dev/null)
++if [ -n "$API_TOKEN" ]; then
++  VAULT_ENV_ADDR="https://127.0.0.1:18200"
++  VAULT_ENV_CACERT="$(pwd)/vault-tls/ca-chain.pem"
++  PEPSI_LIST=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_CACERT="$VAULT_ENV_CACERT" VAULT_TOKEN="$API_TOKEN" VAULT_NAMESPACE=suppliers/pepsi vault list -format=json transit/keys 2>/dev/null)
++  if echo "$PEPSI_LIST" | grep -q "pepsi-signing-key"; then
++    ok "arcanium-api's real token can LIST suppliers/pepsi's transit keys (policy grant live)"
++  else
++    bad "arcanium-api's real token could not LIST suppliers/pepsi's transit keys — Deliverable 1 policy grant not in effect"
++  fi
++
++  COKE_TYPE=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_CACERT="$VAULT_ENV_CACERT" VAULT_TOKEN="$API_TOKEN" VAULT_NAMESPACE=suppliers/cocacola vault read -field=type transit/keys/cocacola-signing-key 2>/dev/null)
++  if [ "$COKE_TYPE" = "rsa-4096" ]; then
++    ok "arcanium-api's real token can READ suppliers/cocacola's transit key metadata (policy grant live)"
++  else
++    bad "arcanium-api's real token could not READ suppliers/cocacola's transit key metadata (got '$COKE_TYPE')"
++  fi
++else
++  unk "Prompt 32 live Vault policy grant checks — arcanium-vault-agent not reachable"
++fi
++
++JAR=$(mktemp)
++if ! ($STACK_UP && oidc_login "demo-pepsi" "$JAR" "Arcanium-pepsi-2026"); then
++  rm -f "$JAR"
++  JAR=""
++fi
++
++if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
++  # GET /suppliers/:id/keys must now return real {name, type, has_public_key}
++  # objects — previously bare key-name strings, masked by the 403 that
++  # always collapsed this route to [] before Deliverable 1's policy grant.
++  # Resolve pepsi's real supplier id from Postgres first, the same way the
++  # negative-auth suite resolves cocacola's.
++  PEPSI_SUPPLIER=$(podman exec arcanium-postgres psql -U "${POSTGRES_USER:-arcanium}" -d "${POSTGRES_DB:-arcanium_db}" -tA \
++    -c "SELECT id FROM suppliers WHERE vault_namespace='suppliers/pepsi' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
++
++  if [ -n "$PEPSI_SUPPLIER" ]; then
++    KEYS_BODY=$(curl -s -b "$JAR" "$API/api/v1/suppliers/$PEPSI_SUPPLIER/keys")
++    NAME=$(echo "$KEYS_BODY" | jq -r '.[0].name // empty' 2>/dev/null)
++    HAS_PK=$(echo "$KEYS_BODY" | jq -r '.[0].has_public_key // empty' 2>/dev/null)
++    if [ "$NAME" = "pepsi-signing-key" ] && [ "$HAS_PK" = "true" ]; then
++      ok "GET /suppliers/:id/keys returns real {name, type, has_public_key} objects, not bare strings"
++    else
++      bad "GET /suppliers/:id/keys did not return pepsi-signing-key with has_public_key=true (got: $KEYS_BODY)"
++    fi
++
++    # The new namespace-scoped download route — real PEM, correct headers,
++    # for the caller's OWN tenant (cross-tenant denial is covered separately
++    # by scenarios/11_security_foundation/test_negative_auth.sh).
++    PK_HEADERS=$(curl -sD - -o /tmp/arc32-pubkey.$$ -b "$JAR" \
++      "$API/api/v1/suppliers/$PEPSI_SUPPLIER/keys/pepsi-signing-key/public-key" 2>/dev/null)
++    PK_BODY=$(cat /tmp/arc32-pubkey.$$ 2>/dev/null)
++    rm -f /tmp/arc32-pubkey.$$
++    if echo "$PK_BODY" | grep -q "BEGIN PUBLIC KEY" &&
++      echo "$PK_HEADERS" | grep -qi "Content-Disposition:.*attachment.*pepsi-signing-key-public.pem"; then
++      ok "GET /suppliers/:id/keys/pepsi-signing-key/public-key -> real PEM + correct Content-Disposition"
++    else
++      bad "GET /suppliers/:id/keys/pepsi-signing-key/public-key did not return a real PEM with the expected Content-Disposition header"
++    fi
++  else
++    unk "Prompt 32 supplier key/public-key checks — no suppliers/pepsi row found"
++  fi
++  rm -f "$JAR"
++else
++  unk "Prompt 32 supplier key/public-key checks — identity stack/API not reachable"
++fi
++
+ echo
+ TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+diff --git a/state/CURRENT b/state/CURRENT
+index 18da0e0..74cee01 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-31-public-key-download
++state/baselines/2026-09-13_pre-prompt-32-supplier-key-public-material-post-impl
+diff --git a/terraform/vault-platform/policies.tf b/terraform/vault-platform/policies.tf
+index 515d80c..0850c06 100644
+--- a/terraform/vault-platform/policies.tf
++++ b/terraform/vault-platform/policies.tf
+@@ -149,6 +149,21 @@ resource "vault_policy" "arcanium_transit" {
+     path "transit/keys/arcanium-webhook-signing" {
+       capabilities = ["create", "read", "update"]
+     }
++    # Prompt 32 — read-only visibility into every supplier tenant's own
++    # Transit keys (list + read metadata/public material only, never
++    # create/update/delete). Wildcard (+), not one rule per tenant name —
++    # verified live before this was written: this pattern also covers an
++    # ad-hoc, non-Terraform-tracked tenant namespace (suppliers/fanta
++    # genuinely exists, created outside any .tf file) the same way as a
++    # Terraform-managed one (suppliers/pepsi, suppliers/cocacola) — a
++    # per-tenant-name rule would silently miss any tenant not hardcoded
++    # here, including ones nothing else in this codebase tracks either.
++    path "suppliers/+/transit/keys" {
++      capabilities = ["list"]
++    }
++    path "suppliers/+/transit/keys/*" {
++      capabilities = ["read"]
++    }
+   EOT
+ }
+ 

@@ -413,6 +413,21 @@ export async function listNamespaceTransitKeys(namespace) {
   }
 }
 
+// Prompt 32 — namespaced equivalent of getTransitKey(), for supplier-tenant
+// keys (suppliers/pepsi, suppliers/cocacola, ...). Same shape of response as
+// the root-namespace call, so callers can reuse projectKey()/publicKeyOf()
+// unchanged.
+export async function getNamespaceTransitKey(namespace, name) {
+  const res = await vaultRequestNs(
+    "GET",
+    `transit/keys/${encodeURIComponent(name)}`,
+    null,
+    state.token,
+    namespace,
+  );
+  return res.data;
+}
+
 // ── vault-hsm read client (Prompt 14.1 — Managed Key custody) ──────────────
 // A separate, read-only AppRole session against vault-hsm so the API can show
 // the SoftHSM-backed document-signing-key in the inventory with correct custody.

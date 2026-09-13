@@ -1,0 +1,7 @@
+{
+  "running_containers": [
+    "arcanium-prometheus",
+    "arcanium-otel-collector",
+    "arcanium-grafana"
+  ]
+}

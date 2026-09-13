@@ -926,9 +926,9 @@ paths:
     get:
       summary: PKI intermediate CA chain (PEM) — public material, no authorization beyond an authenticated session
       parameters:
-        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (Content-Disposition) instead of inline text." }
+        - { name: download, in: query, required: false, schema: { type: boolean }, description: "Set to force a file download (application/x-pem-file, Content-Disposition) instead of the default inline text/plain response." }
       responses:
-        "200": { description: OK, content: { application/x-pem-file: { schema: { type: string } } } }
+        "200": { description: "OK — text/plain by default; application/x-pem-file with ?download=1", content: { text/plain: { schema: { type: string } } } }
   /api/v1/pki/roles:
     get:
       summary: PKI issuance roles
@@ -1023,10 +1023,28 @@ paths:
       summary: This supplier's Transit key inventory (namespace-scoped)
       responses:
         "200":
-          description: "OK (empty array on a 403 namespace boundary — by design, not an error)"
+          description: "OK (empty array on a 403 namespace boundary — by design, not an error). Prompt 32 — full TransitKey metadata per key, not bare name strings."
           content:
             application/json:
-              schema: { type: array, items: { type: object, additionalProperties: true } }
+              schema: { type: array, items: { $ref: "#/components/schemas/TransitKey" } }
+  /api/v1/suppliers/{id}/keys/{name}/public-key:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Download the public half of a supplier tenant's asymmetric Transit key (Prompt 32)
+      description: >-
+        Namespace-scoped equivalent of GET /api/v1/keys/{name}/public-key.
+        Never returns private/symmetric key material. Tenant-scoped the same
+        way as GET /api/v1/suppliers/{id}/keys.
+      responses:
+        "200":
+          description: PEM-encoded public key, as a file attachment
+          content:
+            application/x-pem-file:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { description: "Supplier not found, key not found, or has no public key (symmetric type)" }
 
   # ── Teams (Prompt 27) ────────────────────────────────────────────────
   /api/v1/teams:

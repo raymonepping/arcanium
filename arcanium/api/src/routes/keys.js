@@ -80,7 +80,10 @@ export function publicKeyOf(meta) {
   return typeof pem === "string" && pem.trim() ? pem : null;
 }
 
-function projectKey(name, meta) {
+// Prompt 32 — exported so suppliers.js can project namespace-scoped key
+// metadata (getNamespaceTransitKey()) through the exact same shape as
+// root-namespace keys, instead of hand-rolling a second projection.
+export function projectKey(name, meta) {
   return {
     name,
     type: meta.type,
@@ -176,11 +179,22 @@ export async function resolveKeyMeta(name) {
       custody: custodyOf(meta),
       hsm_backed: true,
       managed_key_name: meta._managedKey?.name ?? null,
+      // Found live via Playwright, not the earlier curl-based check (which
+      // happened to verify the LIST route's projectKey() output, a
+      // different code path that already had this field) — this function
+      // builds its own return shape and had simply never included it, so
+      // the key DETAIL page (which is what actually renders the download
+      // button) never received has_public_key at all.
+      has_public_key: publicKeyOf(meta) !== null,
     };
   } catch (hsmErr) {
     try {
       const meta = await getTransitKey(name);
-      return { ...meta, custody: custodyOf(meta) };
+      return {
+        ...meta,
+        custody: custodyOf(meta),
+        has_public_key: publicKeyOf(meta) !== null,
+      };
     } catch (primaryErr) {
       if (primaryErr.vaultStatus === 404 && hsmErr.vaultStatus === 404) {
         const e = new Error("key not found");

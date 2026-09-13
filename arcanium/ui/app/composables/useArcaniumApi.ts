@@ -114,7 +114,9 @@ export function useArcaniumApi() {
     suppliers: () => $get<Supplier[]>('/api/v1/suppliers'),
     supplier:  (id: string) => $get<Supplier>(`/api/v1/suppliers/${id}`),
     supplierApplications: (id: string) => $get<Application[]>(`/api/v1/suppliers/${id}/applications`),
-    supplierKeys: (id: string) => $get<TransitKey[] | string[]>(`/api/v1/suppliers/${id}/keys`),
+    // Prompt 32 — always full TransitKey objects now (previously bare name
+    // strings, masked by the namespace 403 always collapsing this to []).
+    supplierKeys: (id: string) => $get<TransitKey[]>(`/api/v1/suppliers/${id}/keys`),
 
     // ── Applications ───────────────────────────────────────
     applications: () => $get<GenApplication[]>('/api/v1/applications'),
