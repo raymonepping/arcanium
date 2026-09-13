@@ -9,6 +9,7 @@ import { dispatchJob } from "./provisioner/dispatch.js";
 import { ingestAuditLog } from "./evidence/ingest.js";
 import { runSweep } from "./reconciliation/engine.js";
 import { sweepOffboarding } from "./offboarding.js";
+import { executeApprovedDestroys } from "./approval-execution.js";
 
 const POLL_MS = Number(process.env.WORKER_POLL_MS || 3000);
 // Prompt 20 — Deliverable 3: runs on a schedule, reusing this existing job
@@ -86,6 +87,20 @@ async function main() {
             );
         } catch (e) {
           console.error(`[worker] offboarding sweep error: ${e.message}`);
+        }
+        // Prompt 29, Deliverable 6 — same tick: an approved destroy_request
+        // does not execute itself (see approval-execution.js's own header
+        // for why this step was missing entirely before). Runs after the
+        // offboarding sweep so a request approved as part of offboarding
+        // still gets picked up the same tick it was resolved.
+        try {
+          const ex = await executeApprovedDestroys();
+          if (ex.executed || ex.failed || ex.skipped)
+            console.log(
+              `[worker] approval execution: ${ex.checked} approved pending, ${ex.executed} destroyed, ${ex.skipped} skipped (no live trigger), ${ex.failed} failed (will retry)`,
+            );
+        } catch (e) {
+          console.error(`[worker] approval execution error: ${e.message}`);
         }
       }
 

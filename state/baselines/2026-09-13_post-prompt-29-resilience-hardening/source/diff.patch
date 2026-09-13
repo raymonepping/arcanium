@@ -1,0 +1,810 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d4140a9..580f48a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -48,6 +48,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+   evidence-derived `DESIGN.md`, a Playwright-driven baseline/regression
+   process, and a documented release verdict. See
+   [docs/frontend/](docs/frontend/).
++- Resilience hardening (Prompt 29), closing gaps found during a live
++  incident: bounded-backoff retry for both Vault credential-rotation
++  loops (a single failed rotation previously stopped the loop
++  permanently); container healthchecks retargeted from a
++  process-liveness-only probe to a real database-connectivity probe;
++  `KML-DESTR-01` wired into gated-maturity-level enforcement so a
++  failing mandatory control actually caps the level; and a worker step
++  that executes governed key-destruction approvals against Vault
++  (previously approval only ever recorded a status, never executed) —
++  gated on live governance intent (a still-active drift or an
++  in-progress offboarding) after an initial unconditional version
++  destroyed two real, still-in-use keys during this same hardening
++  pass. Shared OIDC-login helper (`scenarios/lib/oidc_login.sh`)
++  replacing three independently-patched inline copies.
+ 
+ - Three-node Vault Raft cluster with a Transit seal provider (`vault-s`) and a
+   separate `+ent.hsm` instance (`vault-hsm`) backed by SoftHSM over a PKCS#11
+diff --git a/arcanium/api/Containerfile b/arcanium/api/Containerfile
+index c6b5e22..21d5903 100644
+--- a/arcanium/api/Containerfile
++++ b/arcanium/api/Containerfile
+@@ -58,6 +58,13 @@ RUN set -e; \
+     grep -q jobsRouter src/index.js || { echo "FATAL: index.js does not mount jobsRouter"; exit 1; }
+ 
+ EXPOSE 3001
++# Prompt 29 — /health/live is hardcoded to always 200 (process-up only); it
++# never noticed the live incident where the DB credential rotation loop
++# died and every authenticated request failed for 13+ minutes while this
++# healthcheck kept reporting healthy. /health/ready actually pings the
++# database with the current pool's credentials and returns 503 when that
++# fails — the correct probe for a container serving live authenticated
++# traffic, not merely "is the process up."
+ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+-  CMD wget -qO- http://localhost:3001/health/live || exit 1
++  CMD wget -qO- http://localhost:3001/health/ready || exit 1
+ CMD ["node", "src/index.js"]
+diff --git a/arcanium/api/src/maturity/controls.js b/arcanium/api/src/maturity/controls.js
+index d7d19ec..1ba24ed 100644
+--- a/arcanium/api/src/maturity/controls.js
++++ b/arcanium/api/src/maturity/controls.js
+@@ -683,6 +683,17 @@ export const MANDATORY_CONTROLS_PER_LEVEL = {
+     "NEG-AUTHZ-01",
+     "AUTO-01",
+     "GOV-01",
++    // Prompt 29 — found live: KML-DESTR-01 is seeded mandatory:true
++    // (migration 022) and the UI badges it "mandatory," but it was never
++    // added here, so a genuine live FAIL on it sat directly under a
++    // "5 / Governed" banner — contradicting this page's own stated
++    // methodology ("a single mandatory control at FAIL or UNKNOWN caps the
++    // level"). Scoped to level 5 only: this control governs completion of
++    // the newest lifecycle stage (Prompt 28) and gating it at levels 1-4
++    // would retroactively fail environments that never adopted expiry-date
++    // desired state at all — that is the existing, correct N/A/UNKNOWN
++    // case, not a FAIL, and is not what this fix is for.
++    "KML-DESTR-01",
+   ],
+ };
+ 
+diff --git a/arcanium/api/src/offboarding.js b/arcanium/api/src/offboarding.js
+index 2071e33..8be885f 100644
+--- a/arcanium/api/src/offboarding.js
++++ b/arcanium/api/src/offboarding.js
+@@ -64,17 +64,25 @@ export async function checkOffboardingCompletion(applicationId) {
+     // selected FROM desired_state WHERE application_id = $1, so it's
+     // guaranteed to belong to this application's own key set.
+     const { rows: apRows } = await query(
+-      `SELECT status FROM approval_requests
++      `SELECT status, executed_at FROM approval_requests
+         WHERE key_name = $1 AND action = 'revoke'
+         ORDER BY created_at DESC LIMIT 1`,
+       [ds.key_name],
+     );
+     const latest = apRows[0];
+-    if (latest && latest.status !== "pending") {
+-      // Resolved either way (approved -> Vault destroy already happened
+-      // via the normal approval-execution path; rejected -> the operator
+-      // decided not to destroy it) — either outcome closes THIS workflow
+-      // step; the row is tombstoned, not left dangling.
++    // Prompt 29 — 'approved' alone used to be treated as resolved here, on
++    // the assumption that approval-execution already happened by the time
++    // this ran. That assumption was false until Deliverable 6 (this same
++    // prompt) actually built that execution step — before it existed,
++    // this would have tombstoned evidence of a "destroyed" key that Vault
++    // still had live. Now: rejected closes the step immediately (nothing
++    // to wait for); approved only closes it once executed_at is actually
++    // set by approval-execution.js.
++    const resolved =
++      latest &&
++      (latest.status === "rejected" ||
++        (latest.status === "approved" && latest.executed_at));
++    if (resolved) {
+       await query(
+         "UPDATE desired_state SET archived_at = now() WHERE id = $1",
+         [ds.id],
+diff --git a/arcanium/api/src/routes/health.js b/arcanium/api/src/routes/health.js
+index 6c61728..c5dcba8 100644
+--- a/arcanium/api/src/routes/health.js
++++ b/arcanium/api/src/routes/health.js
+@@ -31,6 +31,22 @@ healthRouter.get("/ready", async (_req, res) => {
+       .status(503)
+       .json({ status: "unavailable", reason: "vault not authenticated" });
+   }
++  // Prompt 29 — catch a wedged rotation loop BEFORE the credential actually
++  // expires, not only after ping() starts failing. lastDbRotationError set
++  // while dbCredsExpiry is imminent means the retry loop is actively
++  // struggling (found live: previously this had no retry at all and simply
++  // stopped, so this signal never existed to check).
++  const expirySoon =
++    vaultState.dbCredsExpiry &&
++    new Date(vaultState.dbCredsExpiry).getTime() - Date.now() < 60_000;
++  if (expirySoon && vaultState.lastDbRotationError) {
++    return res.status(503).json({
++      status: "unavailable",
++      reason: "db credential rotation retrying, expires soon",
++      dbCredsExpiry: vaultState.dbCredsExpiry,
++      lastDbRotationError: vaultState.lastDbRotationError,
++    });
++  }
+   try {
+     await ping();
+     res.json({ status: "ready" });
+@@ -67,11 +83,20 @@ healthRouter.get("/", async (_req, res) => {
+       reachable: true, // We can't easily probe without a token; authenticated implies reachable
+       authenticated: vaultState.authenticated,
+       tokenExpiry: vaultState.tokenExpiry,
++      lastTokenRefreshAt: vaultState.lastTokenRefreshAt,
++      ...(vaultState.lastTokenRefreshError
++        ? { lastTokenRefreshError: vaultState.lastTokenRefreshError }
++        : {}),
+       ...(vaultState.authenticated ? {} : { error: "not authenticated" }),
+     },
+     database: {
+       reachable: dbReachable,
+       latencyMs: dbLatencyMs,
++      dbCredsExpiry: vaultState.dbCredsExpiry,
++      lastDbRotationAt: vaultState.lastDbRotationAt,
++      ...(vaultState.lastDbRotationError
++        ? { lastDbRotationError: vaultState.lastDbRotationError }
++        : {}),
+       ...(dbError ? { error: dbError } : {}),
+     },
+   });
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index cb79d7e..b87d92b 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -93,8 +93,26 @@ const state = {
+   loginAttempts: 0,
+   refreshTimer: null,
+   dbRotateTimer: null,
++  // Prompt 29 — found live: neither of these was ever set, because neither
++  // scheduleTokenRefresh nor scheduleDbCredsRotation retried after a
++  // failure (see below) — there was nothing to observe. A stack that has
++  // been silently un-rotating for hours looks identical, from state alone,
++  // to one that has never rotated at all without these.
++  lastDbRotationAt: null,
++  lastDbRotationError: null,
++  lastTokenRefreshAt: null,
++  lastTokenRefreshError: null,
+ };
+ 
++// Prompt 29 — bounded backoff for both retry loops below. Capped, not
++// unbounded-immediate: a credential source down for a few minutes (a Vault
++// blip, a network hiccup) should be retried promptly; one down for longer
++// is a real outage and hammering it every 5s adds no value.
++const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000];
++function retryDelayMs(attempt) {
++  return RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
++}
++
+ // ── AppRole login with exponential backoff ─────────────────────────────────
+ async function login() {
+   const delays = [1000, 2000, 4000, 8000, 16000];
+@@ -126,16 +144,30 @@ async function login() {
+   );
+ }
+ 
+-function scheduleTokenRefresh(ttlSeconds) {
++// Prompt 29 — retryAttempt tracks a failure streak for THIS refresh cycle
++// only; a successful login() call schedules the next normal-cadence
++// refresh itself (via its own call to scheduleTokenRefresh inside login()),
++// which resets the streak back to 0. Previously, a failed refresh set
++// authenticated=false and simply stopped — found live as the same
++// dead-end pattern as scheduleDbCredsRotation below, just never actually
++// triggered for the token (the DB credential hit it first).
++function scheduleTokenRefresh(ttlSeconds, retryAttempt = 0) {
+   clearTimeout(state.refreshTimer);
+-  const delay = Math.floor(ttlSeconds * 0.8) * 1000;
++  const delay =
++    retryAttempt === 0 ? Math.floor(ttlSeconds * 0.8) * 1000 : retryDelayMs(retryAttempt);
+   state.refreshTimer = setTimeout(async () => {
+-    console.log("[vault] refreshing token...");
++    console.log(`[vault] refreshing token... (attempt ${retryAttempt + 1})`);
+     try {
+       await login();
++      state.lastTokenRefreshAt = new Date();
++      state.lastTokenRefreshError = null;
+     } catch (err) {
+-      console.error(`[vault] token refresh failed: ${err.message}`);
++      state.lastTokenRefreshError = { at: new Date(), message: err.message };
++      console.error(
++        `[vault] token refresh failed (attempt ${retryAttempt + 1}): ${err.message} — retrying`,
++      );
+       state.authenticated = false;
++      scheduleTokenRefresh(ttlSeconds, retryAttempt + 1);
+     }
+   }, delay);
+   state.refreshTimer.unref();
+@@ -160,18 +192,38 @@ async function fetchDbCredentials() {
+   return { username, password, lease_duration: leaseDuration };
+ }
+ 
+-function scheduleDbCredsRotation(leaseDuration) {
++// Prompt 29 — found live: a single failed rotation attempt (here, a Vault
++// GET that hit the 5s armTimeout above) left this loop permanently dead —
++// the only place that ever called scheduleDbCredsRotation again was the
++// success path of fetchDbCredentials() itself, which is exactly what had
++// just failed. The credential then expired on Postgres's own VALID UNTIL
++// clock with no further attempt ever made, ~13 minutes before this was
++// diagnosed. retryAttempt closes that: a failure reschedules itself
++// directly, at bounded backoff, instead of relying on a success that
++// didn't happen.
++function scheduleDbCredsRotation(leaseDuration, retryAttempt = 0) {
+   clearTimeout(state.dbRotateTimer);
+-  const delay = Math.floor(leaseDuration * 0.75) * 1000;
++  const delay =
++    retryAttempt === 0
++      ? Math.floor(leaseDuration * 0.75) * 1000
++      : retryDelayMs(retryAttempt);
+   state.dbRotateTimer = setTimeout(async () => {
+-    console.log("[vault] rotating db credentials...");
++    console.log(`[vault] rotating db credentials... (attempt ${retryAttempt + 1})`);
+     try {
++      // fetchDbCredentials() schedules the NEXT normal-cadence rotation
++      // itself on success (retryAttempt resets to 0) — see its own body.
+       const creds = await fetchDbCredentials();
+       const { rotateCreds } = await import("./db.js");
+       await rotateCreds(creds.username, creds.password);
++      state.lastDbRotationAt = new Date();
++      state.lastDbRotationError = null;
+       console.log("[vault] db credentials rotated successfully");
+     } catch (err) {
+-      console.error(`[vault] db creds rotation failed: ${err.message}`);
++      state.lastDbRotationError = { at: new Date(), message: err.message };
++      console.error(
++        `[vault] db creds rotation failed (attempt ${retryAttempt + 1}): ${err.message} — retrying`,
++      );
++      scheduleDbCredsRotation(leaseDuration, retryAttempt + 1);
+     }
+   }, delay);
+   state.dbRotateTimer.unref();
+@@ -193,6 +245,13 @@ export function getStatus() {
+     tokenExpiry: state.tokenExpiry,
+     dbCredsExpiry: state.dbCredsExpiry,
+     loginAttempts: state.loginAttempts,
++    // Prompt 29 — the observable half of the retry-chain fix above: a
++    // rotation that is retrying (not dead) is now distinguishable from one
++    // that succeeded, and from one that never ran at all (both null).
++    lastDbRotationAt: state.lastDbRotationAt,
++    lastDbRotationError: state.lastDbRotationError,
++    lastTokenRefreshAt: state.lastTokenRefreshAt,
++    lastTokenRefreshError: state.lastTokenRefreshError,
+   };
+ }
+ 
+diff --git a/arcanium/api/src/worker.js b/arcanium/api/src/worker.js
+index b3bb494..d94d0c0 100644
+--- a/arcanium/api/src/worker.js
++++ b/arcanium/api/src/worker.js
+@@ -9,6 +9,7 @@ import { dispatchJob } from "./provisioner/dispatch.js";
+ import { ingestAuditLog } from "./evidence/ingest.js";
+ import { runSweep } from "./reconciliation/engine.js";
+ import { sweepOffboarding } from "./offboarding.js";
++import { executeApprovedDestroys } from "./approval-execution.js";
+ 
+ const POLL_MS = Number(process.env.WORKER_POLL_MS || 3000);
+ // Prompt 20 — Deliverable 3: runs on a schedule, reusing this existing job
+@@ -87,6 +88,20 @@ async function main() {
+         } catch (e) {
+           console.error(`[worker] offboarding sweep error: ${e.message}`);
+         }
++        // Prompt 29, Deliverable 6 — same tick: an approved destroy_request
++        // does not execute itself (see approval-execution.js's own header
++        // for why this step was missing entirely before). Runs after the
++        // offboarding sweep so a request approved as part of offboarding
++        // still gets picked up the same tick it was resolved.
++        try {
++          const ex = await executeApprovedDestroys();
++          if (ex.executed || ex.failed || ex.skipped)
++            console.log(
++              `[worker] approval execution: ${ex.checked} approved pending, ${ex.executed} destroyed, ${ex.skipped} skipped (no live trigger), ${ex.failed} failed (will retry)`,
++            );
++        } catch (e) {
++          console.error(`[worker] approval execution error: ${e.message}`);
++        }
+       }
+ 
+       if (!rows.length) {
+diff --git a/compose/arcanium/compose.yaml b/compose/arcanium/compose.yaml
+index d289ddc..758ccb4 100644
+--- a/compose/arcanium/compose.yaml
++++ b/compose/arcanium/compose.yaml
+@@ -82,8 +82,14 @@ services:
+       - arcanium-control
+       - arcanium-vault-internal
+     restart: unless-stopped
++    # Prompt 29 — /health/live always returns 200 (process-up only) and
++    # never noticed a live incident where the DB credential rotation loop
++    # died silently and every authenticated request failed for 13+ minutes
++    # while podman kept reporting this container healthy. /health/ready
++    # actually pings the database with the current pool and returns 503 on
++    # failure — the correct probe here.
+     healthcheck:
+-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/live || exit 1"]
++      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/ready || exit 1"]
+       interval: 15s
+       timeout: 5s
+       start_period: 30s
+@@ -139,8 +145,14 @@ services:
+     networks:
+       - arcanium-control
+       - arcanium-vault-internal
++    # Prompt 29 — /health/live always returns 200 (process-up only) and
++    # never noticed a live incident where the DB credential rotation loop
++    # died silently and every authenticated request failed for 13+ minutes
++    # while podman kept reporting this container healthy. /health/ready
++    # actually pings the database with the current pool and returns 503 on
++    # failure — the correct probe here.
+     healthcheck:
+-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/live || exit 1"]
++      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/ready || exit 1"]
+       interval: 15s
+       timeout: 5s
+       start_period: 30s
+diff --git a/scenarios/01_onboarding/run.sh b/scenarios/01_onboarding/run.sh
+index 6200153..5ae3943 100755
+--- a/scenarios/01_onboarding/run.sh
++++ b/scenarios/01_onboarding/run.sh
+@@ -6,16 +6,36 @@
+ set -euo pipefail
+ 
+ REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
++set -a
++[ -f "$REPO_ROOT/.env" ] && . "$REPO_ROOT/.env"
++set +a
+ ARCANIUM_API="${ARCANIUM_API:-http://localhost:3001}"
+ 
+ echo "[onboarding] starting"
+ 
++# ── 0. Authenticate if the stack requires it ──────────────────────────────
++# This script predates Phase 18's real OIDC auth and, until now, always
++# sent plain unauthenticated requests — found live (curl -f's own exit
++# code 22, "HTTP error >= 400") when ARCANIUM_AUTH_ENABLED=true rejected
++# every call with 401. Prompt 29 — extracted into scenarios/lib/
++# oidc_login.sh after this exact block was independently re-patched into
++# two other scenario scripts the same day.
++source "$REPO_ROOT/scenarios/lib/oidc_login.sh"
++OIDC_LOGIN_TAG="onboarding"
++CURL_AUTH=()
++if [ "$(auth_enabled "$ARCANIUM_API")" = "true" ]; then
++  echo "[onboarding] ARCANIUM_AUTH_ENABLED — signing in as demo-architect"
++  oidc_login "demo-architect" "Arcanium-arch-2026" "$ARCANIUM_API" || exit 1
++  trap 'rm -f "$OIDC_JAR"' EXIT
++  CURL_AUTH=(-b "$OIDC_JAR")
++fi
++
+ # ── 1. Register applications in Arcanium API ─────────────────────────────
+ register_app() {
+   local name="$1" desc="$2"
+   # Check if already registered
+   local existing
+-  existing=$(curl -sf "${ARCANIUM_API}/api/v1/applications" |
++  existing=$(curl -sf "${CURL_AUTH[@]}" "${ARCANIUM_API}/api/v1/applications" |
+     jq -r --arg n "$name" '.[] | select(.name==$n) | .id' 2>/dev/null || true)
+   if [ -n "$existing" ]; then
+     echo "[onboarding] '$name' already registered: $existing"
+@@ -23,7 +43,7 @@ register_app() {
+     return
+   fi
+   local id
+-  id=$(curl -sf -X POST "${ARCANIUM_API}/api/v1/applications" \
++  id=$(curl -sf "${CURL_AUTH[@]}" -X POST "${ARCANIUM_API}/api/v1/applications" \
+     -H "Content-Type: application/json" \
+     -d "{\"name\":\"${name}\",\"description\":\"${desc}\"}" | jq -r .id)
+   echo "[onboarding] registered '${name}': ${id}"
+@@ -34,15 +54,25 @@ register_app "payments-api" "Transit encryption demo" >/dev/null
+ register_app "pki-client" "PKI certificate demo" >/dev/null
+ 
+ # ── 2. Apply workloads Terraform (creates key, roles, policies) ───────────
+-echo "[onboarding] applying vault-workloads terraform..."
+-make -C "$REPO_ROOT" tf-workloads
+-
+-# ── 3. Generate AppRole secret_ids ────────────────────────────────────────
++# VAULT_TOKEN must be exported BEFORE this call, not after: terraform's
++# vault provider (terraform/vault-workloads/main.tf) reads it from the
++# environment, and when this script runs as its own process (exactly what
++# `make onboarding` does — a plain `./run.sh`, no inherited export chain
++# from a caller like rehydrate-stack.sh) there is nothing else to supply
++# it. Found live: with the export left down in step 3 (its original
++# position), a standalone run fell through to whatever stale token
++# `~/.vault-token` happened to hold, producing a real "403 permission
++# denied / invalid token" from terraform against auth/token/lookup-self —
++# not a Vault ACL problem, just a missing token in this process's env.
+ export VAULT_ADDR="${VAULT_ADDR:-https://127.0.0.1:18200}"
+ export VAULT_CACERT="${VAULT_CACERT:-${REPO_ROOT}/vault-tls/ca-chain.pem}"
+ export VAULT_TOKEN
+-VAULT_TOKEN=$(jq -r .root_token "${REPO_ROOT}/.secrets/vault/cluster-init.json")
++VAULT_TOKEN=$(jq -er '.root_token' "${REPO_ROOT}/.secrets/vault/cluster-init.json")
+ 
++echo "[onboarding] applying vault-workloads terraform..."
++make -C "$REPO_ROOT" tf-workloads
++
++# ── 3. Generate AppRole secret_ids ────────────────────────────────────────
+ echo "[onboarding] generating AppRole credentials..."
+ 
+ PAYMENTS_ROLE_ID=$(vault read -field=role_id auth/approle/role/payments-workload/role-id)
+diff --git a/scenarios/05_approval/provision.sh b/scenarios/05_approval/provision.sh
+index 7f16d6c..9069686 100755
+--- a/scenarios/05_approval/provision.sh
++++ b/scenarios/05_approval/provision.sh
+@@ -14,11 +14,27 @@ export VAULT_TOKEN=$(python3 -c "import sys,json; print(json.load(open('$ROOT_DI
+ 
+ ARCANIUM_API="${ARCANIUM_API:-http://localhost:3001}"
+ 
++# ── Authenticate if the stack requires it ─────────────────────────────────
++# Same predates-auth gap as scenarios/01_onboarding/run.sh: this script's
++# plain unauthenticated POST to /api/v1/applications 401s once
++# ARCANIUM_AUTH_ENABLED=true. Prompt 29 — extracted into scenarios/lib/
++# oidc_login.sh after this exact block was independently re-patched into
++# two other scenario scripts the same day.
++source "$ROOT_DIR/scenarios/lib/oidc_login.sh"
++OIDC_LOGIN_TAG="approval-provision"
++CURL_AUTH=()
++if [ "$(auth_enabled "$ARCANIUM_API")" = "true" ]; then
++  echo "[approval-provision] ARCANIUM_AUTH_ENABLED — signing in as demo-architect"
++  oidc_login "demo-architect" "Arcanium-arch-2026" "$ARCANIUM_API" || exit 1
++  trap 'rm -f "$OIDC_JAR"' EXIT
++  CURL_AUTH=(-b "$OIDC_JAR")
++fi
++
+ echo "[approval-provision] registering external-supplier in Arcanium API..."
+-APP_RESPONSE=$(curl -sf -X POST "$ARCANIUM_API/api/v1/applications" \
++APP_RESPONSE=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/applications" \
+   -H "Content-Type: application/json" \
+   -d '{"name":"external-supplier","description":"Control Group demo workload"}' 2>/dev/null ||
+-  curl -sf "$ARCANIUM_API/api/v1/applications" | python3 -c "import sys,json; apps=json.load(sys.stdin); [print(json.dumps(a)) for a in apps if a['name']=='external-supplier']" | head -1)
++  curl -sf "${CURL_AUTH[@]}" "$ARCANIUM_API/api/v1/applications" | python3 -c "import sys,json; apps=json.load(sys.stdin); [print(json.dumps(a)) for a in apps if a['name']=='external-supplier']" | head -1)
+ 
+ APP_ID=$(echo "$APP_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+ echo "[approval-provision] app_id: $APP_ID"
+diff --git a/scenarios/06_supplier_isolation/provision.sh b/scenarios/06_supplier_isolation/provision.sh
+index c2e56fb..5a4c216 100755
+--- a/scenarios/06_supplier_isolation/provision.sh
++++ b/scenarios/06_supplier_isolation/provision.sh
+@@ -3,23 +3,58 @@
+ # Register suppliers in Arcanium API and generate AppRole credentials in each namespace.
+ set -euo pipefail
+ 
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
++
+ export VAULT_ADDR=https://127.0.0.1:18200
+ export VAULT_CACERT=$(pwd)/vault-tls/ca-chain.pem
+-export VAULT_TOKEN=$(jq -r .root_token .secrets/vault/cluster-init.json)
++export VAULT_TOKEN=$(jq -er '.root_token' .secrets/vault/cluster-init.json)
++
++ARCANIUM_API="${ARCANIUM_API:-http://localhost:3001}"
++
++# ── Authenticate if the stack requires it ─────────────────────────────────
++# Same predates-auth gap as scenarios/01_onboarding/run.sh: this script's
++# plain unauthenticated POSTs to /api/v1/suppliers 401 once
++# ARCANIUM_AUTH_ENABLED=true. Prompt 29 — extracted into scenarios/lib/
++# oidc_login.sh after this exact block was independently re-patched into
++# two other scenario scripts the same day.
++source "$REPO_ROOT/scenarios/lib/oidc_login.sh"
++OIDC_LOGIN_TAG="isolation"
++CURL_AUTH=()
++if [ "$(auth_enabled "$ARCANIUM_API")" = "true" ]; then
++  echo "[isolation] ARCANIUM_AUTH_ENABLED — signing in as demo-architect"
++  oidc_login "demo-architect" "Arcanium-arch-2026" "$ARCANIUM_API" || exit 1
++  trap 'rm -f "$OIDC_JAR"' EXIT
++  CURL_AUTH=(-b "$OIDC_JAR")
++fi
+ 
+ echo "[isolation] registering suppliers in Arcanium API..."
+ 
+-PEPSI_ID=$(curl -sf -X POST http://localhost:3001/api/v1/suppliers \
+-  -H "Content-Type: application/json" \
+-  -d '{"name":"pepsi","vault_namespace":"suppliers/pepsi","sla_tier":"standard"}' |
+-  jq -r .id)
+-echo "[isolation] registered pepsi: $PEPSI_ID"
+-
+-COCACOLA_ID=$(curl -sf -X POST http://localhost:3001/api/v1/suppliers \
+-  -H "Content-Type: application/json" \
+-  -d '{"name":"cocacola","vault_namespace":"suppliers/cocacola","sla_tier":"standard"}' |
+-  jq -r .id)
+-echo "[isolation] registered cocacola: $COCACOLA_ID"
++register_supplier() {
++  local name="$1" namespace="$2"
++  # Idempotency: a prior successful run (data survives a stack restart,
++  # since it lives in Postgres) leaves this supplier already registered —
++  # found live as a real 409 "supplier name or namespace already exists"
++  # from a plain re-POST. Check first, same pattern as
++  # scenarios/01_onboarding/run.sh's register_app().
++  local existing
++  existing=$(curl -sf "${CURL_AUTH[@]}" "${ARCANIUM_API}/api/v1/suppliers" |
++    jq -r --arg n "$name" '.[] | select(.name==$n) | .id' 2>/dev/null || true)
++  if [ -n "$existing" ]; then
++    echo "[isolation] '$name' already registered: $existing" >&2
++    echo "$existing"
++    return
++  fi
++  local id
++  id=$(curl -sf "${CURL_AUTH[@]}" -X POST "${ARCANIUM_API}/api/v1/suppliers" \
++    -H "Content-Type: application/json" \
++    -d "{\"name\":\"${name}\",\"vault_namespace\":\"${namespace}\",\"sla_tier\":\"standard\"}" | jq -r .id)
++  echo "[isolation] registered '${name}': ${id}" >&2
++  echo "$id"
++}
++
++PEPSI_ID=$(register_supplier "pepsi" "suppliers/pepsi")
++COCACOLA_ID=$(register_supplier "cocacola" "suppliers/cocacola")
+ 
+ echo "[isolation] generating AppRole credentials in each namespace..."
+ 
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index dd07dde..aa5904f 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -315,6 +315,110 @@ else
+   bad "a hard DELETE of an evidence/history table was found: $HITS"
+ fi
+ 
++echo "== Prompt 29 — Resilience Hardening =="
++echo
++
++# ── Prompt 29, Deliverable 1 — both vault.js retry loops must reschedule
++# themselves on failure, not just log and stop. Found live: neither did,
++# and a single transient Vault timeout permanently killed DB-credential
++# rotation for the rest of the process's life. Static check: each
++# function's own catch block must call itself again.
++for fn in scheduleDbCredsRotation scheduleTokenRefresh; do
++  BODY=$(awk "/^function $fn\(/,/^}/" arcanium/api/src/vault.js)
++  # The declaration line itself matches "$fn(" once (as "function $fn(...");
++  # a genuine self-reschedule inside the catch path is a second occurrence.
++  HITS=$(echo "$BODY" | grep -c "$fn(")
++  if [ "$HITS" -ge 2 ]; then
++    ok "$fn's body calls itself again (no dead-end retry chain)"
++  else
++    bad "$fn's body never calls itself again — a single failure would permanently stop this loop"
++  fi
++done
++
++# ── Deliverable 2 — container healthchecks must target /health/ready
++# (DB-credential-aware), not /health/live (always 200, process-up only).
++# Found live: both stayed on /health/live through 13+ minutes of a real
++# incident (dead credential rotation) without ever reporting unhealthy.
++# Only the actual directive lines (CMD/test:), never prose comments
++# explaining the change (which legitimately mention "/health/live" by name).
++HC_FILES="arcanium/api/Containerfile compose/arcanium/compose.yaml"
++HC_DIRECTIVE_HITS=$(grep -rnE '^\s*(CMD |test:)' $HC_FILES 2>/dev/null | grep "health/live" || true)
++if [ -n "$HC_DIRECTIVE_HITS" ]; then
++  bad "a healthcheck directive still targets /health/live (process-up only, not DB-credential-aware): $HC_DIRECTIVE_HITS"
++else
++  ok "no container healthcheck directive targets /health/live — all use /health/ready"
++fi
++HC_READY_HITS=$(grep -rnE '^\s*(CMD |test:)' $HC_FILES 2>/dev/null | grep -c "health/ready" || true)
++if [ "${HC_READY_HITS:-0}" -ge 1 ]; then
++  ok "container healthcheck directive(s) target /health/ready (DB-credential-aware)"
++else
++  bad "no container healthcheck directive targets /health/ready at all"
++fi
++
++# ── Deliverable 3 — the three scripts this prompt found broken
++# (predates-auth gap) must now source the shared helper, not their own
++# inline copy. Scoped deliberately to those three: several OTHER scenario
++# scripts (11_security_foundation, 12_reconciliation, 16_multitenancy,
++# 14_evidence_v2, pre_24_persistence, 17_terraform_provider) already
++# defined their own LOCAL oidc_login() from earlier prompts, predating this
++# one — real, pre-existing duplication, but consolidating those is a
++# separate, not-yet-done pass, not claimed here.
++REFACTORED_SCRIPTS="scenarios/01_onboarding/run.sh scenarios/06_supplier_isolation/provision.sh scenarios/05_approval/provision.sh"
++NOT_SOURCING=""
++for f in $REFACTORED_SCRIPTS; do
++  grep -q "scenarios/lib/oidc_login.sh" "$f" || NOT_SOURCING="${NOT_SOURCING}${f} "
++done
++if [ -z "$NOT_SOURCING" ]; then
++  ok "all three scripts fixed this prompt (onboarding, supplier isolation, approval provision) source scenarios/lib/oidc_login.sh"
++else
++  bad "expected to source scenarios/lib/oidc_login.sh but do not: $NOT_SOURCING"
++fi
++
++# ── Deliverable 5 — KML-DESTR-01 must actually cap the gated maturity
++# level when FAIL, not merely display a "mandatory" badge. Found live: it
++# was seeded mandatory:true but absent from MANDATORY_CONTROLS_PER_LEVEL,
++# so a real live FAIL sat under a "5 / Governed" banner. Pure unit check
++# against the exported function — no live Vault/DB needed.
++GATED_CHECK=$(
++  cd arcanium/api &&
++    VAULT_ADDR=https://127.0.0.1:18200 VAULT_CACERT="$(pwd)/../../vault-tls/ca-chain.pem" \
++      VAULT_ROLE_ID=x VAULT_SECRET_ID=x POSTGRES_HOST=x POSTGRES_PORT=5432 POSTGRES_DB=x \
++      node --input-type=module -e "
++import { gatedLevel } from './src/maturity/controls.js';
++const base = { 'KEY-INV-01':'PASS','TEN-ISO-01':'PASS','ROT-POL-01':'PASS',
++  'AUD-01':'PASS','WLI-01':'PASS','NEG-AUTHZ-01':'PASS','AUTO-01':'PASS','GOV-01':'PASS' };
++process.stdout.write(String(gatedLevel({...base, 'KML-DESTR-01':'FAIL'})));
++" 2>/dev/null
++)
++if [ "$GATED_CHECK" = "4" ]; then
++  ok "gatedLevel() caps at 4 (not 5) when KML-DESTR-01 rolls up to FAIL"
++else
++  bad "gatedLevel() returned '$GATED_CHECK' with KML-DESTR-01=FAIL — expected 4 (mandatory control not actually gating)"
++fi
++
++# ── Deliverable 6 — approval-execution.js must never treat a merely-once-
++# approved row as live intent; it must require an ACTIVE trigger (a
++# currently-DRIFTED expiry_date row, or an in-progress offboarding) before
++# destroying anything. Found live, the hard way: the first version of this
++# module executed unconditionally and destroyed a real, still-in-use key
++# (payments-api-key) whose destroy request had been approved a day earlier
++# and never revoked, even though a CISO had since explicitly used Accept
++# Exception to protect it. Static check only, deliberately — see this
++# section's own header comment for why a live version of this check is
++# not part of the automated suite.
++if grep -q "hasLiveDestroyIntent" arcanium/api/src/approval-execution.js &&
++  grep -q "getDispositionFor" arcanium/api/src/approval-execution.js; then
++  ok "approval-execution.js gates every destroy on hasLiveDestroyIntent() (checked against live reconciliation disposition)"
++else
++  bad "approval-execution.js no longer contains the hasLiveDestroyIntent() safety gate"
++fi
++echo "  ? (skipped by design) a live end-to-end destroy-execution proof was performed"
++echo "    manually against disposable fixture keys during this prompt's own execution"
++echo "    (not added as an automated fitness test — a test that itself destroys Vault"
++echo "    keys on every CI run is exactly the kind of risk this prompt exists to reduce,"
++echo "    and the manual proof already showed both the skip path and the execute path"
++echo "    behaving correctly against real, disposable keys)."
++
+ echo
+ TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+diff --git a/scripts/compose.sh b/scripts/compose.sh
+index c0ac86b..2c7771f 100755
+--- a/scripts/compose.sh
++++ b/scripts/compose.sh
+@@ -35,8 +35,46 @@ fi
+ : "${PODMAN_COMPOSE_PROVIDER:=podman-compose}"
+ export PODMAN_COMPOSE_PROVIDER
+ 
+-exec podman compose \
+-  --project-name "arcanium-$stack" \
+-  --file "$compose_file" \
+-  --env-file "$project_root/.env" \
+-  "$@"
++run_compose() {
++  podman compose \
++    --project-name "arcanium-$stack" \
++    --file "$compose_file" \
++    --env-file "$project_root/.env" \
++    "$@"
++}
++
++# Prompt 29, Deliverable 7 — found live: a plain `up -d` against the
++# identity stack left arcanium-ldap-admin not running at all (not even a
++# stopped container) after `podman-compose` printed errors about
++# arcanium-openldap having "dependent containers" and its name "already in
++# use" — a real podman-compose dependency-ordering race, not a genuine
++# config problem. A second, identical `up -d` immediately afterward started
++# it cleanly. Retry once, only for `up` invocations, and only when the
++# output actually matches this known race — a genuine failure (bad image,
++# real port conflict, etc.) still fails after one retry, not silently
++# forever.
++first_arg="${1:-}"
++if [ "$first_arg" != "up" ]; then
++  exec podman compose \
++    --project-name "arcanium-$stack" \
++    --file "$compose_file" \
++    --env-file "$project_root/.env" \
++    "$@"
++fi
++unset first_arg
++
++log=$(mktemp)
++trap 'rm -f "$log"' EXIT
++
++status=0
++run_compose "$@" >"$log" 2>&1 || status=$?
++cat "$log"
++
++if [ "$status" -ne 0 ] && grep -qE 'dependent container|already in use' "$log"; then
++  echo "[compose.sh] '$stack up' hit the known dependent-container race — retrying once" >&2
++  status=0
++  run_compose "$@" >"$log" 2>&1 || status=$?
++  cat "$log"
++fi
++
++exit "$status"
+diff --git a/scripts/verify-stack.sh b/scripts/verify-stack.sh
+index 8ff941c..9e71285 100755
+--- a/scripts/verify-stack.sh
++++ b/scripts/verify-stack.sh
+@@ -523,6 +523,48 @@ for cname in "${CONTAINERS[@]}"; do
+   fi
+ done
+ 
++# Prompt 29, Deliverable 7 — the hand-maintained CONTAINERS list above is
++# "the containers that matter," curated by memory. It missed arcanium-
++# ldap-admin entirely: compose/identity/compose.yaml defines it with no
++# profiles: restriction, so `make identity-up`'s bare `up -d` should start
++# it — but after a full `make rehydrate` it was not running at all (not
++# even stopped), and nothing here would have said so. This block derives
++# the expected set programmatically from every compose/*/compose.yaml
++# instead of trusting a curated list.
++#
++# One documented exclusion: arcanium-api-dev (compose/arcanium/
++# compose.yaml) carries no profiles: tag either, but `make arcanium-up`
++# deliberately starts only `arcanium-ui arcanium-api arcanium-worker` —
++# api-dev is an explicit opt-in (`make arcanium-api-dev-up`), not part of
++# the default bring-up, so its absence is not a gap. Checked against every
++# other compose file's own actual `up -d` invocation in the Makefile: none
++# of them name an explicit subset, so every other non-profiled service is
++# expected to be running.
++EXPECTED_SERVICES=$(
++  for f in compose/*/compose.yaml; do
++    awk '
++      /^  [A-Za-z0-9_-]+:[[:space:]]*$/ {
++        if (svc != "" && cname != "" && !profiled) print cname
++        svc = $1; cname = ""; profiled = 0; next
++      }
++      /^    container_name:/ { cname = $2; gsub(/^[ \t]+|[ \t]+$/, "", cname); next }
++      /^    profiles:/ { profiled = 1; next }
++      END { if (svc != "" && cname != "" && !profiled) print cname }
++    ' "$f" 2>/dev/null
++  done | grep -v '^arcanium-api-dev$' | sort -u
++)
++MISSING_SERVICES=""
++while IFS= read -r cname; do
++  [ -z "$cname" ] && continue
++  STATUS=$(podman inspect "$cname" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
++  [ "$STATUS" != "running" ] && MISSING_SERVICES="${MISSING_SERVICES}${cname} "
++done <<<"$EXPECTED_SERVICES"
++if [ -z "$MISSING_SERVICES" ]; then
++  pass "every non-profile-gated compose service is running (full inventory, not the curated list above)"
++else
++  fail "compose-defined services not running: ${MISSING_SERVICES}"
++fi
++
+ # ── 10. 4xx / error contract spot-checks ──────────────────────────────────────
+ section "10. Error Contract"
+ check "GET  /api/v1/applications/bad-uuid  → 400" 400 "$API/api/v1/applications/not-a-uuid"
+diff --git a/state/CURRENT b/state/CURRENT
+index 539210f..3f65325 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-docs-toolchain-quality-gate
++state/baselines/2026-09-13_pre-prompt-29-resilience-hardening
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index e3b1f02..5d4c75e 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -646,10 +646,11 @@ capture_lifecycle_completion() {
+   if ! running arcanium-postgres; then
+     jq -n '{service_accounts: {active: null, revoked: null},
+             expiry_date: {tracked: null, drifted: null},
+-            offboarding: {initiated: null, completed: null}}' \
++            offboarding: {initiated: null, completed: null},
++            approval_execution_backlog: null}' \
+       >"$d/lifecycle_completion.json"
+   else
+-    local sa_active sa_revoked exp_tracked exp_drifted ob_initiated ob_completed
++    local sa_active sa_revoked exp_tracked exp_drifted ob_initiated ob_completed approval_backlog
+     sa_active=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+       "select count(*) from service_accounts where revoked_at is null;" 2>/dev/null | tr -d '[:space:]')
+     sa_revoked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+@@ -672,13 +673,26 @@ capture_lifecycle_completion() {
+       "select count(*) from applications where offboarding_initiated_at is not null;" 2>/dev/null | tr -d '[:space:]')
+     ob_completed=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+       "select count(*) from applications where offboarded_at is not null;" 2>/dev/null | tr -d '[:space:]')
++    # Prompt 29, Deliverable 9 — a persistently nonzero count here means
++    # approval-execution.js's own worker step is stuck (silently not
++    # keeping up with real approved destroys), the same class of
++    # silent-backlog failure this whole prompt exists to catch. Zero in a
++    # healthy baseline is expected; a row can also sit here deliberately
++    # when hasLiveDestroyIntent() correctly skips it (found live,
++    # 2026-09-13 — see approval-execution.js's own header) — this count
++    # alone can't distinguish "stuck" from "correctly skipped," only that
++    # something here needs a human look if it stays nonzero across baselines.
++    approval_backlog=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
++      "select count(*) from approval_requests where status='approved' and action='revoke' and executed_at is null;" 2>/dev/null | tr -d '[:space:]')
+     jq -n \
+       --arg saa "${sa_active:-0}" --arg sar "${sa_revoked:-0}" \
+       --arg ext "${exp_tracked:-0}" --arg exd "${exp_drifted:-0}" \
+       --arg obi "${ob_initiated:-0}" --arg obc "${ob_completed:-0}" \
++      --arg aeb "${approval_backlog:-0}" \
+       '{service_accounts: {active: ($saa | tonumber), revoked: ($sar | tonumber)},
+         expiry_date: {tracked: ($ext | tonumber), drifted: ($exd | tonumber)},
+-        offboarding: {initiated: ($obi | tonumber), completed: ($obc | tonumber)}}' \
++        offboarding: {initiated: ($obi | tonumber), completed: ($obc | tonumber)},
++        approval_execution_backlog: ($aeb | tonumber)}' \
+       >"$d/lifecycle_completion.json"
+   fi
+ 

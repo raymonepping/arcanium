@@ -1,0 +1,15 @@
+{
+  "service_accounts": {
+    "active": 0,
+    "revoked": 22
+  },
+  "expiry_date": {
+    "tracked": 1,
+    "drifted": 1
+  },
+  "offboarding": {
+    "initiated": 1,
+    "completed": 1
+  },
+  "approval_execution_backlog": 0
+}

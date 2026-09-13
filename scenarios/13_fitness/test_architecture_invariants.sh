@@ -315,6 +315,110 @@ else
   bad "a hard DELETE of an evidence/history table was found: $HITS"
 fi
 
+echo "== Prompt 29 — Resilience Hardening =="
+echo
+
+# ── Prompt 29, Deliverable 1 — both vault.js retry loops must reschedule
+# themselves on failure, not just log and stop. Found live: neither did,
+# and a single transient Vault timeout permanently killed DB-credential
+# rotation for the rest of the process's life. Static check: each
+# function's own catch block must call itself again.
+for fn in scheduleDbCredsRotation scheduleTokenRefresh; do
+  BODY=$(awk "/^function $fn\(/,/^}/" arcanium/api/src/vault.js)
+  # The declaration line itself matches "$fn(" once (as "function $fn(...");
+  # a genuine self-reschedule inside the catch path is a second occurrence.
+  HITS=$(echo "$BODY" | grep -c "$fn(")
+  if [ "$HITS" -ge 2 ]; then
+    ok "$fn's body calls itself again (no dead-end retry chain)"
+  else
+    bad "$fn's body never calls itself again — a single failure would permanently stop this loop"
+  fi
+done
+
+# ── Deliverable 2 — container healthchecks must target /health/ready
+# (DB-credential-aware), not /health/live (always 200, process-up only).
+# Found live: both stayed on /health/live through 13+ minutes of a real
+# incident (dead credential rotation) without ever reporting unhealthy.
+# Only the actual directive lines (CMD/test:), never prose comments
+# explaining the change (which legitimately mention "/health/live" by name).
+HC_FILES="arcanium/api/Containerfile compose/arcanium/compose.yaml"
+HC_DIRECTIVE_HITS=$(grep -rnE '^\s*(CMD |test:)' $HC_FILES 2>/dev/null | grep "health/live" || true)
+if [ -n "$HC_DIRECTIVE_HITS" ]; then
+  bad "a healthcheck directive still targets /health/live (process-up only, not DB-credential-aware): $HC_DIRECTIVE_HITS"
+else
+  ok "no container healthcheck directive targets /health/live — all use /health/ready"
+fi
+HC_READY_HITS=$(grep -rnE '^\s*(CMD |test:)' $HC_FILES 2>/dev/null | grep -c "health/ready" || true)
+if [ "${HC_READY_HITS:-0}" -ge 1 ]; then
+  ok "container healthcheck directive(s) target /health/ready (DB-credential-aware)"
+else
+  bad "no container healthcheck directive targets /health/ready at all"
+fi
+
+# ── Deliverable 3 — the three scripts this prompt found broken
+# (predates-auth gap) must now source the shared helper, not their own
+# inline copy. Scoped deliberately to those three: several OTHER scenario
+# scripts (11_security_foundation, 12_reconciliation, 16_multitenancy,
+# 14_evidence_v2, pre_24_persistence, 17_terraform_provider) already
+# defined their own LOCAL oidc_login() from earlier prompts, predating this
+# one — real, pre-existing duplication, but consolidating those is a
+# separate, not-yet-done pass, not claimed here.
+REFACTORED_SCRIPTS="scenarios/01_onboarding/run.sh scenarios/06_supplier_isolation/provision.sh scenarios/05_approval/provision.sh"
+NOT_SOURCING=""
+for f in $REFACTORED_SCRIPTS; do
+  grep -q "scenarios/lib/oidc_login.sh" "$f" || NOT_SOURCING="${NOT_SOURCING}${f} "
+done
+if [ -z "$NOT_SOURCING" ]; then
+  ok "all three scripts fixed this prompt (onboarding, supplier isolation, approval provision) source scenarios/lib/oidc_login.sh"
+else
+  bad "expected to source scenarios/lib/oidc_login.sh but do not: $NOT_SOURCING"
+fi
+
+# ── Deliverable 5 — KML-DESTR-01 must actually cap the gated maturity
+# level when FAIL, not merely display a "mandatory" badge. Found live: it
+# was seeded mandatory:true but absent from MANDATORY_CONTROLS_PER_LEVEL,
+# so a real live FAIL sat under a "5 / Governed" banner. Pure unit check
+# against the exported function — no live Vault/DB needed.
+GATED_CHECK=$(
+  cd arcanium/api &&
+    VAULT_ADDR=https://127.0.0.1:18200 VAULT_CACERT="$(pwd)/../../vault-tls/ca-chain.pem" \
+    VAULT_ROLE_ID=x VAULT_SECRET_ID=x POSTGRES_HOST=x POSTGRES_PORT=5432 POSTGRES_DB=x \
+      node --input-type=module -e "
+import { gatedLevel } from './src/maturity/controls.js';
+const base = { 'KEY-INV-01':'PASS','TEN-ISO-01':'PASS','ROT-POL-01':'PASS',
+  'AUD-01':'PASS','WLI-01':'PASS','NEG-AUTHZ-01':'PASS','AUTO-01':'PASS','GOV-01':'PASS' };
+process.stdout.write(String(gatedLevel({...base, 'KML-DESTR-01':'FAIL'})));
+" 2>/dev/null
+)
+if [ "$GATED_CHECK" = "4" ]; then
+  ok "gatedLevel() caps at 4 (not 5) when KML-DESTR-01 rolls up to FAIL"
+else
+  bad "gatedLevel() returned '$GATED_CHECK' with KML-DESTR-01=FAIL — expected 4 (mandatory control not actually gating)"
+fi
+
+# ── Deliverable 6 — approval-execution.js must never treat a merely-once-
+# approved row as live intent; it must require an ACTIVE trigger (a
+# currently-DRIFTED expiry_date row, or an in-progress offboarding) before
+# destroying anything. Found live, the hard way: the first version of this
+# module executed unconditionally and destroyed a real, still-in-use key
+# (payments-api-key) whose destroy request had been approved a day earlier
+# and never revoked, even though a CISO had since explicitly used Accept
+# Exception to protect it. Static check only, deliberately — see this
+# section's own header comment for why a live version of this check is
+# not part of the automated suite.
+if grep -q "hasLiveDestroyIntent" arcanium/api/src/approval-execution.js &&
+  grep -q "getDispositionFor" arcanium/api/src/approval-execution.js; then
+  ok "approval-execution.js gates every destroy on hasLiveDestroyIntent() (checked against live reconciliation disposition)"
+else
+  bad "approval-execution.js no longer contains the hasLiveDestroyIntent() safety gate"
+fi
+echo "  ? (skipped by design) a live end-to-end destroy-execution proof was performed"
+echo "    manually against disposable fixture keys during this prompt's own execution"
+echo "    (not added as an automated fitness test — a test that itself destroys Vault"
+echo "    keys on every CI run is exactly the kind of risk this prompt exists to reduce,"
+echo "    and the manual proof already showed both the skip path and the execute path"
+echo "    behaving correctly against real, disposable keys)."
+
 echo
 TOTAL=$((PASS + FAIL + UNKNOWN))
 echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="

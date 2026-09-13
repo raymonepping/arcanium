@@ -58,6 +58,13 @@ RUN set -e; \
     grep -q jobsRouter src/index.js || { echo "FATAL: index.js does not mount jobsRouter"; exit 1; }
 
 EXPOSE 3001
+# Prompt 29 — /health/live is hardcoded to always 200 (process-up only); it
+# never noticed the live incident where the DB credential rotation loop
+# died and every authenticated request failed for 13+ minutes while this
+# healthcheck kept reporting healthy. /health/ready actually pings the
+# database with the current pool's credentials and returns 503 when that
+# fails — the correct probe for a container serving live authenticated
+# traffic, not merely "is the process up."
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-  CMD wget -qO- http://localhost:3001/health/live || exit 1
+  CMD wget -qO- http://localhost:3001/health/ready || exit 1
 CMD ["node", "src/index.js"]

@@ -93,7 +93,25 @@ const state = {
   loginAttempts: 0,
   refreshTimer: null,
   dbRotateTimer: null,
+  // Prompt 29 — found live: neither of these was ever set, because neither
+  // scheduleTokenRefresh nor scheduleDbCredsRotation retried after a
+  // failure (see below) — there was nothing to observe. A stack that has
+  // been silently un-rotating for hours looks identical, from state alone,
+  // to one that has never rotated at all without these.
+  lastDbRotationAt: null,
+  lastDbRotationError: null,
+  lastTokenRefreshAt: null,
+  lastTokenRefreshError: null,
 };
+
+// Prompt 29 — bounded backoff for both retry loops below. Capped, not
+// unbounded-immediate: a credential source down for a few minutes (a Vault
+// blip, a network hiccup) should be retried promptly; one down for longer
+// is a real outage and hammering it every 5s adds no value.
+const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000];
+function retryDelayMs(attempt) {
+  return RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
+}
 
 // ── AppRole login with exponential backoff ─────────────────────────────────
 async function login() {
@@ -126,16 +144,32 @@ async function login() {
   );
 }
 
-function scheduleTokenRefresh(ttlSeconds) {
+// Prompt 29 — retryAttempt tracks a failure streak for THIS refresh cycle
+// only; a successful login() call schedules the next normal-cadence
+// refresh itself (via its own call to scheduleTokenRefresh inside login()),
+// which resets the streak back to 0. Previously, a failed refresh set
+// authenticated=false and simply stopped — found live as the same
+// dead-end pattern as scheduleDbCredsRotation below, just never actually
+// triggered for the token (the DB credential hit it first).
+function scheduleTokenRefresh(ttlSeconds, retryAttempt = 0) {
   clearTimeout(state.refreshTimer);
-  const delay = Math.floor(ttlSeconds * 0.8) * 1000;
+  const delay =
+    retryAttempt === 0
+      ? Math.floor(ttlSeconds * 0.8) * 1000
+      : retryDelayMs(retryAttempt);
   state.refreshTimer = setTimeout(async () => {
-    console.log("[vault] refreshing token...");
+    console.log(`[vault] refreshing token... (attempt ${retryAttempt + 1})`);
     try {
       await login();
+      state.lastTokenRefreshAt = new Date();
+      state.lastTokenRefreshError = null;
     } catch (err) {
-      console.error(`[vault] token refresh failed: ${err.message}`);
+      state.lastTokenRefreshError = { at: new Date(), message: err.message };
+      console.error(
+        `[vault] token refresh failed (attempt ${retryAttempt + 1}): ${err.message} — retrying`,
+      );
       state.authenticated = false;
+      scheduleTokenRefresh(ttlSeconds, retryAttempt + 1);
     }
   }, delay);
   state.refreshTimer.unref();
@@ -160,18 +194,40 @@ async function fetchDbCredentials() {
   return { username, password, lease_duration: leaseDuration };
 }
 
-function scheduleDbCredsRotation(leaseDuration) {
+// Prompt 29 — found live: a single failed rotation attempt (here, a Vault
+// GET that hit the 5s armTimeout above) left this loop permanently dead —
+// the only place that ever called scheduleDbCredsRotation again was the
+// success path of fetchDbCredentials() itself, which is exactly what had
+// just failed. The credential then expired on Postgres's own VALID UNTIL
+// clock with no further attempt ever made, ~13 minutes before this was
+// diagnosed. retryAttempt closes that: a failure reschedules itself
+// directly, at bounded backoff, instead of relying on a success that
+// didn't happen.
+function scheduleDbCredsRotation(leaseDuration, retryAttempt = 0) {
   clearTimeout(state.dbRotateTimer);
-  const delay = Math.floor(leaseDuration * 0.75) * 1000;
+  const delay =
+    retryAttempt === 0
+      ? Math.floor(leaseDuration * 0.75) * 1000
+      : retryDelayMs(retryAttempt);
   state.dbRotateTimer = setTimeout(async () => {
-    console.log("[vault] rotating db credentials...");
+    console.log(
+      `[vault] rotating db credentials... (attempt ${retryAttempt + 1})`,
+    );
     try {
+      // fetchDbCredentials() schedules the NEXT normal-cadence rotation
+      // itself on success (retryAttempt resets to 0) — see its own body.
       const creds = await fetchDbCredentials();
       const { rotateCreds } = await import("./db.js");
       await rotateCreds(creds.username, creds.password);
+      state.lastDbRotationAt = new Date();
+      state.lastDbRotationError = null;
       console.log("[vault] db credentials rotated successfully");
     } catch (err) {
-      console.error(`[vault] db creds rotation failed: ${err.message}`);
+      state.lastDbRotationError = { at: new Date(), message: err.message };
+      console.error(
+        `[vault] db creds rotation failed (attempt ${retryAttempt + 1}): ${err.message} — retrying`,
+      );
+      scheduleDbCredsRotation(leaseDuration, retryAttempt + 1);
     }
   }, delay);
   state.dbRotateTimer.unref();
@@ -193,6 +249,13 @@ export function getStatus() {
     tokenExpiry: state.tokenExpiry,
     dbCredsExpiry: state.dbCredsExpiry,
     loginAttempts: state.loginAttempts,
+    // Prompt 29 — the observable half of the retry-chain fix above: a
+    // rotation that is retrying (not dead) is now distinguishable from one
+    // that succeeded, and from one that never ran at all (both null).
+    lastDbRotationAt: state.lastDbRotationAt,
+    lastDbRotationError: state.lastDbRotationError,
+    lastTokenRefreshAt: state.lastTokenRefreshAt,
+    lastTokenRefreshError: state.lastTokenRefreshError,
   };
 }
 

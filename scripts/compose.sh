@@ -35,8 +35,46 @@ fi
 : "${PODMAN_COMPOSE_PROVIDER:=podman-compose}"
 export PODMAN_COMPOSE_PROVIDER
 
-exec podman compose \
-  --project-name "arcanium-$stack" \
-  --file "$compose_file" \
-  --env-file "$project_root/.env" \
-  "$@"
+run_compose() {
+  podman compose \
+    --project-name "arcanium-$stack" \
+    --file "$compose_file" \
+    --env-file "$project_root/.env" \
+    "$@"
+}
+
+# Prompt 29, Deliverable 7 — found live: a plain `up -d` against the
+# identity stack left arcanium-ldap-admin not running at all (not even a
+# stopped container) after `podman-compose` printed errors about
+# arcanium-openldap having "dependent containers" and its name "already in
+# use" — a real podman-compose dependency-ordering race, not a genuine
+# config problem. A second, identical `up -d` immediately afterward started
+# it cleanly. Retry once, only for `up` invocations, and only when the
+# output actually matches this known race — a genuine failure (bad image,
+# real port conflict, etc.) still fails after one retry, not silently
+# forever.
+first_arg="${1:-}"
+if [ "$first_arg" != "up" ]; then
+  exec podman compose \
+    --project-name "arcanium-$stack" \
+    --file "$compose_file" \
+    --env-file "$project_root/.env" \
+    "$@"
+fi
+unset first_arg
+
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+
+status=0
+run_compose "$@" >"$log" 2>&1 || status=$?
+cat "$log"
+
+if [ "$status" -ne 0 ] && grep -qE 'dependent container|already in use' "$log"; then
+  echo "[compose.sh] '$stack up' hit the known dependent-container race — retrying once" >&2
+  status=0
+  run_compose "$@" >"$log" 2>&1 || status=$?
+  cat "$log"
+fi
+
+exit "$status"

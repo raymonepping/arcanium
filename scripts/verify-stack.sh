@@ -523,6 +523,48 @@ for cname in "${CONTAINERS[@]}"; do
   fi
 done
 
+# Prompt 29, Deliverable 7 — the hand-maintained CONTAINERS list above is
+# "the containers that matter," curated by memory. It missed arcanium-
+# ldap-admin entirely: compose/identity/compose.yaml defines it with no
+# profiles: restriction, so `make identity-up`'s bare `up -d` should start
+# it — but after a full `make rehydrate` it was not running at all (not
+# even stopped), and nothing here would have said so. This block derives
+# the expected set programmatically from every compose/*/compose.yaml
+# instead of trusting a curated list.
+#
+# One documented exclusion: arcanium-api-dev (compose/arcanium/
+# compose.yaml) carries no profiles: tag either, but `make arcanium-up`
+# deliberately starts only `arcanium-ui arcanium-api arcanium-worker` —
+# api-dev is an explicit opt-in (`make arcanium-api-dev-up`), not part of
+# the default bring-up, so its absence is not a gap. Checked against every
+# other compose file's own actual `up -d` invocation in the Makefile: none
+# of them name an explicit subset, so every other non-profiled service is
+# expected to be running.
+EXPECTED_SERVICES=$(
+  for f in compose/*/compose.yaml; do
+    awk '
+      /^  [A-Za-z0-9_-]+:[[:space:]]*$/ {
+        if (svc != "" && cname != "" && !profiled) print cname
+        svc = $1; cname = ""; profiled = 0; next
+      }
+      /^    container_name:/ { cname = $2; gsub(/^[ \t]+|[ \t]+$/, "", cname); next }
+      /^    profiles:/ { profiled = 1; next }
+      END { if (svc != "" && cname != "" && !profiled) print cname }
+    ' "$f" 2>/dev/null
+  done | grep -v '^arcanium-api-dev$' | sort -u
+)
+MISSING_SERVICES=""
+while IFS= read -r cname; do
+  [ -z "$cname" ] && continue
+  STATUS=$(podman inspect "$cname" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+  [ "$STATUS" != "running" ] && MISSING_SERVICES="${MISSING_SERVICES}${cname} "
+done <<<"$EXPECTED_SERVICES"
+if [ -z "$MISSING_SERVICES" ]; then
+  pass "every non-profile-gated compose service is running (full inventory, not the curated list above)"
+else
+  fail "compose-defined services not running: ${MISSING_SERVICES}"
+fi
+
 # ── 10. 4xx / error contract spot-checks ──────────────────────────────────────
 section "10. Error Contract"
 check "GET  /api/v1/applications/bad-uuid  → 400" 400 "$API/api/v1/applications/not-a-uuid"

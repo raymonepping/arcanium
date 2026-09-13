@@ -48,6 +48,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence-derived `DESIGN.md`, a Playwright-driven baseline/regression
   process, and a documented release verdict. See
   [docs/frontend/](docs/frontend/).
+- Resilience hardening (Prompt 29), closing gaps found during a live
+  incident: bounded-backoff retry for both Vault credential-rotation
+  loops (a single failed rotation previously stopped the loop
+  permanently); container healthchecks retargeted from a
+  process-liveness-only probe to a real database-connectivity probe;
+  `KML-DESTR-01` wired into gated-maturity-level enforcement so a
+  failing mandatory control actually caps the level; and a worker step
+  that executes governed key-destruction approvals against Vault
+  (previously approval only ever recorded a status, never executed) —
+  gated on live governance intent (a still-active drift or an
+  in-progress offboarding) after an initial unconditional version
+  destroyed two real, still-in-use keys during this same hardening
+  pass. Shared OIDC-login helper (`scenarios/lib/oidc_login.sh`)
+  replacing three independently-patched inline copies.
 
 - Three-node Vault Raft cluster with a Transit seal provider (`vault-s`) and a
   separate `+ent.hsm` instance (`vault-hsm`) backed by SoftHSM over a PKCS#11

@@ -1,0 +1,20 @@
+ M CHANGELOG.md
+ M arcanium/api/Containerfile
+ M arcanium/api/src/maturity/controls.js
+ M arcanium/api/src/offboarding.js
+ M arcanium/api/src/routes/health.js
+ M arcanium/api/src/vault.js
+ M arcanium/api/src/worker.js
+ M compose/arcanium/compose.yaml
+MM scenarios/01_onboarding/run.sh
+MM scenarios/05_approval/provision.sh
+MM scenarios/06_supplier_isolation/provision.sh
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M scripts/compose.sh
+ M scripts/verify-stack.sh
+ M state/CURRENT
+ M state/scripts/capture-state.sh
+?? arcanium/api/src/approval-execution.js
+?? arcanium/api/src/migrations/023_approval_execution.sql
+?? scenarios/lib/
+?? state/baselines/2026-09-13_pre-prompt-29-resilience-hardening/

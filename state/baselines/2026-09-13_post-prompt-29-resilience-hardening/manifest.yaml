@@ -1,0 +1,117 @@
+baseline:
+  id: 2026-09-13_post-prompt-29-resilience-hardening
+  purpose: "post-state after Prompt 29 resilience hardening (retry chains fixed, healthchecks retargeted, KML-DESTR-01 gating fixed, governed-destroy execution added and safety-fixed after a live incident, OIDC-login helper extracted)"
+  captured_at: 2026-09-13T09:10:29Z
+  project: "arcanium"
+  previous_baseline: "2026-09-13_pre-prompt-29-resilience-hardening"
+  git:
+    commit: "50dd2b5990b93e35c8dc7e9fd0ab07e3fd7b303d"
+    branch: "main"
+    tag: "none"
+    dirty: true
+
+runtime:
+  type: podman
+  architecture: "arm64"
+
+components:
+  arcanium:
+    capture_status: CAPTURED
+  vault:
+    capture_status: CAPTURED
+  hsm:
+    capture_status: CAPTURED
+  identity:
+    capture_status: CAPTURED
+  infra:
+    capture_status: CAPTURED
+  kms:
+    capture_status: CAPTURED
+  observability:
+    capture_status: CAPTURED
+  workloads:
+    capture_status: CAPTURED
+
+# Pre-24, Deliverable 12 — safe, non-secret persistence indicators only.
+# Never a SecretID, OIDC client secret, LDAP password, Vault token, HSM
+# PIN, or database password — see docs/persistence.md.
+persistence:
+  postgres:
+    volume_present: true
+    schema_version: "023"
+  vault:
+    raft_storage_present:
+      main_1: true
+      main_2: true
+      main_3: true
+      seal_provider: true
+    cluster_id: "2ed37e68-0eca-25df-677b-5928bc727157"
+  identity:
+    ldap_directory_present: true
+    keycloak_data_present: true
+  hsm:
+    softhsm_token_store_present: true
+    vault_hsm_storage_present: true
+  workloads:
+    credential_bootstrap_ready: true
+    detail: "verify-all PASS"
+  restart_persistence: FAIL
+  restart_persistence_detail: "from scenarios/pre_24_persistence/test_restart_persistence.sh's last run"
+
+# Prompt 24, Deliverable 8 — whether a restore drill has ever actually
+# verified recovery, and its measured RTO/RPO. Never the snapshot/dump
+# itself (state/README.md's 'state is not backup' rule) — see
+# restore_drill_results and docs/operations.md's Backup and recovery section.
+backup:
+  vault_snapshot:
+    available: true
+    last_verified_at: "2026-09-11 19:18:12+00"
+    rto_seconds: 14
+    rpo_seconds: 1
+  postgres:
+    available: true
+    last_verified_at: "2026-09-12 05:17:17+00"
+    rto_seconds: 30
+    rpo_seconds: 23
+
+# Prompt 27, Deliverable 8 — team count, environment-tag coverage, and
+# the last scenarios/16_multitenancy/test_scope_isolation.sh result.
+multitenancy:
+  teams_count: 1
+  applications:
+    total: 5
+    with_environment_tag: 5
+  scope_isolation:
+    last_result: PASS
+    detail: "last run: 2026-09-12T20:44:57Z"
+
+verification:
+  supplier_isolation: UNKNOWN
+  oidc_discovery: PASS
+  reconciliation: UNKNOWN
+  maturity: UNKNOWN
+  intent_view: UNKNOWN
+  onboarding: UNKNOWN
+  transit: UNKNOWN
+  pki: UNKNOWN
+  kmip: UNKNOWN
+  managed_key: UNKNOWN
+  sentinel_negative: UNKNOWN
+
+capture:
+  overall: CAPTURED
+  checks:
+    source: CAPTURED
+    runtime: CAPTURED
+    arcanium: CAPTURED
+    vault: CAPTURED
+    hsm: CAPTURED
+    identity: CAPTURED
+    infra: CAPTURED
+    kms: CAPTURED
+    observability: CAPTURED
+    workloads: CAPTURED
+    persistence: CAPTURED
+    backup: CAPTURED
+    multitenancy: CAPTURED
+    verification: CAPTURED

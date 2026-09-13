@@ -14,11 +14,27 @@ export VAULT_TOKEN=$(python3 -c "import sys,json; print(json.load(open('$ROOT_DI
 
 ARCANIUM_API="${ARCANIUM_API:-http://localhost:3001}"
 
+# ── Authenticate if the stack requires it ─────────────────────────────────
+# Same predates-auth gap as scenarios/01_onboarding/run.sh: this script's
+# plain unauthenticated POST to /api/v1/applications 401s once
+# ARCANIUM_AUTH_ENABLED=true. Prompt 29 — extracted into scenarios/lib/
+# oidc_login.sh after this exact block was independently re-patched into
+# two other scenario scripts the same day.
+source "$ROOT_DIR/scenarios/lib/oidc_login.sh"
+OIDC_LOGIN_TAG="approval-provision"
+CURL_AUTH=()
+if [ "$(auth_enabled "$ARCANIUM_API")" = "true" ]; then
+  echo "[approval-provision] ARCANIUM_AUTH_ENABLED — signing in as demo-architect"
+  oidc_login "demo-architect" "Arcanium-arch-2026" "$ARCANIUM_API" || exit 1
+  trap 'rm -f "$OIDC_JAR"' EXIT
+  CURL_AUTH=(-b "$OIDC_JAR")
+fi
+
 echo "[approval-provision] registering external-supplier in Arcanium API..."
-APP_RESPONSE=$(curl -sf -X POST "$ARCANIUM_API/api/v1/applications" \
+APP_RESPONSE=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/applications" \
   -H "Content-Type: application/json" \
   -d '{"name":"external-supplier","description":"Control Group demo workload"}' 2>/dev/null ||
-  curl -sf "$ARCANIUM_API/api/v1/applications" | python3 -c "import sys,json; apps=json.load(sys.stdin); [print(json.dumps(a)) for a in apps if a['name']=='external-supplier']" | head -1)
+  curl -sf "${CURL_AUTH[@]}" "$ARCANIUM_API/api/v1/applications" | python3 -c "import sys,json; apps=json.load(sys.stdin); [print(json.dumps(a)) for a in apps if a['name']=='external-supplier']" | head -1)
 
 APP_ID=$(echo "$APP_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 echo "[approval-provision] app_id: $APP_ID"

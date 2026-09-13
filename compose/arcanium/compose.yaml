@@ -82,8 +82,14 @@ services:
       - arcanium-control
       - arcanium-vault-internal
     restart: unless-stopped
+    # Prompt 29 — /health/live always returns 200 (process-up only) and
+    # never noticed a live incident where the DB credential rotation loop
+    # died silently and every authenticated request failed for 13+ minutes
+    # while podman kept reporting this container healthy. /health/ready
+    # actually pings the database with the current pool and returns 503 on
+    # failure — the correct probe here.
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/live || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/ready || exit 1"]
       interval: 15s
       timeout: 5s
       start_period: 30s
@@ -139,8 +145,14 @@ services:
     networks:
       - arcanium-control
       - arcanium-vault-internal
+    # Prompt 29 — /health/live always returns 200 (process-up only) and
+    # never noticed a live incident where the DB credential rotation loop
+    # died silently and every authenticated request failed for 13+ minutes
+    # while podman kept reporting this container healthy. /health/ready
+    # actually pings the database with the current pool and returns 503 on
+    # failure — the correct probe here.
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/live || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/ready || exit 1"]
       interval: 15s
       timeout: 5s
       start_period: 30s

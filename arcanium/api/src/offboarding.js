@@ -64,17 +64,25 @@ export async function checkOffboardingCompletion(applicationId) {
     // selected FROM desired_state WHERE application_id = $1, so it's
     // guaranteed to belong to this application's own key set.
     const { rows: apRows } = await query(
-      `SELECT status FROM approval_requests
+      `SELECT status, executed_at FROM approval_requests
         WHERE key_name = $1 AND action = 'revoke'
         ORDER BY created_at DESC LIMIT 1`,
       [ds.key_name],
     );
     const latest = apRows[0];
-    if (latest && latest.status !== "pending") {
-      // Resolved either way (approved -> Vault destroy already happened
-      // via the normal approval-execution path; rejected -> the operator
-      // decided not to destroy it) — either outcome closes THIS workflow
-      // step; the row is tombstoned, not left dangling.
+    // Prompt 29 — 'approved' alone used to be treated as resolved here, on
+    // the assumption that approval-execution already happened by the time
+    // this ran. That assumption was false until Deliverable 6 (this same
+    // prompt) actually built that execution step — before it existed,
+    // this would have tombstoned evidence of a "destroyed" key that Vault
+    // still had live. Now: rejected closes the step immediately (nothing
+    // to wait for); approved only closes it once executed_at is actually
+    // set by approval-execution.js.
+    const resolved =
+      latest &&
+      (latest.status === "rejected" ||
+        (latest.status === "approved" && latest.executed_at));
+    if (resolved) {
       await query(
         "UPDATE desired_state SET archived_at = now() WHERE id = $1",
         [ds.id],

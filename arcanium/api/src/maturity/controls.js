@@ -683,6 +683,17 @@ export const MANDATORY_CONTROLS_PER_LEVEL = {
     "NEG-AUTHZ-01",
     "AUTO-01",
     "GOV-01",
+    // Prompt 29 — found live: KML-DESTR-01 is seeded mandatory:true
+    // (migration 022) and the UI badges it "mandatory," but it was never
+    // added here, so a genuine live FAIL on it sat directly under a
+    // "5 / Governed" banner — contradicting this page's own stated
+    // methodology ("a single mandatory control at FAIL or UNKNOWN caps the
+    // level"). Scoped to level 5 only: this control governs completion of
+    // the newest lifecycle stage (Prompt 28) and gating it at levels 1-4
+    // would retroactively fail environments that never adopted expiry-date
+    // desired state at all — that is the existing, correct N/A/UNKNOWN
+    // case, not a FAIL, and is not what this fix is for.
+    "KML-DESTR-01",
   ],
 };
 

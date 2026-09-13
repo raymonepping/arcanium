@@ -6,16 +6,36 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+set -a
+[ -f "$REPO_ROOT/.env" ] && . "$REPO_ROOT/.env"
+set +a
 ARCANIUM_API="${ARCANIUM_API:-http://localhost:3001}"
 
 echo "[onboarding] starting"
+
+# ── 0. Authenticate if the stack requires it ──────────────────────────────
+# This script predates Phase 18's real OIDC auth and, until now, always
+# sent plain unauthenticated requests — found live (curl -f's own exit
+# code 22, "HTTP error >= 400") when ARCANIUM_AUTH_ENABLED=true rejected
+# every call with 401. Prompt 29 — extracted into scenarios/lib/
+# oidc_login.sh after this exact block was independently re-patched into
+# two other scenario scripts the same day.
+source "$REPO_ROOT/scenarios/lib/oidc_login.sh"
+OIDC_LOGIN_TAG="onboarding"
+CURL_AUTH=()
+if [ "$(auth_enabled "$ARCANIUM_API")" = "true" ]; then
+  echo "[onboarding] ARCANIUM_AUTH_ENABLED — signing in as demo-architect"
+  oidc_login "demo-architect" "Arcanium-arch-2026" "$ARCANIUM_API" || exit 1
+  trap 'rm -f "$OIDC_JAR"' EXIT
+  CURL_AUTH=(-b "$OIDC_JAR")
+fi
 
 # ── 1. Register applications in Arcanium API ─────────────────────────────
 register_app() {
   local name="$1" desc="$2"
   # Check if already registered
   local existing
-  existing=$(curl -sf "${ARCANIUM_API}/api/v1/applications" |
+  existing=$(curl -sf "${CURL_AUTH[@]}" "${ARCANIUM_API}/api/v1/applications" |
     jq -r --arg n "$name" '.[] | select(.name==$n) | .id' 2>/dev/null || true)
   if [ -n "$existing" ]; then
     echo "[onboarding] '$name' already registered: $existing"
@@ -23,7 +43,7 @@ register_app() {
     return
   fi
   local id
-  id=$(curl -sf -X POST "${ARCANIUM_API}/api/v1/applications" \
+  id=$(curl -sf "${CURL_AUTH[@]}" -X POST "${ARCANIUM_API}/api/v1/applications" \
     -H "Content-Type: application/json" \
     -d "{\"name\":\"${name}\",\"description\":\"${desc}\"}" | jq -r .id)
   echo "[onboarding] registered '${name}': ${id}"
@@ -34,15 +54,25 @@ register_app "payments-api" "Transit encryption demo" >/dev/null
 register_app "pki-client" "PKI certificate demo" >/dev/null
 
 # ── 2. Apply workloads Terraform (creates key, roles, policies) ───────────
+# VAULT_TOKEN must be exported BEFORE this call, not after: terraform's
+# vault provider (terraform/vault-workloads/main.tf) reads it from the
+# environment, and when this script runs as its own process (exactly what
+# `make onboarding` does — a plain `./run.sh`, no inherited export chain
+# from a caller like rehydrate-stack.sh) there is nothing else to supply
+# it. Found live: with the export left down in step 3 (its original
+# position), a standalone run fell through to whatever stale token
+# `~/.vault-token` happened to hold, producing a real "403 permission
+# denied / invalid token" from terraform against auth/token/lookup-self —
+# not a Vault ACL problem, just a missing token in this process's env.
+export VAULT_ADDR="${VAULT_ADDR:-https://127.0.0.1:18200}"
+export VAULT_CACERT="${VAULT_CACERT:-${REPO_ROOT}/vault-tls/ca-chain.pem}"
+export VAULT_TOKEN
+VAULT_TOKEN=$(jq -er '.root_token' "${REPO_ROOT}/.secrets/vault/cluster-init.json")
+
 echo "[onboarding] applying vault-workloads terraform..."
 make -C "$REPO_ROOT" tf-workloads
 
 # ── 3. Generate AppRole secret_ids ────────────────────────────────────────
-export VAULT_ADDR="${VAULT_ADDR:-https://127.0.0.1:18200}"
-export VAULT_CACERT="${VAULT_CACERT:-${REPO_ROOT}/vault-tls/ca-chain.pem}"
-export VAULT_TOKEN
-VAULT_TOKEN=$(jq -r .root_token "${REPO_ROOT}/.secrets/vault/cluster-init.json")
-
 echo "[onboarding] generating AppRole credentials..."
 
 PAYMENTS_ROLE_ID=$(vault read -field=role_id auth/approle/role/payments-workload/role-id)

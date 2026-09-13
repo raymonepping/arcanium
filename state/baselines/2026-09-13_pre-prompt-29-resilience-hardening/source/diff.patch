@@ -1,0 +1,266 @@
+diff --git a/scenarios/01_onboarding/run.sh b/scenarios/01_onboarding/run.sh
+index 6200153..89ee4b1 100755
+--- a/scenarios/01_onboarding/run.sh
++++ b/scenarios/01_onboarding/run.sh
+@@ -6,16 +6,68 @@
+ set -euo pipefail
+ 
+ REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
++set -a
++[ -f "$REPO_ROOT/.env" ] && . "$REPO_ROOT/.env"
++set +a
+ ARCANIUM_API="${ARCANIUM_API:-http://localhost:3001}"
+ 
+ echo "[onboarding] starting"
+ 
++# ── 0. Authenticate if the stack requires it ──────────────────────────────
++# This script predates Phase 18's real OIDC auth and, until now, always
++# sent plain unauthenticated requests — found live (curl -f's own exit
++# code 22, "HTTP error >= 400") when ARCANIUM_AUTH_ENABLED=true rejected
++# every call with 401. Checked live via /auth/me's own `enabled` field,
++# not just trusted from .env, since that's the authoritative signal this
++# same API already exposes for exactly this question.
++JAR=$(mktemp)
++trap 'rm -f "$JAR"' EXIT
++# Deliberately no -f/--fail here: when auth IS enabled and there is no
++# session yet, /auth/me correctly returns 401 with a real JSON body
++# ({"enabled":true,"error":"not authenticated"}) — -f would discard that
++# body on the non-2xx status and this check would wrongly conclude "auth
++# is disabled" (found live: that exact inversion, while fixing this
++# script).
++AUTH_ENABLED=$(curl -s "${ARCANIUM_API}/api/v1/auth/me" 2>/dev/null | jq -r '.enabled' 2>/dev/null || echo "false")
++CURL_AUTH=()
++if [ "$AUTH_ENABLED" = "true" ]; then
++  echo "[onboarding] ARCANIUM_AUTH_ENABLED — signing in as demo-architect"
++  login_headers=$(curl -sD - -o /dev/null -c "$JAR" "${ARCANIUM_API}/api/v1/auth/login?next=/")
++  auth_url=$(echo "$login_headers" | grep -i '^location:' | awk '{print $2}' | tr -d '\r\n')
++  [ -z "$auth_url" ] && {
++    echo "[onboarding] FATAL: no OIDC redirect from /auth/login" >&2
++    exit 1
++  }
++  form_html=$(curl -s -c "$JAR" -b "$JAR" "$auth_url")
++  form_action=$(echo "$form_html" | grep -oE 'action="[^"]*"' | head -1 |
++    sed -e 's/^action="//' -e 's/"$//' -e 's/&amp;/\&/g')
++  [ -z "$form_action" ] && {
++    echo "[onboarding] FATAL: no Keycloak login form found" >&2
++    exit 1
++  }
++  cb_headers=$(curl -sD - -o /dev/null -c "$JAR" -b "$JAR" \
++    --data-urlencode "username=demo-architect" --data-urlencode "password=Arcanium-arch-2026" \
++    "$form_action")
++  cb_url=$(echo "$cb_headers" | grep -i '^location:' | awk '{print $2}' | tr -d '\r\n')
++  case "$cb_url" in *auth/callback*) ;; *)
++    echo "[onboarding] FATAL: Keycloak login rejected" >&2
++    exit 1
++    ;;
++  esac
++  curl -s -o /dev/null -c "$JAR" -b "$JAR" "${ARCANIUM_API}/api/v1/auth/callback?${cb_url#*\?}"
++  grep -q arc_session "$JAR" || {
++    echo "[onboarding] FATAL: no session cookie after callback" >&2
++    exit 1
++  }
++  CURL_AUTH=(-b "$JAR")
++fi
++
+ # ── 1. Register applications in Arcanium API ─────────────────────────────
+ register_app() {
+   local name="$1" desc="$2"
+   # Check if already registered
+   local existing
+-  existing=$(curl -sf "${ARCANIUM_API}/api/v1/applications" |
++  existing=$(curl -sf "${CURL_AUTH[@]}" "${ARCANIUM_API}/api/v1/applications" |
+     jq -r --arg n "$name" '.[] | select(.name==$n) | .id' 2>/dev/null || true)
+   if [ -n "$existing" ]; then
+     echo "[onboarding] '$name' already registered: $existing"
+@@ -23,7 +75,7 @@ register_app() {
+     return
+   fi
+   local id
+-  id=$(curl -sf -X POST "${ARCANIUM_API}/api/v1/applications" \
++  id=$(curl -sf "${CURL_AUTH[@]}" -X POST "${ARCANIUM_API}/api/v1/applications" \
+     -H "Content-Type: application/json" \
+     -d "{\"name\":\"${name}\",\"description\":\"${desc}\"}" | jq -r .id)
+   echo "[onboarding] registered '${name}': ${id}"
+@@ -34,15 +86,25 @@ register_app "payments-api" "Transit encryption demo" >/dev/null
+ register_app "pki-client" "PKI certificate demo" >/dev/null
+ 
+ # ── 2. Apply workloads Terraform (creates key, roles, policies) ───────────
+-echo "[onboarding] applying vault-workloads terraform..."
+-make -C "$REPO_ROOT" tf-workloads
+-
+-# ── 3. Generate AppRole secret_ids ────────────────────────────────────────
++# VAULT_TOKEN must be exported BEFORE this call, not after: terraform's
++# vault provider (terraform/vault-workloads/main.tf) reads it from the
++# environment, and when this script runs as its own process (exactly what
++# `make onboarding` does — a plain `./run.sh`, no inherited export chain
++# from a caller like rehydrate-stack.sh) there is nothing else to supply
++# it. Found live: with the export left down in step 3 (its original
++# position), a standalone run fell through to whatever stale token
++# `~/.vault-token` happened to hold, producing a real "403 permission
++# denied / invalid token" from terraform against auth/token/lookup-self —
++# not a Vault ACL problem, just a missing token in this process's env.
+ export VAULT_ADDR="${VAULT_ADDR:-https://127.0.0.1:18200}"
+ export VAULT_CACERT="${VAULT_CACERT:-${REPO_ROOT}/vault-tls/ca-chain.pem}"
+ export VAULT_TOKEN
+-VAULT_TOKEN=$(jq -r .root_token "${REPO_ROOT}/.secrets/vault/cluster-init.json")
++VAULT_TOKEN=$(jq -er '.root_token' "${REPO_ROOT}/.secrets/vault/cluster-init.json")
+ 
++echo "[onboarding] applying vault-workloads terraform..."
++make -C "$REPO_ROOT" tf-workloads
++
++# ── 3. Generate AppRole secret_ids ────────────────────────────────────────
+ echo "[onboarding] generating AppRole credentials..."
+ 
+ PAYMENTS_ROLE_ID=$(vault read -field=role_id auth/approle/role/payments-workload/role-id)
+diff --git a/scenarios/05_approval/provision.sh b/scenarios/05_approval/provision.sh
+index 7f16d6c..2ac3c0a 100755
+--- a/scenarios/05_approval/provision.sh
++++ b/scenarios/05_approval/provision.sh
+@@ -14,11 +14,51 @@ export VAULT_TOKEN=$(python3 -c "import sys,json; print(json.load(open('$ROOT_DI
+ 
+ ARCANIUM_API="${ARCANIUM_API:-http://localhost:3001}"
+ 
++# ── Authenticate if the stack requires it ─────────────────────────────────
++# Same predates-auth gap as scenarios/01_onboarding/run.sh: this script's
++# plain unauthenticated POST to /api/v1/applications 401s once
++# ARCANIUM_AUTH_ENABLED=true. Checked live via /auth/me's `enabled` field.
++JAR=$(mktemp)
++trap 'rm -f "$JAR"' EXIT
++AUTH_ENABLED=$(curl -s "${ARCANIUM_API}/api/v1/auth/me" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('enabled', False))" 2>/dev/null || echo "False")
++CURL_AUTH=()
++if [ "$AUTH_ENABLED" = "True" ]; then
++  echo "[approval-provision] ARCANIUM_AUTH_ENABLED — signing in as demo-architect"
++  login_headers=$(curl -sD - -o /dev/null -c "$JAR" "${ARCANIUM_API}/api/v1/auth/login?next=/")
++  auth_url=$(echo "$login_headers" | grep -i '^location:' | awk '{print $2}' | tr -d '\r\n')
++  [ -z "$auth_url" ] && {
++    echo "[approval-provision] FATAL: no OIDC redirect from /auth/login" >&2
++    exit 1
++  }
++  form_html=$(curl -s -c "$JAR" -b "$JAR" "$auth_url")
++  form_action=$(echo "$form_html" | grep -oE 'action="[^"]*"' | head -1 |
++    sed -e 's/^action="//' -e 's/"$//' -e 's/&amp;/\&/g')
++  [ -z "$form_action" ] && {
++    echo "[approval-provision] FATAL: no Keycloak login form found" >&2
++    exit 1
++  }
++  cb_headers=$(curl -sD - -o /dev/null -c "$JAR" -b "$JAR" \
++    --data-urlencode "username=demo-architect" --data-urlencode "password=Arcanium-arch-2026" \
++    "$form_action")
++  cb_url=$(echo "$cb_headers" | grep -i '^location:' | awk '{print $2}' | tr -d '\r\n')
++  case "$cb_url" in *auth/callback*) ;; *)
++    echo "[approval-provision] FATAL: Keycloak login rejected" >&2
++    exit 1
++    ;;
++  esac
++  curl -s -o /dev/null -c "$JAR" -b "$JAR" "${ARCANIUM_API}/api/v1/auth/callback?${cb_url#*\?}"
++  grep -q arc_session "$JAR" || {
++    echo "[approval-provision] FATAL: no session cookie after callback" >&2
++    exit 1
++  }
++  CURL_AUTH=(-b "$JAR")
++fi
++
+ echo "[approval-provision] registering external-supplier in Arcanium API..."
+-APP_RESPONSE=$(curl -sf -X POST "$ARCANIUM_API/api/v1/applications" \
++APP_RESPONSE=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/applications" \
+   -H "Content-Type: application/json" \
+   -d '{"name":"external-supplier","description":"Control Group demo workload"}' 2>/dev/null ||
+-  curl -sf "$ARCANIUM_API/api/v1/applications" | python3 -c "import sys,json; apps=json.load(sys.stdin); [print(json.dumps(a)) for a in apps if a['name']=='external-supplier']" | head -1)
++  curl -sf "${CURL_AUTH[@]}" "$ARCANIUM_API/api/v1/applications" | python3 -c "import sys,json; apps=json.load(sys.stdin); [print(json.dumps(a)) for a in apps if a['name']=='external-supplier']" | head -1)
+ 
+ APP_ID=$(echo "$APP_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+ echo "[approval-provision] app_id: $APP_ID"
+diff --git a/scenarios/06_supplier_isolation/provision.sh b/scenarios/06_supplier_isolation/provision.sh
+index c2e56fb..fa46dab 100755
+--- a/scenarios/06_supplier_isolation/provision.sh
++++ b/scenarios/06_supplier_isolation/provision.sh
+@@ -5,21 +5,77 @@ set -euo pipefail
+ 
+ export VAULT_ADDR=https://127.0.0.1:18200
+ export VAULT_CACERT=$(pwd)/vault-tls/ca-chain.pem
+-export VAULT_TOKEN=$(jq -r .root_token .secrets/vault/cluster-init.json)
++export VAULT_TOKEN=$(jq -er '.root_token' .secrets/vault/cluster-init.json)
++
++ARCANIUM_API="${ARCANIUM_API:-http://localhost:3001}"
++
++# ── Authenticate if the stack requires it ─────────────────────────────────
++# Same predates-auth gap as scenarios/01_onboarding/run.sh: this script's
++# plain unauthenticated POSTs to /api/v1/suppliers 401 once
++# ARCANIUM_AUTH_ENABLED=true. Checked live via /auth/me's `enabled` field.
++JAR=$(mktemp)
++trap 'rm -f "$JAR"' EXIT
++AUTH_ENABLED=$(curl -s "${ARCANIUM_API}/api/v1/auth/me" 2>/dev/null | jq -r '.enabled' 2>/dev/null || echo "false")
++CURL_AUTH=()
++if [ "$AUTH_ENABLED" = "true" ]; then
++  echo "[isolation] ARCANIUM_AUTH_ENABLED — signing in as demo-architect"
++  login_headers=$(curl -sD - -o /dev/null -c "$JAR" "${ARCANIUM_API}/api/v1/auth/login?next=/")
++  auth_url=$(echo "$login_headers" | grep -i '^location:' | awk '{print $2}' | tr -d '\r\n')
++  [ -z "$auth_url" ] && {
++    echo "[isolation] FATAL: no OIDC redirect from /auth/login" >&2
++    exit 1
++  }
++  form_html=$(curl -s -c "$JAR" -b "$JAR" "$auth_url")
++  form_action=$(echo "$form_html" | grep -oE 'action="[^"]*"' | head -1 |
++    sed -e 's/^action="//' -e 's/"$//' -e 's/&amp;/\&/g')
++  [ -z "$form_action" ] && {
++    echo "[isolation] FATAL: no Keycloak login form found" >&2
++    exit 1
++  }
++  cb_headers=$(curl -sD - -o /dev/null -c "$JAR" -b "$JAR" \
++    --data-urlencode "username=demo-architect" --data-urlencode "password=Arcanium-arch-2026" \
++    "$form_action")
++  cb_url=$(echo "$cb_headers" | grep -i '^location:' | awk '{print $2}' | tr -d '\r\n')
++  case "$cb_url" in *auth/callback*) ;; *)
++    echo "[isolation] FATAL: Keycloak login rejected" >&2
++    exit 1
++    ;;
++  esac
++  curl -s -o /dev/null -c "$JAR" -b "$JAR" "${ARCANIUM_API}/api/v1/auth/callback?${cb_url#*\?}"
++  grep -q arc_session "$JAR" || {
++    echo "[isolation] FATAL: no session cookie after callback" >&2
++    exit 1
++  }
++  CURL_AUTH=(-b "$JAR")
++fi
+ 
+ echo "[isolation] registering suppliers in Arcanium API..."
+ 
+-PEPSI_ID=$(curl -sf -X POST http://localhost:3001/api/v1/suppliers \
+-  -H "Content-Type: application/json" \
+-  -d '{"name":"pepsi","vault_namespace":"suppliers/pepsi","sla_tier":"standard"}' |
+-  jq -r .id)
+-echo "[isolation] registered pepsi: $PEPSI_ID"
+-
+-COCACOLA_ID=$(curl -sf -X POST http://localhost:3001/api/v1/suppliers \
+-  -H "Content-Type: application/json" \
+-  -d '{"name":"cocacola","vault_namespace":"suppliers/cocacola","sla_tier":"standard"}' |
+-  jq -r .id)
+-echo "[isolation] registered cocacola: $COCACOLA_ID"
++register_supplier() {
++  local name="$1" namespace="$2"
++  # Idempotency: a prior successful run (data survives a stack restart,
++  # since it lives in Postgres) leaves this supplier already registered —
++  # found live as a real 409 "supplier name or namespace already exists"
++  # from a plain re-POST. Check first, same pattern as
++  # scenarios/01_onboarding/run.sh's register_app().
++  local existing
++  existing=$(curl -sf "${CURL_AUTH[@]}" "${ARCANIUM_API}/api/v1/suppliers" |
++    jq -r --arg n "$name" '.[] | select(.name==$n) | .id' 2>/dev/null || true)
++  if [ -n "$existing" ]; then
++    echo "[isolation] '$name' already registered: $existing" >&2
++    echo "$existing"
++    return
++  fi
++  local id
++  id=$(curl -sf "${CURL_AUTH[@]}" -X POST "${ARCANIUM_API}/api/v1/suppliers" \
++    -H "Content-Type: application/json" \
++    -d "{\"name\":\"${name}\",\"vault_namespace\":\"${namespace}\",\"sla_tier\":\"standard\"}" | jq -r .id)
++  echo "[isolation] registered '${name}': ${id}" >&2
++  echo "$id"
++}
++
++PEPSI_ID=$(register_supplier "pepsi" "suppliers/pepsi")
++COCACOLA_ID=$(register_supplier "cocacola" "suppliers/cocacola")
+ 
+ echo "[isolation] generating AppRole credentials in each namespace..."
+ 

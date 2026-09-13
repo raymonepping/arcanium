@@ -646,10 +646,11 @@ capture_lifecycle_completion() {
   if ! running arcanium-postgres; then
     jq -n '{service_accounts: {active: null, revoked: null},
             expiry_date: {tracked: null, drifted: null},
-            offboarding: {initiated: null, completed: null}}' \
+            offboarding: {initiated: null, completed: null},
+            approval_execution_backlog: null}' \
       >"$d/lifecycle_completion.json"
   else
-    local sa_active sa_revoked exp_tracked exp_drifted ob_initiated ob_completed
+    local sa_active sa_revoked exp_tracked exp_drifted ob_initiated ob_completed approval_backlog
     sa_active=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
       "select count(*) from service_accounts where revoked_at is null;" 2>/dev/null | tr -d '[:space:]')
     sa_revoked=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
@@ -672,13 +673,26 @@ capture_lifecycle_completion() {
       "select count(*) from applications where offboarding_initiated_at is not null;" 2>/dev/null | tr -d '[:space:]')
     ob_completed=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
       "select count(*) from applications where offboarded_at is not null;" 2>/dev/null | tr -d '[:space:]')
+    # Prompt 29, Deliverable 9 — a persistently nonzero count here means
+    # approval-execution.js's own worker step is stuck (silently not
+    # keeping up with real approved destroys), the same class of
+    # silent-backlog failure this whole prompt exists to catch. Zero in a
+    # healthy baseline is expected; a row can also sit here deliberately
+    # when hasLiveDestroyIntent() correctly skips it (found live,
+    # 2026-09-13 — see approval-execution.js's own header) — this count
+    # alone can't distinguish "stuck" from "correctly skipped," only that
+    # something here needs a human look if it stays nonzero across baselines.
+    approval_backlog=$(podman exec -i arcanium-postgres psql -U arcanium -d arcanium_db -t -A -c \
+      "select count(*) from approval_requests where status='approved' and action='revoke' and executed_at is null;" 2>/dev/null | tr -d '[:space:]')
     jq -n \
       --arg saa "${sa_active:-0}" --arg sar "${sa_revoked:-0}" \
       --arg ext "${exp_tracked:-0}" --arg exd "${exp_drifted:-0}" \
       --arg obi "${ob_initiated:-0}" --arg obc "${ob_completed:-0}" \
+      --arg aeb "${approval_backlog:-0}" \
       '{service_accounts: {active: ($saa | tonumber), revoked: ($sar | tonumber)},
         expiry_date: {tracked: ($ext | tonumber), drifted: ($exd | tonumber)},
-        offboarding: {initiated: ($obi | tonumber), completed: ($obc | tonumber)}}' \
+        offboarding: {initiated: ($obi | tonumber), completed: ($obc | tonumber)},
+        approval_execution_backlog: ($aeb | tonumber)}' \
       >"$d/lifecycle_completion.json"
   fi
 

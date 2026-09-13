@@ -1,0 +1,3 @@
+MM scenarios/01_onboarding/run.sh
+MM scenarios/05_approval/provision.sh
+MM scenarios/06_supplier_isolation/provision.sh

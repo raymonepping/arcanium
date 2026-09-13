@@ -31,6 +31,22 @@ healthRouter.get("/ready", async (_req, res) => {
       .status(503)
       .json({ status: "unavailable", reason: "vault not authenticated" });
   }
+  // Prompt 29 — catch a wedged rotation loop BEFORE the credential actually
+  // expires, not only after ping() starts failing. lastDbRotationError set
+  // while dbCredsExpiry is imminent means the retry loop is actively
+  // struggling (found live: previously this had no retry at all and simply
+  // stopped, so this signal never existed to check).
+  const expirySoon =
+    vaultState.dbCredsExpiry &&
+    new Date(vaultState.dbCredsExpiry).getTime() - Date.now() < 60_000;
+  if (expirySoon && vaultState.lastDbRotationError) {
+    return res.status(503).json({
+      status: "unavailable",
+      reason: "db credential rotation retrying, expires soon",
+      dbCredsExpiry: vaultState.dbCredsExpiry,
+      lastDbRotationError: vaultState.lastDbRotationError,
+    });
+  }
   try {
     await ping();
     res.json({ status: "ready" });
@@ -67,11 +83,20 @@ healthRouter.get("/", async (_req, res) => {
       reachable: true, // We can't easily probe without a token; authenticated implies reachable
       authenticated: vaultState.authenticated,
       tokenExpiry: vaultState.tokenExpiry,
+      lastTokenRefreshAt: vaultState.lastTokenRefreshAt,
+      ...(vaultState.lastTokenRefreshError
+        ? { lastTokenRefreshError: vaultState.lastTokenRefreshError }
+        : {}),
       ...(vaultState.authenticated ? {} : { error: "not authenticated" }),
     },
     database: {
       reachable: dbReachable,
       latencyMs: dbLatencyMs,
+      dbCredsExpiry: vaultState.dbCredsExpiry,
+      lastDbRotationAt: vaultState.lastDbRotationAt,
+      ...(vaultState.lastDbRotationError
+        ? { lastDbRotationError: vaultState.lastDbRotationError }
+        : {}),
       ...(dbError ? { error: dbError } : {}),
     },
   });
