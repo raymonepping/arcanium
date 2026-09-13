@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rotation correctness, destroyed-key reporting, and the key detail
+  page's dead Version history card (Prompt 38). Reconciliation's
+  rotation_period requirement only ever checked the CONFIGURED
+  `auto_rotate_period`, never whether the key had actually rotated
+  recently — Vault's own auto-rotation is real and server-side, but
+  nothing here would have noticed if it silently stopped, or if the
+  configured value weren't actually in effect. A new
+  `compareRotationPeriod()` also checks the current version's real age
+  against the desired period (with a 1-day grace window), correctly
+  reporting `DRIFTED` with an honest "N days old — overdue for
+  rotation" detail rather than a false `COMPLIANT`. A destroyed key's
+  rotation requirement previously reported `UNKNOWN` forever
+  (indistinguishable from "Vault unreachable"); now reports
+  `COMPLIANT` (nothing left to violate), mirroring how expiry_date
+  already treats a destroyed key. The dashboard's "Rotate —
+  Demonstrated" badge no longer counts a merely-configured policy on
+  its own — only real evidence-trail rotation events. Found live while
+  verifying: Vault's per-version metadata for a symmetric key
+  (`aes256-gcm96`) is a bare creation-time epoch number, never an
+  object — the exact quirk `publicKeyOf()` already had to handle,
+  now also handled in `observeRotationPeriod()` and the key detail
+  page's Version history card, which was previously always empty for
+  every key (it read a field, `versions`, that the detail route never
+  actually populates — the real per-version data is under Vault's own
+  `keys` field) — now renders real version rows with correctly
+  formatted creation dates, verified live for both real Vault entry
+  shapes. Full regression green.
 - Generate, Store, and Use lifecycle correctness (Prompt 37) — the
   remaining stages from the full six-stage lifecycle audit, after
   Prompt 36 closed Destroy's critical/high findings. Generate:

@@ -1,0 +1,14 @@
+ M CHANGELOG.md
+ M Makefile
+ M arcanium/api/openapi/arcanium.yaml
+ M arcanium/api/src/reconciliation/diff.js
+ M arcanium/api/src/reconciliation/engine.js
+ M arcanium/api/src/reconciliation/observe.js
+ M arcanium/ui/app/pages/index.vue
+ M arcanium/ui/app/pages/keys/[id].vue
+ M arcanium/ui/app/types/api.generated.ts
+ M arcanium/ui/app/types/arcanium.ts
+ M openapi/arcanium.yaml
+ M state/CURRENT
+?? scripts/clean-slate.sh
+?? state/baselines/2026-09-13_pre-prompt-38-rotation-correctness/

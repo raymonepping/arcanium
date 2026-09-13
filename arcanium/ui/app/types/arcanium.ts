@@ -41,7 +41,18 @@ export interface TransitKey {
   supports_decryption: boolean
   supports_derivation: boolean
   supports_signing: boolean
-  versions?: Record<string, { creation_time: string }>
+  /** A bare version count (LIST route's projectKey() — NOT per-version
+   *  detail). Named to match what that route has always returned. */
+  versions?: number
+  /** Prompt 38 — GET /keys/{name} only. Vault's own real per-version
+   *  metadata (spread through from resolveKeyMeta() as-is), keyed by
+   *  version number — this is what the detail page's Version history
+   *  card actually reads; `versions` above is a different route's
+   *  different (bare-count) field, never this shape. Vault's own entry
+   *  shape differs by key type: a symmetric key's (aes256-gcm96) is a
+   *  bare creation-time epoch number (seconds), never an object; only
+   *  an asymmetric/managed key's is `{ creation_time, ... }`. */
+  keys?: Record<string, { creation_time: string } | number>
   latest_version?: number
   auto_rotate_period?: number
   /** API-derived custody label (never inferred from the key name). */

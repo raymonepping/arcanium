@@ -1,0 +1,204 @@
+{
+  "agent-registry/": {
+    "uuid": "622cdd2c-172f-7e1a-af64-1481a078e287",
+    "type": "agent_registry",
+    "description": "agent registry",
+    "accessor": "agent-registry_390f2430",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false,
+      "passthrough_request_headers": [
+        "Authorization"
+      ]
+    },
+    "options": null,
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": ""
+  },
+  "cubbyhole/": {
+    "uuid": "2aba7c55-1782-56d9-5af1-25d6b9bbd2a7",
+    "type": "cubbyhole",
+    "description": "per-token private secret storage",
+    "accessor": "cubbyhole_5511a22e",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false
+    },
+    "options": null,
+    "local": true,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": ""
+  },
+  "database/": {
+    "uuid": "6e40a6da-110d-c61b-4854-214c7dc6927e",
+    "type": "database",
+    "description": "",
+    "accessor": "database_7d3c1f4e",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false
+    },
+    "options": {},
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": ""
+  },
+  "identity/": {
+    "uuid": "95a46152-9ad6-7006-22d1-25c58bac63fc",
+    "type": "identity",
+    "description": "identity store",
+    "accessor": "identity_c050d832",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false,
+      "passthrough_request_headers": [
+        "Authorization"
+      ],
+      "allowed_response_headers": [
+        "Location"
+      ]
+    },
+    "options": null,
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": ""
+  },
+  "keymgmt/": {
+    "uuid": "7b684d82-05b3-aa7e-fcd1-4be029e7974b",
+    "type": "keymgmt",
+    "description": "",
+    "accessor": "keymgmt_35ae8294",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false
+    },
+    "options": null,
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v0.19.1-0.20260320070807-fba49f4037c9+builtin",
+    "running_sha256": "",
+    "deprecation_status": "supported"
+  },
+  "kmip/": {
+    "uuid": "28cc3f8e-9559-a0a4-2da8-260ae99402b1",
+    "type": "kmip",
+    "description": "Arcanium KMIP engine — legacy database consumer",
+    "accessor": "kmip_3dc82574",
+    "config": {
+      "default_lease_ttl": 604800,
+      "max_lease_ttl": 0,
+      "force_no_cache": false
+    },
+    "options": null,
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v0.20.2+builtin",
+    "running_sha256": "",
+    "deprecation_status": "supported"
+  },
+  "pki-int/": {
+    "uuid": "2e691be6-6dad-f063-b91f-ff07c4581780",
+    "type": "pki",
+    "description": "Arcanium Intermediate CA",
+    "accessor": "pki_4a5f5c8d",
+    "config": {
+      "default_lease_ttl": 2592000,
+      "max_lease_ttl": 157680000,
+      "force_no_cache": false
+    },
+    "options": {},
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": "supported"
+  },
+  "pki/": {
+    "uuid": "cecb96f2-6422-fd98-00fa-ad8dbe1f9a18",
+    "type": "pki",
+    "description": "Arcanium Root CA",
+    "accessor": "pki_644eed3c",
+    "config": {
+      "default_lease_ttl": 315360000,
+      "max_lease_ttl": 315360000,
+      "force_no_cache": false
+    },
+    "options": {},
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": "supported"
+  },
+  "sys/": {
+    "uuid": "f0cf9d3e-d13c-727b-2981-b76b4564bc73",
+    "type": "system",
+    "description": "system endpoints used for control, policy and debugging",
+    "accessor": "system_40bb4c47",
+    "config": {
+      "default_lease_ttl": 0,
+      "max_lease_ttl": 0,
+      "force_no_cache": false,
+      "passthrough_request_headers": [
+        "Accept"
+      ]
+    },
+    "options": null,
+    "local": false,
+    "seal_wrap": true,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": ""
+  },
+  "transit/": {
+    "uuid": "dc85ee34-99de-664d-0637-f6ef6f947c61",
+    "type": "transit",
+    "description": "Arcanium Transit — application-layer encryption",
+    "accessor": "transit_d65a9855",
+    "config": {
+      "default_lease_ttl": 3600,
+      "max_lease_ttl": 86400,
+      "force_no_cache": false
+    },
+    "options": {},
+    "local": false,
+    "seal_wrap": false,
+    "external_entropy_access": false,
+    "plugin_version": "",
+    "running_plugin_version": "v2.1.0+builtin.vault",
+    "running_sha256": "",
+    "deprecation_status": "supported"
+  }
+}

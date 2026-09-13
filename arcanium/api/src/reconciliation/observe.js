@@ -44,15 +44,53 @@ export async function observeRotationPeriod(vaultPath, namespace = null) {
         )
       : await vaultRequest("GET", vaultPath, null, getProvisionerToken());
     const seconds = Number(res?.data?.auto_rotate_period ?? 0);
+    // Prompt 38 — previously reported only the CONFIGURED period, never
+    // whether the key has actually rotated recently. Vault's own
+    // auto-rotation is real and server-side, but nothing here would
+    // ever notice if it silently stopped, or if the configured value
+    // weren't actually in effect despite reading back correctly.
+    // latest_version_creation_time lets compareRotationPeriod() (diff.js)
+    // check the real age of the current version against the desired
+    // period, not just whether the config field matches.
+    // Found live while verifying this fix: Vault's own per-version entry
+    // shape differs by key type — a symmetric key's (aes256-gcm96) is a
+    // bare creation-time epoch NUMBER (seconds), never an object at all;
+    // only an asymmetric/managed key's is `{ creation_time, ... }`. The
+    // same quirk publicKeyOf() (routes/keys.js) and the key detail
+    // page's versionList already have to handle for the same reason.
+    const latestVersion = String(res?.data?.latest_version ?? "");
+    const latestVersionEntry = res?.data?.keys?.[latestVersion];
+    const latestVersionCreationTime =
+      typeof latestVersionEntry === "number"
+        ? new Date(latestVersionEntry * 1000).toISOString()
+        : (latestVersionEntry?.creation_time ?? null);
     return {
-      value: { days: seconds / SECONDS_PER_DAY },
+      value: {
+        days: seconds / SECONDS_PER_DAY,
+        latest_version_creation_time: latestVersionCreationTime,
+      },
       status: "OK",
       observed_at,
       source: "vault-live",
     };
   } catch (err) {
-    // Vault unreachable, key deleted underneath us, namespace boundary
-    // denial, etc. — all collapse to UNKNOWN, never a guessed status.
+    // Prompt 38 — a 404 (key destroyed) previously fell through to
+    // UNKNOWN here, indistinguishable from "Vault unreachable" — unlike
+    // observeExpiryDate(), which already treats a 404 as a real,
+    // positively-observed outcome. A destroyed key has no rotation
+    // obligation left to violate; report that as a known fact
+    // (compareRotationPeriod treats active:false as COMPLIANT), not a
+    // permanent UNKNOWN limbo.
+    if (err.vaultStatus === 404) {
+      return {
+        value: { days: null, active: false },
+        status: "OK",
+        observed_at,
+        source: "vault-live",
+      };
+    }
+    // Vault unreachable, namespace boundary denial, etc. — collapse to
+    // UNKNOWN, never a guessed status.
     return {
       value: null,
       status: "UNKNOWN",

@@ -13,7 +13,7 @@ import {
   applyRotationPeriod,
   observeExpiryDate,
 } from "./observe.js";
-import { compare, compareExpiryDate } from "./diff.js";
+import { compare, compareExpiryDate, compareRotationPeriod } from "./diff.js";
 import { requestKeyDestroy } from "../provisioner/key.js";
 import { emitEvent } from "../events/emit.js";
 import {
@@ -40,9 +40,17 @@ const APPLIERS = {
   // applier -> re-observe -> expect-COMPLIANT pipeline every other
   // requirement type uses; destruction stays gated behind human approval.
 };
-// Requirement-aware comparator dispatch — rotation_period keeps using the
-// generic deep-equal `compare()`, unchanged.
-const COMPARATORS = { expiry_date: compareExpiryDate };
+// Requirement-aware comparator dispatch. Prompt 38 — rotation_period
+// used to fall through to the generic deep-equal compare(), which only
+// checked the configured period, never whether the key had actually
+// rotated. compareRotationPeriod() also catches a key whose config is
+// correct but whose current version is provably overdue, and reports a
+// destroyed key as COMPLIANT (nothing left to violate) instead of
+// permanent UNKNOWN.
+const COMPARATORS = {
+  expiry_date: compareExpiryDate,
+  rotation_period: compareRotationPeriod,
+};
 function compareFor(row, observed) {
   return (COMPARATORS[row.requirement] || compare)(row, observed);
 }

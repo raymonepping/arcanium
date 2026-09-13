@@ -228,10 +228,29 @@ const stages = computed(() => {
   ]
 })
 
+// Prompt 38 — previously read keyData.value.versions, expecting a
+// { [version]: { creation_time } } object matching TransitKey's own
+// declared type — but GET /keys/:name (resolveKeyMeta()) spreads
+// Vault's raw response as-is, which has no `versions` field at all; the
+// real per-version data is under Vault's own `keys` field. `versions`
+// was always undefined here, so this card silently never rendered
+// anything — the one place a human could visually confirm rotation
+// actually happened. projectKey() (the LIST route)'s own `versions`
+// field is a different thing entirely (a bare version count) and is
+// untouched — this is a different route's different bug.
+// Vault's own per-version entry shape differs by key type — found live
+// while verifying this fix: a symmetric key's (aes256-gcm96) entry is a
+// bare creation-time epoch NUMBER (seconds), never an object at all;
+// only an asymmetric/managed key's entry is `{ creation_time, ... }`.
+// The exact same quirk publicKeyOf() (keys.js) already has to handle for
+// the same reason.
 const versionList = computed(() => {
-  if (!keyData.value?.versions) return []
-  return Object.entries(keyData.value.versions)
-    .map(([num, v]) => ({ num: Number(num), creation_time: v.creation_time }))
+  if (!keyData.value?.keys) return []
+  return Object.entries(keyData.value.keys)
+    .map(([num, v]) => ({
+      num: Number(num),
+      creation_time: typeof v === 'number' ? new Date(v * 1000).toISOString() : v.creation_time,
+    }))
     .sort((a, b) => b.num - a.num)
 })
 

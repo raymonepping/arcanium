@@ -1,0 +1,376 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index dcb2ec8..3184b66 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Fixed
+ 
++- Rotation correctness, destroyed-key reporting, and the key detail
++  page's dead Version history card (Prompt 38). Reconciliation's
++  rotation_period requirement only ever checked the CONFIGURED
++  `auto_rotate_period`, never whether the key had actually rotated
++  recently — Vault's own auto-rotation is real and server-side, but
++  nothing here would have noticed if it silently stopped, or if the
++  configured value weren't actually in effect. A new
++  `compareRotationPeriod()` also checks the current version's real age
++  against the desired period (with a 1-day grace window), correctly
++  reporting `DRIFTED` with an honest "N days old — overdue for
++  rotation" detail rather than a false `COMPLIANT`. A destroyed key's
++  rotation requirement previously reported `UNKNOWN` forever
++  (indistinguishable from "Vault unreachable"); now reports
++  `COMPLIANT` (nothing left to violate), mirroring how expiry_date
++  already treats a destroyed key. The dashboard's "Rotate —
++  Demonstrated" badge no longer counts a merely-configured policy on
++  its own — only real evidence-trail rotation events. Found live while
++  verifying: Vault's per-version metadata for a symmetric key
++  (`aes256-gcm96`) is a bare creation-time epoch number, never an
++  object — the exact quirk `publicKeyOf()` already had to handle,
++  now also handled in `observeRotationPeriod()` and the key detail
++  page's Version history card, which was previously always empty for
++  every key (it read a field, `versions`, that the detail route never
++  actually populates — the real per-version data is under Vault's own
++  `keys` field) — now renders real version rows with correctly
++  formatted creation dates, verified live for both real Vault entry
++  shapes. Full regression green.
+ - Generate, Store, and Use lifecycle correctness (Prompt 37) — the
+   remaining stages from the full six-stage lifecycle audit, after
+   Prompt 36 closed Destroy's critical/high findings. Generate:
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 8e40658..448f04d 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -191,7 +191,18 @@ components:
+       properties:
+         name: { type: string }
+         type: { type: string }
+-        versions: { type: ["integer", "null"] }
++        versions:
++          type: ["integer", "null"]
++          description: "A bare version count (LIST route's projectKey() only) — NOT per-version detail. See `keys` below for that."
++        keys:
++          type: object
++          description: "Prompt 38 — GET /keys/{name} only. Vault's own real per-version metadata, keyed by version number. This is what the key detail page's Version history card reads; `versions` above is a different, unrelated (bare-count) field. Vault's own entry shape differs by key type: a symmetric key's (aes256-gcm96) is a bare creation-time epoch NUMBER (seconds), never an object; only an asymmetric/managed key's is an object with creation_time."
++          additionalProperties:
++            oneOf:
++              - type: integer
++              - type: object
++                properties:
++                  creation_time: { type: string, format: date-time }
+         latest_version: { type: ["integer", "null"] }
+         exportable: { type: boolean }
+         deletion_allowed: { type: boolean }
+diff --git a/arcanium/api/src/reconciliation/diff.js b/arcanium/api/src/reconciliation/diff.js
+index 7cd2e4e..26b735a 100644
+--- a/arcanium/api/src/reconciliation/diff.js
++++ b/arcanium/api/src/reconciliation/diff.js
+@@ -25,6 +25,60 @@ export function compare(desired, observed) {
+ 
+ const APPROACHING_EXPIRY_DAYS = 14;
+ const MS_PER_DAY = 86400000;
++// Absorbs the natural lag between a rotation period's own boundary and
++// Vault's next internal rotation check — a key isn't "overdue" the
++// instant it crosses its configured period, only once it's meaningfully
++// past it.
++const ROTATION_GRACE_DAYS = 1;
++
++// Prompt 38 — rotation_period previously used the generic compare()
++// above, which only ever checked whether the CONFIGURED period matched
++// the desired one — never whether the key has actually been rotating.
++// Vault's own auto-rotation is real and server-side (no hand-rolled
++// scheduler here to fail), but nothing was watching for it silently
++// stopping, or the configured value somehow not actually being in
++// effect despite reading back correctly. observeRotationPeriod() now
++// also reports the current version's real creation_time; this
++// comparator uses it to catch a key whose config is correct but whose
++// current version is provably older than that config allows.
++export function compareRotationPeriod(desired, observed) {
++  if (observed.status === "UNKNOWN") {
++    return { status: "UNKNOWN", detail: observed.detail };
++  }
++  const desiredDays = desired.desired_value?.days;
++  if (!Number.isFinite(desiredDays)) {
++    return { status: "UNKNOWN", detail: "desired_value.days is missing" };
++  }
++  // A destroyed key (observeRotationPeriod's own 404 handling) has no
++  // rotation obligation left to violate — same reasoning
++  // compareExpiryDate() already applies to an inactive key, rather than
++  // leaving this in permanent UNKNOWN limbo.
++  if (observed.value?.active === false) {
++    return { status: "COMPLIANT" };
++  }
++  const observedDays = observed.value?.days;
++  if (observedDays !== desiredDays) {
++    return {
++      status: "DRIFTED",
++      desired: desired.desired_value,
++      observed: { days: observedDays },
++    };
++  }
++  const creationTime = observed.value?.latest_version_creation_time;
++  if (creationTime) {
++    const ageDays =
++      (Date.now() - new Date(creationTime).getTime()) / MS_PER_DAY;
++    if (ageDays > desiredDays + ROTATION_GRACE_DAYS) {
++      return {
++        status: "DRIFTED",
++        desired: desired.desired_value,
++        observed: { days: observedDays },
++        detail: `configured correctly at ${desiredDays}d, but the current key version is ${Math.floor(ageDays)}d old — overdue for rotation`,
++      };
++    }
++  }
++  return { status: "COMPLIANT" };
++}
+ 
+ // Prompt 28, Deliverable 5 — `expiry_date` needs a different comparator
+ // than the generic deep-equal `compare()` above: "must not be active after
+diff --git a/arcanium/api/src/reconciliation/engine.js b/arcanium/api/src/reconciliation/engine.js
+index c2ef1a0..8e6dd10 100644
+--- a/arcanium/api/src/reconciliation/engine.js
++++ b/arcanium/api/src/reconciliation/engine.js
+@@ -13,7 +13,7 @@ import {
+   applyRotationPeriod,
+   observeExpiryDate,
+ } from "./observe.js";
+-import { compare, compareExpiryDate } from "./diff.js";
++import { compare, compareExpiryDate, compareRotationPeriod } from "./diff.js";
+ import { requestKeyDestroy } from "../provisioner/key.js";
+ import { emitEvent } from "../events/emit.js";
+ import {
+@@ -40,9 +40,17 @@ const APPLIERS = {
+   // applier -> re-observe -> expect-COMPLIANT pipeline every other
+   // requirement type uses; destruction stays gated behind human approval.
+ };
+-// Requirement-aware comparator dispatch — rotation_period keeps using the
+-// generic deep-equal `compare()`, unchanged.
+-const COMPARATORS = { expiry_date: compareExpiryDate };
++// Requirement-aware comparator dispatch. Prompt 38 — rotation_period
++// used to fall through to the generic deep-equal compare(), which only
++// checked the configured period, never whether the key had actually
++// rotated. compareRotationPeriod() also catches a key whose config is
++// correct but whose current version is provably overdue, and reports a
++// destroyed key as COMPLIANT (nothing left to violate) instead of
++// permanent UNKNOWN.
++const COMPARATORS = {
++  expiry_date: compareExpiryDate,
++  rotation_period: compareRotationPeriod,
++};
+ function compareFor(row, observed) {
+   return (COMPARATORS[row.requirement] || compare)(row, observed);
+ }
+diff --git a/arcanium/api/src/reconciliation/observe.js b/arcanium/api/src/reconciliation/observe.js
+index 566cafc..52e0cfb 100644
+--- a/arcanium/api/src/reconciliation/observe.js
++++ b/arcanium/api/src/reconciliation/observe.js
+@@ -44,15 +44,53 @@ export async function observeRotationPeriod(vaultPath, namespace = null) {
+         )
+       : await vaultRequest("GET", vaultPath, null, getProvisionerToken());
+     const seconds = Number(res?.data?.auto_rotate_period ?? 0);
++    // Prompt 38 — previously reported only the CONFIGURED period, never
++    // whether the key has actually rotated recently. Vault's own
++    // auto-rotation is real and server-side, but nothing here would
++    // ever notice if it silently stopped, or if the configured value
++    // weren't actually in effect despite reading back correctly.
++    // latest_version_creation_time lets compareRotationPeriod() (diff.js)
++    // check the real age of the current version against the desired
++    // period, not just whether the config field matches.
++    // Found live while verifying this fix: Vault's own per-version entry
++    // shape differs by key type — a symmetric key's (aes256-gcm96) is a
++    // bare creation-time epoch NUMBER (seconds), never an object at all;
++    // only an asymmetric/managed key's is `{ creation_time, ... }`. The
++    // same quirk publicKeyOf() (routes/keys.js) and the key detail
++    // page's versionList already have to handle for the same reason.
++    const latestVersion = String(res?.data?.latest_version ?? "");
++    const latestVersionEntry = res?.data?.keys?.[latestVersion];
++    const latestVersionCreationTime =
++      typeof latestVersionEntry === "number"
++        ? new Date(latestVersionEntry * 1000).toISOString()
++        : (latestVersionEntry?.creation_time ?? null);
+     return {
+-      value: { days: seconds / SECONDS_PER_DAY },
++      value: {
++        days: seconds / SECONDS_PER_DAY,
++        latest_version_creation_time: latestVersionCreationTime,
++      },
+       status: "OK",
+       observed_at,
+       source: "vault-live",
+     };
+   } catch (err) {
+-    // Vault unreachable, key deleted underneath us, namespace boundary
+-    // denial, etc. — all collapse to UNKNOWN, never a guessed status.
++    // Prompt 38 — a 404 (key destroyed) previously fell through to
++    // UNKNOWN here, indistinguishable from "Vault unreachable" — unlike
++    // observeExpiryDate(), which already treats a 404 as a real,
++    // positively-observed outcome. A destroyed key has no rotation
++    // obligation left to violate; report that as a known fact
++    // (compareRotationPeriod treats active:false as COMPLIANT), not a
++    // permanent UNKNOWN limbo.
++    if (err.vaultStatus === 404) {
++      return {
++        value: { days: null, active: false },
++        status: "OK",
++        observed_at,
++        source: "vault-live",
++      };
++    }
++    // Vault unreachable, namespace boundary denial, etc. — collapse to
++    // UNKNOWN, never a guessed status.
+     return {
+       value: null,
+       status: "UNKNOWN",
+diff --git a/arcanium/ui/app/pages/index.vue b/arcanium/ui/app/pages/index.vue
+index 847e346..06ad7a6 100644
+--- a/arcanium/ui/app/pages/index.vue
++++ b/arcanium/ui/app/pages/index.vue
+@@ -503,12 +503,20 @@ const lifecycle = computed(() => {
+         ? `${cryptoOpsIngested.value} workload crypto operations ingested from the Vault audit log`
+         : 'Workload encrypt / sign operation ingestion not yet connected',
+     },
++    // Prompt 38 — previously also demonstrated:true from rotateSignals
++    // alone (a configured auto-rotation policy, never actually
++    // exercised) — a configured-but-never-rotated estate rendered
++    // "Demonstrated." Only a real evidence-trail rotate event counts
++    // now; a policy with no observed rotation still shows the policy
++    // count, honestly labeled as not yet observed.
+     {
+       stage: 'Rotate',
+-      demonstrated: (sc.Rotate ?? 0) > 0 || rotateSignals > 0,
++      demonstrated: (sc.Rotate ?? 0) > 0,
+       detail: (sc.Rotate ?? 0) > 0
+-        ? `${sc.Rotate} rotation events in the evidence trail`
+-        : rotateSignals > 0 ? `${rotateSignals} keys with an auto-rotation policy` : 'No rotation policy or events recorded',
++        ? `${sc.Rotate} rotation event(s) in the evidence trail`
++        : rotateSignals > 0
++          ? `${rotateSignals} key(s) have an auto-rotation policy, but no rotation has been observed yet`
++          : 'No rotation policy or events recorded',
+     },
+     {
+       stage: 'Destroy',
+diff --git a/arcanium/ui/app/pages/keys/[id].vue b/arcanium/ui/app/pages/keys/[id].vue
+index e34c68e..0ba3591 100644
+--- a/arcanium/ui/app/pages/keys/[id].vue
++++ b/arcanium/ui/app/pages/keys/[id].vue
+@@ -228,10 +228,29 @@ const stages = computed(() => {
+   ]
+ })
+ 
++// Prompt 38 — previously read keyData.value.versions, expecting a
++// { [version]: { creation_time } } object matching TransitKey's own
++// declared type — but GET /keys/:name (resolveKeyMeta()) spreads
++// Vault's raw response as-is, which has no `versions` field at all; the
++// real per-version data is under Vault's own `keys` field. `versions`
++// was always undefined here, so this card silently never rendered
++// anything — the one place a human could visually confirm rotation
++// actually happened. projectKey() (the LIST route)'s own `versions`
++// field is a different thing entirely (a bare version count) and is
++// untouched — this is a different route's different bug.
++// Vault's own per-version entry shape differs by key type — found live
++// while verifying this fix: a symmetric key's (aes256-gcm96) entry is a
++// bare creation-time epoch NUMBER (seconds), never an object at all;
++// only an asymmetric/managed key's entry is `{ creation_time, ... }`.
++// The exact same quirk publicKeyOf() (keys.js) already has to handle for
++// the same reason.
+ const versionList = computed(() => {
+-  if (!keyData.value?.versions) return []
+-  return Object.entries(keyData.value.versions)
+-    .map(([num, v]) => ({ num: Number(num), creation_time: v.creation_time }))
++  if (!keyData.value?.keys) return []
++  return Object.entries(keyData.value.keys)
++    .map(([num, v]) => ({
++      num: Number(num),
++      creation_time: typeof v === 'number' ? new Date(v * 1000).toISOString() : v.creation_time,
++    }))
+     .sort((a, b) => b.num - a.num)
+ })
+ 
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index b254b3d..6f4c41b 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -3263,7 +3263,15 @@ export interface components {
+         TransitKey: {
+             name?: string;
+             type?: string;
++            /** @description A bare version count (LIST route's projectKey() only) — NOT per-version detail. See `keys` below for that. */
+             versions?: number | null;
++            /** @description Prompt 38 — GET /keys/{name} only. Vault's own real per-version metadata, keyed by version number. This is what the key detail page's Version history card reads; `versions` above is a different, unrelated (bare-count) field. Vault's own entry shape differs by key type: a symmetric key's (aes256-gcm96) is a bare creation-time epoch NUMBER (seconds), never an object; only an asymmetric/managed key's is an object with creation_time. */
++            keys?: {
++                [key: string]: number | {
++                    /** Format: date-time */
++                    creation_time?: string;
++                };
++            };
+             latest_version?: number | null;
+             exportable?: boolean;
+             deletion_allowed?: boolean;
+diff --git a/arcanium/ui/app/types/arcanium.ts b/arcanium/ui/app/types/arcanium.ts
+index fc91799..e614cc0 100644
+--- a/arcanium/ui/app/types/arcanium.ts
++++ b/arcanium/ui/app/types/arcanium.ts
+@@ -41,7 +41,18 @@ export interface TransitKey {
+   supports_decryption: boolean
+   supports_derivation: boolean
+   supports_signing: boolean
+-  versions?: Record<string, { creation_time: string }>
++  /** A bare version count (LIST route's projectKey() — NOT per-version
++   *  detail). Named to match what that route has always returned. */
++  versions?: number
++  /** Prompt 38 — GET /keys/{name} only. Vault's own real per-version
++   *  metadata (spread through from resolveKeyMeta() as-is), keyed by
++   *  version number — this is what the detail page's Version history
++   *  card actually reads; `versions` above is a different route's
++   *  different (bare-count) field, never this shape. Vault's own entry
++   *  shape differs by key type: a symmetric key's (aes256-gcm96) is a
++   *  bare creation-time epoch number (seconds), never an object; only
++   *  an asymmetric/managed key's is `{ creation_time, ... }`. */
++  keys?: Record<string, { creation_time: string } | number>
+   latest_version?: number
+   auto_rotate_period?: number
+   /** API-derived custody label (never inferred from the key name). */
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 8e40658..448f04d 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -191,7 +191,18 @@ components:
+       properties:
+         name: { type: string }
+         type: { type: string }
+-        versions: { type: ["integer", "null"] }
++        versions:
++          type: ["integer", "null"]
++          description: "A bare version count (LIST route's projectKey() only) — NOT per-version detail. See `keys` below for that."
++        keys:
++          type: object
++          description: "Prompt 38 — GET /keys/{name} only. Vault's own real per-version metadata, keyed by version number. This is what the key detail page's Version history card reads; `versions` above is a different, unrelated (bare-count) field. Vault's own entry shape differs by key type: a symmetric key's (aes256-gcm96) is a bare creation-time epoch NUMBER (seconds), never an object; only an asymmetric/managed key's is an object with creation_time."
++          additionalProperties:
++            oneOf:
++              - type: integer
++              - type: object
++                properties:
++                  creation_time: { type: string, format: date-time }
+         latest_version: { type: ["integer", "null"] }
+         exportable: { type: boolean }
+         deletion_allowed: { type: boolean }
+diff --git a/state/CURRENT b/state/CURRENT
+index dd553f5..fd86ca4 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-37-generate-store-use
++state/baselines/2026-09-13_pre-prompt-38-rotation-correctness

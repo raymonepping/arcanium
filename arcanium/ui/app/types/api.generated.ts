@@ -3263,7 +3263,15 @@ export interface components {
         TransitKey: {
             name?: string;
             type?: string;
+            /** @description A bare version count (LIST route's projectKey() only) — NOT per-version detail. See `keys` below for that. */
             versions?: number | null;
+            /** @description Prompt 38 — GET /keys/{name} only. Vault's own real per-version metadata, keyed by version number. This is what the key detail page's Version history card reads; `versions` above is a different, unrelated (bare-count) field. Vault's own entry shape differs by key type: a symmetric key's (aes256-gcm96) is a bare creation-time epoch NUMBER (seconds), never an object; only an asymmetric/managed key's is an object with creation_time. */
+            keys?: {
+                [key: string]: number | {
+                    /** Format: date-time */
+                    creation_time?: string;
+                };
+            };
             latest_version?: number | null;
             exportable?: boolean;
             deletion_allowed?: boolean;

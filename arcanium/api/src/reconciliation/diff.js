@@ -25,6 +25,60 @@ export function compare(desired, observed) {
 
 const APPROACHING_EXPIRY_DAYS = 14;
 const MS_PER_DAY = 86400000;
+// Absorbs the natural lag between a rotation period's own boundary and
+// Vault's next internal rotation check — a key isn't "overdue" the
+// instant it crosses its configured period, only once it's meaningfully
+// past it.
+const ROTATION_GRACE_DAYS = 1;
+
+// Prompt 38 — rotation_period previously used the generic compare()
+// above, which only ever checked whether the CONFIGURED period matched
+// the desired one — never whether the key has actually been rotating.
+// Vault's own auto-rotation is real and server-side (no hand-rolled
+// scheduler here to fail), but nothing was watching for it silently
+// stopping, or the configured value somehow not actually being in
+// effect despite reading back correctly. observeRotationPeriod() now
+// also reports the current version's real creation_time; this
+// comparator uses it to catch a key whose config is correct but whose
+// current version is provably older than that config allows.
+export function compareRotationPeriod(desired, observed) {
+  if (observed.status === "UNKNOWN") {
+    return { status: "UNKNOWN", detail: observed.detail };
+  }
+  const desiredDays = desired.desired_value?.days;
+  if (!Number.isFinite(desiredDays)) {
+    return { status: "UNKNOWN", detail: "desired_value.days is missing" };
+  }
+  // A destroyed key (observeRotationPeriod's own 404 handling) has no
+  // rotation obligation left to violate — same reasoning
+  // compareExpiryDate() already applies to an inactive key, rather than
+  // leaving this in permanent UNKNOWN limbo.
+  if (observed.value?.active === false) {
+    return { status: "COMPLIANT" };
+  }
+  const observedDays = observed.value?.days;
+  if (observedDays !== desiredDays) {
+    return {
+      status: "DRIFTED",
+      desired: desired.desired_value,
+      observed: { days: observedDays },
+    };
+  }
+  const creationTime = observed.value?.latest_version_creation_time;
+  if (creationTime) {
+    const ageDays =
+      (Date.now() - new Date(creationTime).getTime()) / MS_PER_DAY;
+    if (ageDays > desiredDays + ROTATION_GRACE_DAYS) {
+      return {
+        status: "DRIFTED",
+        desired: desired.desired_value,
+        observed: { days: observedDays },
+        detail: `configured correctly at ${desiredDays}d, but the current key version is ${Math.floor(ageDays)}d old — overdue for rotation`,
+      };
+    }
+  }
+  return { status: "COMPLIANT" };
+}
 
 // Prompt 28, Deliverable 5 — `expiry_date` needs a different comparator
 // than the generic deep-equal `compare()` above: "must not be active after

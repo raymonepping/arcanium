@@ -503,12 +503,20 @@ const lifecycle = computed(() => {
         ? `${cryptoOpsIngested.value} workload crypto operations ingested from the Vault audit log`
         : 'Workload encrypt / sign operation ingestion not yet connected',
     },
+    // Prompt 38 — previously also demonstrated:true from rotateSignals
+    // alone (a configured auto-rotation policy, never actually
+    // exercised) — a configured-but-never-rotated estate rendered
+    // "Demonstrated." Only a real evidence-trail rotate event counts
+    // now; a policy with no observed rotation still shows the policy
+    // count, honestly labeled as not yet observed.
     {
       stage: 'Rotate',
-      demonstrated: (sc.Rotate ?? 0) > 0 || rotateSignals > 0,
+      demonstrated: (sc.Rotate ?? 0) > 0,
       detail: (sc.Rotate ?? 0) > 0
-        ? `${sc.Rotate} rotation events in the evidence trail`
-        : rotateSignals > 0 ? `${rotateSignals} keys with an auto-rotation policy` : 'No rotation policy or events recorded',
+        ? `${sc.Rotate} rotation event(s) in the evidence trail`
+        : rotateSignals > 0
+          ? `${rotateSignals} key(s) have an auto-rotation policy, but no rotation has been observed yet`
+          : 'No rotation policy or events recorded',
     },
     {
       stage: 'Destroy',
