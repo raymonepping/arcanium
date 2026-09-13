@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Generate, Store, and Use lifecycle correctness (Prompt 37) — the
+  remaining stages from the full six-stage lifecycle audit, after
+  Prompt 36 closed Destroy's critical/high findings. Generate:
+  provisioning's "record crypto profile"/"record desired state" steps
+  had no rollback at all — a later step's failure rolled back the Vault
+  key but left the DB rows asserting it still existed; both now
+  correctly restore prior values (a re-provision) or delete cleanly (a
+  fresh insert), verified live with a real forced-failure rollback.
+  The Vault-key rollback step itself force-set `deletion_allowed=true`
+  unconditionally with no restoration on a failed delete — the same
+  bug class Prompt 36 fixed in the destroy path, present here too, now
+  fixed identically. `POST /api/v1/keys` wrote with the wrong token and
+  was returning a genuine live `500` for any key name outside one
+  hardcoded exception — fixed and verified (now `201`, with a real
+  audit-trail record). Store: `resolveKeyMeta()` hardcoded
+  `hsm_backed: true` for anything read off the vault-hsm cluster,
+  contradicting `custody` (same response) for a plain software key that
+  merely lives there — now derived consistently with the list route.
+  `managed_key_name` was an uncorrelated first-in-list pick; corrected
+  (after verifying live that Vault's own key metadata has no such field
+  to read directly, contrary to an initial assumption) to report a name
+  only when genuinely unambiguous. Degraded key reads now report
+  `null`/`false` explicitly instead of leaving fields `undefined`,
+  which a truthiness check could render as a false "protected" claim.
+  The dashboard's Store/Distribute tiles no longer use a hardcoded
+  string or a registered-vs-provisioned mismatch; Store's tile no
+  longer links to a permanently-empty evidence filter. Use:
+  `usageOf()` is now namespace-scoped (was leaking cross-tenant
+  operation counts into a same-named key's usage figure); evidence
+  ingestion now counts and logs dropped rows instead of silently
+  discarding them; `GET /health` exposes whether evidence ingestion is
+  enabled at all, so the key detail page can tell "disabled" apart from
+  "genuinely unused"; the dashboard's Use tally no longer falls back to
+  an unrelated, inflated total. Full regression green.
 - Destroy-path safety and correctness (Prompt 36) — triggered by a full
   six-stage lifecycle audit ("the lifecycle has to be bulletproof"),
   found four critical, currently-armed gaps in the destroy-approval

@@ -133,10 +133,16 @@
       </div>
       <div v-if="loading" class="row-loading">Assembling lifecycle evidence…</div>
       <div v-else class="arc-kml">
+        <!-- Prompt 37 — "Store" is continuous custody state, not a
+             discrete Vault audit-log operation; lifecycleStage()
+             (routes/evidence.js) has no branch that can ever classify
+             anything as "Store", so /evidence?stage=Store would always
+             show an empty, misleading filter. The real evidence for
+             custody is the keys themselves. -->
         <NuxtLink
           v-for="(s, i) in lifecycle"
           :key="s.stage"
-          :to="`/evidence?stage=${s.stage}`"
+          :to="s.stage === 'Store' ? '/keys' : `/evidence?stage=${s.stage}`"
           class="arc-kml__stage"
           :class="{ 'arc-kml__stage--on': s.demonstrated }"
         >
@@ -449,6 +455,11 @@ const evidenceRows = computed(() =>
     .slice(0, 5)
 )
 
+// Prompt 37 — real signals for the Distribute/Store tiles below, replacing
+// a registered-count proxy and a hardcoded detail string respectively.
+const provisionedAppCount = computed(() => apps.value.filter(a => a.provisioned).length)
+const hsmBackedCount = computed(() => keys.value.filter(k => k.hsm_backed).length)
+
 // ── Lifecycle model — driven by the same KML stage tallies as /evidence ────
 const lifecycle = computed(() => {
   const k = keys.value
@@ -462,16 +473,28 @@ const lifecycle = computed(() => {
       detail: hasKeys ? `${k.length} keys generated via Vault Transit / PKI` : 'No keys generated yet',
     },
     {
+      // Prompt 37 — previously demonstrated:apps.value.length>0, which
+      // counts merely-REGISTERED applications, not ones actually
+      // provisioned with a real AppRole + key. `provisioned` (GET
+      // /api/v1/applications) is a real crypto_profiles EXISTS check.
       stage: 'Distribute',
-      demonstrated: apps.value.length > 0,
-      detail: apps.value.length
-        ? `${apps.value.length} workloads provisioned via AppRole`
-        : 'No workloads registered',
+      demonstrated: provisionedAppCount.value > 0,
+      detail: provisionedAppCount.value
+        ? `${provisionedAppCount.value} workload(s) provisioned via AppRole`
+        : 'No workloads provisioned yet',
     },
     {
+      // Prompt 37 — previously a single hardcoded detail string
+      // ("Custody: Vault storage, SoftHSM auto-unseal seal") regardless
+      // of whether any key was actually HSM-backed. Derived from the
+      // real keys list's own hsm_backed field instead.
       stage: 'Store',
       demonstrated: hasKeys,
-      detail: hasKeys ? 'Custody: Vault storage, SoftHSM auto-unseal seal' : 'No key material under custody',
+      detail: !hasKeys
+        ? 'No key material under custody'
+        : hsmBackedCount.value > 0
+          ? `${hsmBackedCount.value} HSM-backed (SoftHSM/PKCS#11), ${k.length - hsmBackedCount.value} Vault software custody`
+          : `${k.length} key(s) under Vault software custody`,
     },
     {
       stage: 'Use',
@@ -531,7 +554,11 @@ onMounted(async () => {
   if (s.status === 'fulfilled' && Array.isArray(s.value)) suppliers.value = s.value
   if (e.status === 'fulfilled' && e.value) {
     stageCounts.value = e.value.stage_counts ?? {}
-    cryptoOpsIngested.value = e.value.stage_counts?.Use ?? e.value.total ?? 0
+    // Prompt 37 — previously fell back to e.value.total (every evidence
+    // row across ALL stages) if stage_counts was ever missing, which
+    // would silently report a wildly inflated number as "Use" activity
+    // instead of an honest 0.
+    cryptoOpsIngested.value = e.value.stage_counts?.Use ?? 0
   }
   loading.value = false
   await loadApprovals()

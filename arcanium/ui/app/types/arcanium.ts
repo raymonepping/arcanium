@@ -16,6 +16,9 @@ export interface Application {
   supplier_id?: string | null
   category?: 'platform' | 'tenant' | 'unscoped'
   registered_at: string
+  /** Prompt 37 — a real crypto_profiles row exists (actually provisioned,
+   *  not merely registered). Only present on GET /api/v1/applications. */
+  provisioned?: boolean
   crypto_profiles?: CryptoProfile[]
 }
 
@@ -188,6 +191,9 @@ export interface ApiHealth {
     reachable: boolean
     latencyMs?: number
   }
+  /** Prompt 37 — distinguishes "ingestion is disabled entirely" from
+   *  "this key has genuinely never been used" on the key detail page. */
+  evidence?: { ingestEnabled: boolean }
 }
 
 export type LifecycleStage =

@@ -109,5 +109,15 @@ healthRouter.get("/", async (_req, res) => {
         : {}),
       ...(dbError ? { error: dbError } : {}),
     },
+    // Prompt 37 — makes evidence/ingest.js's own feature flag visible in
+    // this response, the same way agentManaged (Prompt 30) made a
+    // different architectural switch visible instead of silently
+    // identical-looking JSON either way. Without this, "Use — Operation
+    // evidence not yet ingested" on the key detail page is indistinguish-
+    // able from "ingestion is disabled entirely for this deployment" —
+    // two very different facts that look the same today.
+    evidence: {
+      ingestEnabled: process.env.EVIDENCE_INGEST_ENABLED === "true",
+    },
   });
 });

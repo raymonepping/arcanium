@@ -280,12 +280,20 @@ export async function getTransitKey(name) {
   return res.data;
 }
 
+// Prompt 37 — was writing with state.token (the general session AppRole
+// token), whose policy grants create/update on exactly one path
+// (arcanium-webhook-signing — Prompt 28's own exact-path exception), and
+// read-only on every other transit key. Verified live: POST /api/v1/keys
+// with any name other than that one exception returned a genuine 500 —
+// this route was structurally broken for its own stated purpose.
+// getProvisionerToken() is what every other key-creation path in this
+// codebase already uses (provisioner/application.js, provisioner/key.js).
 export async function createTransitKey(name, type = "aes256-gcm96") {
   await vaultRequest(
     "POST",
     `transit/keys/${encodeURIComponent(name)}`,
     { type },
-    state.token,
+    getProvisionerToken(),
   );
   return { name, type };
 }
@@ -513,31 +521,43 @@ export async function listHsmTransitKeys() {
   }
 }
 
-/** Read one vault-hsm transit key's metadata, enriched with its managed-key backing. */
+/** Read one vault-hsm transit key's metadata. */
 export async function getHsmTransitKey(name) {
   const res = await hsmRequest(
     "GET",
     `transit/keys/${encodeURIComponent(name)}`,
   );
   const meta = res.data ?? {};
-  let managedKey = null;
+  // Prompt 37 — previously ran a SEPARATE `LIST sys/managed-keys/pkcs11`
+  // and attached `names[0]` — the first managed key returned, entirely
+  // uncorrelated to the Transit key actually being read. With more than
+  // one managed key registered, every managed_key-type Transit key would
+  // display the SAME (wrong) backing key name.
+  //
+  // First attempted fix assumed Vault's own key metadata would carry a
+  // managed_key_name field directly (terraform/vault-managed-keys/
+  // transit.tf passes it as a write-time argument) — WRONG, corrected
+  // after verifying live: `vault read transit/keys/document-signing-key`
+  // exposes no such field at all (checked `.data`'s full key list).
+  // There genuinely is no single-call way to correlate a Transit key to
+  // its specific backing managed key through Vault's API. The honest fix:
+  // when exactly one managed key is registered, there's no real ambiguity
+  // to guess at — show it. With more than one, correctly report unknown
+  // rather than arbitrarily picking the first (this deployment currently
+  // has exactly one, so this shows the real backing key; it degrades to
+  // honest "unknown" instead of silently wrong the moment a second one is
+  // added, which is a genuine future possibility this fix must survive.
+  let managedKeyName = null;
   if (meta.type === "managed_key") {
     try {
       const mk = await hsmRequest("LIST", "sys/managed-keys/pkcs11");
       const names = mk.data?.keys ?? [];
-      // Best-effort: attach the first pkcs11 managed key's details for display.
-      if (names.length) {
-        const detail = await hsmRequest(
-          "GET",
-          `sys/managed-keys/pkcs11/${encodeURIComponent(names[0])}`,
-        );
-        managedKey = { name: names[0], ...(detail.data ?? {}) };
-      }
+      if (names.length === 1) managedKeyName = names[0];
     } catch {
       /* metadata only — ignore */
     }
   }
-  return { ...meta, name, _hsm: true, _managedKey: managedKey };
+  return { ...meta, name, _hsm: true, managed_key_name: managedKeyName };
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────

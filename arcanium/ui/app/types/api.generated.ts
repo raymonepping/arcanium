@@ -3216,6 +3216,8 @@ export interface components {
             environment?: string;
             /** Format: date-time */
             registered_at: string;
+            /** @description Prompt 37 — a real crypto_profiles row exists for this application (it was actually provisioned with an AppRole + key), not merely registered. Only present on GET /api/v1/applications (the list route); absent elsewhere. */
+            provisioned?: boolean;
             crypto_profiles?: components["schemas"]["CryptoProfile"][];
         };
         Team: {

@@ -53,6 +53,12 @@ async function main() {
           const r = await ingestAuditLog();
           if (r.ingested)
             console.log(`[worker] ingested ${r.ingested} evidence rows`);
+          // Prompt 37 — surfaces evidence/ingest.js's own dropped-row
+          // count, previously invisible anywhere.
+          if (r.dropped)
+            console.error(
+              `[worker] evidence ingest dropped ${r.dropped} row(s) this tick — see prior [evidence] log lines`,
+            );
         } catch (e) {
           console.error(`[worker] evidence ingest error: ${e.message}`);
         }

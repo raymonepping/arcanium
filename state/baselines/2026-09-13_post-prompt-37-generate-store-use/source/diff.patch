@@ -1,0 +1,838 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index cbbb8ee..dcb2ec8 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Fixed
+ 
++- Generate, Store, and Use lifecycle correctness (Prompt 37) — the
++  remaining stages from the full six-stage lifecycle audit, after
++  Prompt 36 closed Destroy's critical/high findings. Generate:
++  provisioning's "record crypto profile"/"record desired state" steps
++  had no rollback at all — a later step's failure rolled back the Vault
++  key but left the DB rows asserting it still existed; both now
++  correctly restore prior values (a re-provision) or delete cleanly (a
++  fresh insert), verified live with a real forced-failure rollback.
++  The Vault-key rollback step itself force-set `deletion_allowed=true`
++  unconditionally with no restoration on a failed delete — the same
++  bug class Prompt 36 fixed in the destroy path, present here too, now
++  fixed identically. `POST /api/v1/keys` wrote with the wrong token and
++  was returning a genuine live `500` for any key name outside one
++  hardcoded exception — fixed and verified (now `201`, with a real
++  audit-trail record). Store: `resolveKeyMeta()` hardcoded
++  `hsm_backed: true` for anything read off the vault-hsm cluster,
++  contradicting `custody` (same response) for a plain software key that
++  merely lives there — now derived consistently with the list route.
++  `managed_key_name` was an uncorrelated first-in-list pick; corrected
++  (after verifying live that Vault's own key metadata has no such field
++  to read directly, contrary to an initial assumption) to report a name
++  only when genuinely unambiguous. Degraded key reads now report
++  `null`/`false` explicitly instead of leaving fields `undefined`,
++  which a truthiness check could render as a false "protected" claim.
++  The dashboard's Store/Distribute tiles no longer use a hardcoded
++  string or a registered-vs-provisioned mismatch; Store's tile no
++  longer links to a permanently-empty evidence filter. Use:
++  `usageOf()` is now namespace-scoped (was leaking cross-tenant
++  operation counts into a same-named key's usage figure); evidence
++  ingestion now counts and logs dropped rows instead of silently
++  discarding them; `GET /health` exposes whether evidence ingestion is
++  enabled at all, so the key detail page can tell "disabled" apart from
++  "genuinely unused"; the dashboard's Use tally no longer falls back to
++  an unrelated, inflated total. Full regression green.
+ - Destroy-path safety and correctness (Prompt 36) — triggered by a full
+   six-stage lifecycle audit ("the lifecycle has to be bulletproof"),
+   found four critical, currently-armed gaps in the destroy-approval
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 323a1b9..8e40658 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -129,6 +129,9 @@ components:
+           type: string
+           description: "Prompt 27 — defaults to 'production' when omitted at registration; explicitly recorded, never left null."
+         registered_at: { type: string, format: date-time }
++        provisioned:
++          type: boolean
++          description: "Prompt 37 — a real crypto_profiles row exists for this application (it was actually provisioned with an AppRole + key), not merely registered. Only present on GET /api/v1/applications (the list route); absent elsewhere."
+         crypto_profiles:
+           type: array
+           items: { $ref: "#/components/schemas/CryptoProfile" }
+diff --git a/arcanium/api/src/aggregation/intent.js b/arcanium/api/src/aggregation/intent.js
+index 2100901..cf54282 100644
+--- a/arcanium/api/src/aggregation/intent.js
++++ b/arcanium/api/src/aggregation/intent.js
+@@ -88,9 +88,11 @@ export async function getApplicationIntent(appId) {
+       vault_path: p.vault_path,
+       type: p.type,
+       custody: live ? custodyOf(live) : (p.custody ?? "unknown"),
+-      hsm_backed: live
+-        ? Boolean(live._managedKey || live.type === "managed_key")
+-        : null, // null = not live-confirmable right now, never guessed as false
++      // Prompt 37 — live._managedKey no longer exists (vault.js dropped
++      // the separate, uncorrelated LIST call that used to populate it);
++      // live.type === "managed_key" was always the correct, sufficient
++      // signal on its own.
++      hsm_backed: live ? live.type === "managed_key" : null, // null = not live-confirmable right now, never guessed as false
+       rotation_days: p.rotation_days,
+     });
+   }
+diff --git a/arcanium/api/src/evidence/ingest.js b/arcanium/api/src/evidence/ingest.js
+index 182e3de..02c9416 100644
+--- a/arcanium/api/src/evidence/ingest.js
++++ b/arcanium/api/src/evidence/ingest.js
+@@ -104,6 +104,7 @@ export async function ingestAuditLog() {
+   // The last element may be a partial line — leave it for next pass.
+   const partialLen = Buffer.byteLength(lines.pop() ?? "", "utf8");
+   let ingested = 0;
++  let dropped = 0;
+ 
+   for (const line of lines) {
+     if (!line.trim()) continue;
+@@ -148,8 +149,22 @@ export async function ingestAuditLog() {
+         ],
+       );
+       if (r.rowCount) ingested++;
+-    } catch {
+-      /* skip malformed row */
++    } catch (err) {
++      // Prompt 37 — previously swallowed with zero visibility, no
++      // counter, no log. This catch is specifically about a genuine
++      // DB-level failure (schema mismatch, constraint violation, a
++      // transient connection error) — malformed JSON is already filtered
++      // out above, before reaching here. The cursor still advances past
++      // a dropped row (the alternative — stalling the whole pipeline on
++      // one repeatedly-failing row — would silently block every LATER
++      // operation's evidence too, a worse outcome for a non-safety-
++      // critical audit trail than losing one row), but this is no longer
++      // silent: every drop is counted and logged with enough detail to
++      // investigate.
++      dropped++;
++      console.error(
++        `[evidence] dropped a row during ingest (ts=${ts} op=${c.operation} resource=${c.resource_id}): ${err.message}`,
++      );
+     }
+   }
+ 
+@@ -160,5 +175,5 @@ export async function ingestAuditLog() {
+     [AUDIT_PATH, size - partialLen],
+   );
+ 
+-  return { ingested };
++  return { ingested, dropped };
+ }
+diff --git a/arcanium/api/src/provisioner/application.js b/arcanium/api/src/provisioner/application.js
+index acf4388..117ee8d 100644
+--- a/arcanium/api/src/provisioner/application.js
++++ b/arcanium/api/src/provisioner/application.js
+@@ -66,6 +66,14 @@ export async function provisionApplication(job, app, opts = {}) {
+       `path "pki-int/issue/${pkiRole}" { capabilities = ["update"] }`,
+     );
+ 
++  // Prompt 37 — closure state shared between a step's own run() and undo(),
++  // so a rollback can tell "this run inserted a fresh row" (delete it) apart
++  // from "this run updated a pre-existing row" (restore its prior values) —
++  // never blindly delete/overwrite something that predates this attempt.
++  let pkiProfileInserted = false;
++  let cryptoProfilePrior = null;
++  let desiredStatePrior = null;
++
+   const steps = [
+     {
+       name: `transit key ${keyName} (${keyType})`,
+@@ -87,11 +95,40 @@ export async function provisionApplication(job, app, opts = {}) {
+         }
+         return keyName;
+       },
++      // Prompt 37 — previously force-set deletion_allowed=true
++      // unconditionally, then DELETEd, both swallowed with .catch(() =>
++      // {}). If the DELETE then failed (Sentinel EGP, Control Group, a
++      // transient error), the key survived permanently downgraded to
++      // delete-unprotected with zero visibility — the same class of bug
++      // Prompt 36 already fixed in approval-execution.js's own destroy
++      // path. Read live state first; only flip the flag if it isn't
++      // already true; restore it if the delete fails; let a genuine
++      // rollback failure surface (steps.js's own rollback-failed logging
++      // already handles that honestly) rather than silently swallowing
++      // it.
+       undo: async () => {
+-        await req("POST", `transit/keys/${keyName}/config`, {
+-          deletion_allowed: true,
+-        }).catch(() => {});
+-        await req("DELETE", `transit/keys/${keyName}`).catch(() => {});
++        let wasAlreadyDeletable = false;
++        try {
++          const meta = await req("GET", `transit/keys/${keyName}`);
++          wasAlreadyDeletable = meta?.data?.deletion_allowed === true;
++        } catch {
++          return; // key isn't even readable — nothing to roll back
++        }
++        if (!wasAlreadyDeletable) {
++          await req("POST", `transit/keys/${keyName}/config`, {
++            deletion_allowed: true,
++          });
++        }
++        try {
++          await req("DELETE", `transit/keys/${keyName}`);
++        } catch (err) {
++          if (!wasAlreadyDeletable) {
++            await req("POST", `transit/keys/${keyName}/config`, {
++              deletion_allowed: false,
++            }).catch(() => {});
++          }
++          throw err;
++        }
+       },
+     },
+     {
+@@ -144,21 +181,49 @@ export async function provisionApplication(job, app, opts = {}) {
+           },
+           {
+             name: `record PKI profile`,
++            // Prompt 37 — this INSERT (ON CONFLICT DO NOTHING) had no
++            // undo at all: if a LATER step failed, runSteps() would roll
++            // back the Vault key/policy/approle above, but this row
++            // would survive — a registry/Vault split-brain (a
++            // crypto_profiles row for a PKI role that no longer exists).
++            // Only ever deletes the row THIS run inserted — a
++            // pre-existing row (a re-provision) is never touched, since
++            // DO NOTHING means this run changed nothing about it.
+             run: async () => {
+-              await query(
++              const { rowCount } = await query(
+                 `INSERT INTO crypto_profiles (application_id, type, vault_path)
+                  VALUES ($1,'pki',$2)
+                  ON CONFLICT (application_id, vault_path) DO NOTHING`,
+                 [app.id, `pki-int/roles/${pkiRole}`],
+               );
++              pkiProfileInserted = rowCount > 0;
+               return "pki profile recorded";
+             },
++            undo: async () => {
++              if (!pkiProfileInserted) return; // pre-existing row — not this run's to remove
++              await query(
++                `DELETE FROM crypto_profiles WHERE application_id = $1 AND vault_path = $2`,
++                [app.id, `pki-int/roles/${pkiRole}`],
++              ).catch(() => {});
++            },
+           },
+         ]
+       : []),
+     {
+       name: `record crypto profile`,
++      // Prompt 37 — same registry/Vault split-brain gap as above, but
++      // this one is ON CONFLICT DO UPDATE (a re-provision legitimately
++      // updates custody/rotation_days on an existing row) — undo must
++      // restore the PRIOR values on an update, not just delete, or a
++      // failed re-provision would erase real prior custody/rotation
++      // data that had nothing to do with this attempt.
+       run: async () => {
++        const { rows: existing } = await query(
++          `SELECT custody, rotation_days FROM crypto_profiles
++            WHERE application_id = $1 AND vault_path = $2`,
++          [app.id, `transit/keys/${keyName}`],
++        );
++        cryptoProfilePrior = existing[0] ?? null;
+         await query(
+           `INSERT INTO crypto_profiles (application_id, type, vault_path, custody, rotation_days)
+            VALUES ($1,'transit',$2,$3,$4)
+@@ -173,6 +238,25 @@ export async function provisionApplication(job, app, opts = {}) {
+         );
+         return "crypto_profiles updated";
+       },
++      undo: async () => {
++        if (cryptoProfilePrior) {
++          await query(
++            `UPDATE crypto_profiles SET custody = $3, rotation_days = $4
++              WHERE application_id = $1 AND vault_path = $2`,
++            [
++              app.id,
++              `transit/keys/${keyName}`,
++              cryptoProfilePrior.custody,
++              cryptoProfilePrior.rotation_days,
++            ],
++          ).catch(() => {});
++        } else {
++          await query(
++            `DELETE FROM crypto_profiles WHERE application_id = $1 AND vault_path = $2`,
++            [app.id, `transit/keys/${keyName}`],
++          ).catch(() => {});
++        }
++      },
+     },
+     // Prompt 20 — seeds desired_state (rotation_period) from the same
+     // rotation_days the operator already declared for the Transit key
+@@ -185,7 +269,22 @@ export async function provisionApplication(job, app, opts = {}) {
+       ? [
+           {
+             name: `record desired state (rotation_period)`,
++            // Prompt 37 — same split-brain gap: no undo meant a later
++            // step's failure left this desired_state row live (feeding
++            // real reconciliation drift checks) for a Vault key that had
++            // just been rolled back out of existence. Restores the
++            // prior desired_value on a re-provision, deletes it if this
++            // run created it fresh — a best-effort rollback, not a
++            // full replay of upsertDesiredState()'s own version/history
++            // semantics (this is undoing a FAILED attempt, not recording
++            // a normal edit).
+             run: async () => {
++              const { rows: existing } = await query(
++                `SELECT desired_value FROM desired_state
++                  WHERE application_id = $1 AND key_name = $2 AND requirement = 'rotation_period'`,
++                [app.id, keyName],
++              );
++              desiredStatePrior = existing[0] ?? null;
+               await upsertDesiredState({
+                 applicationId: app.id,
+                 keyName,
+@@ -198,6 +297,25 @@ export async function provisionApplication(job, app, opts = {}) {
+               });
+               return `desired rotation_period = ${rotationDays}d`;
+             },
++            undo: async () => {
++              if (desiredStatePrior) {
++                await query(
++                  `UPDATE desired_state SET desired_value = $3
++                    WHERE application_id = $1 AND key_name = $2 AND requirement = 'rotation_period'`,
++                  [
++                    app.id,
++                    keyName,
++                    JSON.stringify(desiredStatePrior.desired_value),
++                  ],
++                ).catch(() => {});
++              } else {
++                await query(
++                  `DELETE FROM desired_state
++                    WHERE application_id = $1 AND key_name = $2 AND requirement = 'rotation_period'`,
++                  [app.id, keyName],
++                ).catch(() => {});
++              }
++            },
+           },
+         ]
+       : []),
+diff --git a/arcanium/api/src/routes/applications.js b/arcanium/api/src/routes/applications.js
+index 0743600..7297819 100644
+--- a/arcanium/api/src/routes/applications.js
++++ b/arcanium/api/src/routes/applications.js
+@@ -51,14 +51,24 @@ applicationsRouter.get("/", async (req, res, next) => {
+         if (team.scoped) supplierIdFilter = team.supplierIds; // null here still means "this team covers everything"
+       }
+     }
++    // Prompt 37 — `provisioned` (a real crypto_profiles row exists) lets
++    // a consumer tell "registered" apart from "actually provisioned with
++    // a real AppRole + key" — the dashboard's own "Distribute —
++    // Demonstrated" badge previously just counted registered rows,
++    // which is real registry data but not evidence of anything being
++    // distributed yet.
+     const { rows } =
+       supplierIdFilter !== null
+         ? await query(
+-            "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications WHERE supplier_id = ANY($1) ORDER BY registered_at DESC",
++            `SELECT a.id, a.name, a.description, a.supplier_id, a.category, a.environment, a.registered_at,
++                    EXISTS (SELECT 1 FROM crypto_profiles cp WHERE cp.application_id = a.id) AS provisioned
++               FROM applications a WHERE a.supplier_id = ANY($1) ORDER BY a.registered_at DESC`,
+             [supplierIdFilter],
+           )
+         : await query(
+-            "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications ORDER BY registered_at DESC",
++            `SELECT a.id, a.name, a.description, a.supplier_id, a.category, a.environment, a.registered_at,
++                    EXISTS (SELECT 1 FROM crypto_profiles cp WHERE cp.application_id = a.id) AS provisioned
++               FROM applications a ORDER BY a.registered_at DESC`,
+           );
+     res.json(rows);
+   } catch (err) {
+diff --git a/arcanium/api/src/routes/health.js b/arcanium/api/src/routes/health.js
+index 4f56b9f..1ff3794 100644
+--- a/arcanium/api/src/routes/health.js
++++ b/arcanium/api/src/routes/health.js
+@@ -109,5 +109,15 @@ healthRouter.get("/", async (_req, res) => {
+         : {}),
+       ...(dbError ? { error: dbError } : {}),
+     },
++    // Prompt 37 — makes evidence/ingest.js's own feature flag visible in
++    // this response, the same way agentManaged (Prompt 30) made a
++    // different architectural switch visible instead of silently
++    // identical-looking JSON either way. Without this, "Use — Operation
++    // evidence not yet ingested" on the key detail page is indistinguish-
++    // able from "ingestion is disabled entirely for this deployment" —
++    // two very different facts that look the same today.
++    evidence: {
++      ingestEnabled: process.env.EVIDENCE_INGEST_ENABLED === "true",
++    },
+   });
+ });
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index c01846d..54e7eed 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -91,15 +91,22 @@ async function distributionOf(name) {
+ // `evidence` the whole time. null (not a zero-count object) when this
+ // key genuinely has no evidence rows yet, so the UI can keep its existing
+ // honest not-yet-observed wording for that case.
+-async function usageOf(name) {
++// Prompt 37 — was not scoped by namespace at all: a root-namespace key's
++// usage count could include a same-named supplier-tenant key's own
++// operations (evidence.namespace is stored per-row — ingest.js — but was
++// never queried by it here), inflating a compliance-facing number and
++// leaking cross-tenant activity. This route only ever resolves
++// root-namespace keys (resolveKeyMeta()'s own scope), so 'root' is the
++// correct, permanent scope for this call site.
++async function usageOf(name, namespace = "root") {
+   const { rows } = await query(
+     `SELECT count(*)::int AS count, max(ts) AS last_at,
+             (SELECT operation FROM evidence
+-              WHERE resource_type = 'key' AND resource_id = $1
++              WHERE resource_type = 'key' AND resource_id = $1 AND namespace = $2
+               ORDER BY ts DESC LIMIT 1) AS last_operation
+        FROM evidence
+-      WHERE resource_type = 'key' AND resource_id = $1`,
+-    [name],
++      WHERE resource_type = 'key' AND resource_id = $1 AND namespace = $2`,
++    [name, namespace],
+   );
+   const row = rows[0];
+   return row && row.count > 0
+@@ -117,8 +124,11 @@ const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
+ // Exported for reuse by aggregation/intent.js (Prompt 25) — one custody
+ // derivation, not a second copy.
+ export function custodyOf(meta) {
+-  if (meta?._managedKey || meta?.type === "managed_key")
+-    return "SoftHSM (PKCS#11 Managed Key)";
++  // Prompt 37 — meta._managedKey no longer exists (vault.js's
++  // getHsmTransitKey() dropped the separate, uncorrelated LIST call that
++  // used to populate it); meta.type === "managed_key" was always the
++  // correct, sufficient, real signal on its own.
++  if (meta?.type === "managed_key") return "SoftHSM (PKCS#11 Managed Key)";
+   if (meta?.exportable === true) return "Vault Transit · exportable";
+   return "Vault Transit (software)";
+ }
+@@ -134,7 +144,7 @@ export function custodyOf(meta) {
+ //
+ // Deliberately NOT a check against meta.type — found live, the hard way:
+ // an HSM-backed Managed Key reports type: "managed_key", not "rsa-4096"
+-// (the underlying algorithm is only visible nested under _managedKey), so
++// (the underlying algorithm isn't exposed on this metadata at all), so
+ // an rsa-/ecdsa-/ed25519 type-string allowlist silently excludes exactly
+ // the one key (document-signing-key) this feature was built for. Vault's
+ // own response shape is the real, more robust signal: a symmetric key's
+@@ -168,8 +178,13 @@ export function projectKey(name, meta) {
+     min_decryption_version: meta.min_decryption_version,
+     min_encryption_version: meta.min_encryption_version,
+     custody: custodyOf(meta),
+-    hsm_backed: Boolean(meta._managedKey || meta.type === "managed_key"),
+-    managed_key_name: meta._managedKey?.name ?? null,
++    hsm_backed: meta.type === "managed_key",
++    // Prompt 37 — reads Vault's own managed_key_name field directly off
++    // this key's metadata (present on the raw read for a managed_key
++    // type — see vault.js's getHsmTransitKey() and terraform/vault-
++    // managed-keys/transit.tf), not a separately-LISTed, uncorrelated
++    // pick.
++    managed_key_name: meta.managed_key_name ?? null,
+     // Prompt 31 — the public half of an asymmetric key only; null for
+     // every symmetric key (aes256-gcm96), which has no public half at
+     // all. See publicKeyOf()'s own header comment for what this
+@@ -201,12 +216,23 @@ keysRouter.get("/", async (_req, res, next) => {
+       try {
+         byName.set(name, projectKey(name, await getTransitKey(name)));
+       } catch {
++        // Prompt 37 — deletion_allowed/exportable/hsm_backed/
++        // has_public_key were previously left undefined here. A
++        // consumer using truthiness (keyData.deletion_allowed ? 'warn'
++        // : 'ok') would render a FALSE "protected"/"non-exportable"
++        // claim for a key whose real state is genuinely unknown, not
++        // known-safe. Explicit null/false — "unknown," never "known
++        // good" — for a key this individual read failed on.
+         byName.set(name, {
+           name,
+           type: "unknown",
+           versions: null,
+           min_decryption_version: null,
+           custody: "Unavailable",
++          deletion_allowed: null,
++          exportable: null,
++          hsm_backed: false,
++          has_public_key: false,
+         });
+       }
+     }
+@@ -246,8 +272,15 @@ export async function resolveKeyMeta(name) {
+     return {
+       ...meta,
+       custody: custodyOf(meta),
+-      hsm_backed: true,
+-      managed_key_name: meta._managedKey?.name ?? null,
++      // Prompt 37 — was hardcoded true for anything read successfully
++      // off the vault-hsm cluster, which contradicted custodyOf() (same
++      // object, same response) for a plain SOFTWARE Transit key that
++      // merely happens to live on that cluster — nothing stops one being
++      // created there. projectKey() (the LIST route) already derived
++      // this correctly; the detail route disagreed with it for the same
++      // key. Same derivation now, both routes.
++      hsm_backed: meta.type === "managed_key",
++      managed_key_name: meta.managed_key_name ?? null,
+       // Found live via Playwright, not the earlier curl-based check (which
+       // happened to verify the LIST route's projectKey() output, a
+       // different code path that already had this field) — this function
+@@ -356,6 +389,17 @@ keysRouter.post("/", async (req, res, next) => {
+       });
+ 
+     const result = await createTransitKey(name, type);
++    // Prompt 37 — no crypto_profiles row: this route has no application
++    // context at all (a bare root key, not tied to any provisioning
++    // flow), and fabricating a placeholder application to attach one to
++    // would repeat the exact anti-pattern Prompt 36 just eliminated
++    // elsewhere. A lifecycle_events row is still real, honest evidence
++    // that this key was created, through this path, by this identity.
++    await query(
++      `INSERT INTO lifecycle_events (resource_type, resource_id, event, detail, actor, source)
++       VALUES ('key', $1, 'key.created', $2, $3, 'local')`,
++      [name, JSON.stringify({ type }), req.identity?.user ?? "arcanium"],
++    ).catch(() => {});
+     res.status(201).json(result);
+   } catch (err) {
+     next(err);
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index cb6e30a..8cb7fb4 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -280,12 +280,20 @@ export async function getTransitKey(name) {
+   return res.data;
+ }
+ 
++// Prompt 37 — was writing with state.token (the general session AppRole
++// token), whose policy grants create/update on exactly one path
++// (arcanium-webhook-signing — Prompt 28's own exact-path exception), and
++// read-only on every other transit key. Verified live: POST /api/v1/keys
++// with any name other than that one exception returned a genuine 500 —
++// this route was structurally broken for its own stated purpose.
++// getProvisionerToken() is what every other key-creation path in this
++// codebase already uses (provisioner/application.js, provisioner/key.js).
+ export async function createTransitKey(name, type = "aes256-gcm96") {
+   await vaultRequest(
+     "POST",
+     `transit/keys/${encodeURIComponent(name)}`,
+     { type },
+-    state.token,
++    getProvisionerToken(),
+   );
+   return { name, type };
+ }
+@@ -513,31 +521,43 @@ export async function listHsmTransitKeys() {
+   }
+ }
+ 
+-/** Read one vault-hsm transit key's metadata, enriched with its managed-key backing. */
++/** Read one vault-hsm transit key's metadata. */
+ export async function getHsmTransitKey(name) {
+   const res = await hsmRequest(
+     "GET",
+     `transit/keys/${encodeURIComponent(name)}`,
+   );
+   const meta = res.data ?? {};
+-  let managedKey = null;
++  // Prompt 37 — previously ran a SEPARATE `LIST sys/managed-keys/pkcs11`
++  // and attached `names[0]` — the first managed key returned, entirely
++  // uncorrelated to the Transit key actually being read. With more than
++  // one managed key registered, every managed_key-type Transit key would
++  // display the SAME (wrong) backing key name.
++  //
++  // First attempted fix assumed Vault's own key metadata would carry a
++  // managed_key_name field directly (terraform/vault-managed-keys/
++  // transit.tf passes it as a write-time argument) — WRONG, corrected
++  // after verifying live: `vault read transit/keys/document-signing-key`
++  // exposes no such field at all (checked `.data`'s full key list).
++  // There genuinely is no single-call way to correlate a Transit key to
++  // its specific backing managed key through Vault's API. The honest fix:
++  // when exactly one managed key is registered, there's no real ambiguity
++  // to guess at — show it. With more than one, correctly report unknown
++  // rather than arbitrarily picking the first (this deployment currently
++  // has exactly one, so this shows the real backing key; it degrades to
++  // honest "unknown" instead of silently wrong the moment a second one is
++  // added, which is a genuine future possibility this fix must survive.
++  let managedKeyName = null;
+   if (meta.type === "managed_key") {
+     try {
+       const mk = await hsmRequest("LIST", "sys/managed-keys/pkcs11");
+       const names = mk.data?.keys ?? [];
+-      // Best-effort: attach the first pkcs11 managed key's details for display.
+-      if (names.length) {
+-        const detail = await hsmRequest(
+-          "GET",
+-          `sys/managed-keys/pkcs11/${encodeURIComponent(names[0])}`,
+-        );
+-        managedKey = { name: names[0], ...(detail.data ?? {}) };
+-      }
++      if (names.length === 1) managedKeyName = names[0];
+     } catch {
+       /* metadata only — ignore */
+     }
+   }
+-  return { ...meta, name, _hsm: true, _managedKey: managedKey };
++  return { ...meta, name, _hsm: true, managed_key_name: managedKeyName };
+ }
+ 
+ // ── Utilities ──────────────────────────────────────────────────────────────
+diff --git a/arcanium/api/src/worker.js b/arcanium/api/src/worker.js
+index d94d0c0..bbc5100 100644
+--- a/arcanium/api/src/worker.js
++++ b/arcanium/api/src/worker.js
+@@ -53,6 +53,12 @@ async function main() {
+           const r = await ingestAuditLog();
+           if (r.ingested)
+             console.log(`[worker] ingested ${r.ingested} evidence rows`);
++          // Prompt 37 — surfaces evidence/ingest.js's own dropped-row
++          // count, previously invisible anywhere.
++          if (r.dropped)
++            console.error(
++              `[worker] evidence ingest dropped ${r.dropped} row(s) this tick — see prior [evidence] log lines`,
++            );
+         } catch (e) {
+           console.error(`[worker] evidence ingest error: ${e.message}`);
+         }
+diff --git a/arcanium/ui/app/pages/index.vue b/arcanium/ui/app/pages/index.vue
+index a4be7a6..847e346 100644
+--- a/arcanium/ui/app/pages/index.vue
++++ b/arcanium/ui/app/pages/index.vue
+@@ -133,10 +133,16 @@
+       </div>
+       <div v-if="loading" class="row-loading">Assembling lifecycle evidence…</div>
+       <div v-else class="arc-kml">
++        <!-- Prompt 37 — "Store" is continuous custody state, not a
++             discrete Vault audit-log operation; lifecycleStage()
++             (routes/evidence.js) has no branch that can ever classify
++             anything as "Store", so /evidence?stage=Store would always
++             show an empty, misleading filter. The real evidence for
++             custody is the keys themselves. -->
+         <NuxtLink
+           v-for="(s, i) in lifecycle"
+           :key="s.stage"
+-          :to="`/evidence?stage=${s.stage}`"
++          :to="s.stage === 'Store' ? '/keys' : `/evidence?stage=${s.stage}`"
+           class="arc-kml__stage"
+           :class="{ 'arc-kml__stage--on': s.demonstrated }"
+         >
+@@ -449,6 +455,11 @@ const evidenceRows = computed(() =>
+     .slice(0, 5)
+ )
+ 
++// Prompt 37 — real signals for the Distribute/Store tiles below, replacing
++// a registered-count proxy and a hardcoded detail string respectively.
++const provisionedAppCount = computed(() => apps.value.filter(a => a.provisioned).length)
++const hsmBackedCount = computed(() => keys.value.filter(k => k.hsm_backed).length)
++
+ // ── Lifecycle model — driven by the same KML stage tallies as /evidence ────
+ const lifecycle = computed(() => {
+   const k = keys.value
+@@ -462,16 +473,28 @@ const lifecycle = computed(() => {
+       detail: hasKeys ? `${k.length} keys generated via Vault Transit / PKI` : 'No keys generated yet',
+     },
+     {
++      // Prompt 37 — previously demonstrated:apps.value.length>0, which
++      // counts merely-REGISTERED applications, not ones actually
++      // provisioned with a real AppRole + key. `provisioned` (GET
++      // /api/v1/applications) is a real crypto_profiles EXISTS check.
+       stage: 'Distribute',
+-      demonstrated: apps.value.length > 0,
+-      detail: apps.value.length
+-        ? `${apps.value.length} workloads provisioned via AppRole`
+-        : 'No workloads registered',
++      demonstrated: provisionedAppCount.value > 0,
++      detail: provisionedAppCount.value
++        ? `${provisionedAppCount.value} workload(s) provisioned via AppRole`
++        : 'No workloads provisioned yet',
+     },
+     {
++      // Prompt 37 — previously a single hardcoded detail string
++      // ("Custody: Vault storage, SoftHSM auto-unseal seal") regardless
++      // of whether any key was actually HSM-backed. Derived from the
++      // real keys list's own hsm_backed field instead.
+       stage: 'Store',
+       demonstrated: hasKeys,
+-      detail: hasKeys ? 'Custody: Vault storage, SoftHSM auto-unseal seal' : 'No key material under custody',
++      detail: !hasKeys
++        ? 'No key material under custody'
++        : hsmBackedCount.value > 0
++          ? `${hsmBackedCount.value} HSM-backed (SoftHSM/PKCS#11), ${k.length - hsmBackedCount.value} Vault software custody`
++          : `${k.length} key(s) under Vault software custody`,
+     },
+     {
+       stage: 'Use',
+@@ -531,7 +554,11 @@ onMounted(async () => {
+   if (s.status === 'fulfilled' && Array.isArray(s.value)) suppliers.value = s.value
+   if (e.status === 'fulfilled' && e.value) {
+     stageCounts.value = e.value.stage_counts ?? {}
+-    cryptoOpsIngested.value = e.value.stage_counts?.Use ?? e.value.total ?? 0
++    // Prompt 37 — previously fell back to e.value.total (every evidence
++    // row across ALL stages) if stage_counts was ever missing, which
++    // would silently report a wildly inflated number as "Use" activity
++    // instead of an honest 0.
++    cryptoOpsIngested.value = e.value.stage_counts?.Use ?? 0
+   }
+   loading.value = false
+   await loadApprovals()
+diff --git a/arcanium/ui/app/pages/keys/[id].vue b/arcanium/ui/app/pages/keys/[id].vue
+index 0e337b6..e34c68e 100644
+--- a/arcanium/ui/app/pages/keys/[id].vue
++++ b/arcanium/ui/app/pages/keys/[id].vue
+@@ -19,8 +19,16 @@
+         </div>
+         <div class="kh-badges">
+           <span v-if="keyData.hsm_backed" class="kb hsm">HSM-backed · Managed Key</span>
+-          <span class="kb" :class="keyData.deletion_allowed ? 'warn' : 'ok'">{{ keyData.deletion_allowed ? 'Deletion allowed' : 'Delete-protected' }}</span>
+-          <span class="kb" :class="keyData.exportable ? 'warn' : 'ok'">{{ keyData.exportable ? 'Exportable' : 'Non-exportable' }}</span>
++          <!-- Prompt 37 — strict equality, defensively: no live path
++               reaches this page with deletion_allowed/exportable as
++               anything but a real boolean today, but a truthiness check
++               would render a FALSE "protected"/"non-exportable" claim
++               for a genuinely unknown (null) state, were one ever to
++               reach here (see the LIST route's own degraded-key
++               fallback, which now returns null rather than leaving
++               these undefined). -->
++          <span class="kb" :class="keyData.deletion_allowed === true ? 'warn' : keyData.deletion_allowed === false ? 'ok' : 'unknown'">{{ keyData.deletion_allowed === true ? 'Deletion allowed' : keyData.deletion_allowed === false ? 'Delete-protected' : 'Protection unknown' }}</span>
++          <span class="kb" :class="keyData.exportable === true ? 'warn' : keyData.exportable === false ? 'ok' : 'unknown'">{{ keyData.exportable === true ? 'Exportable' : keyData.exportable === false ? 'Non-exportable' : 'Exportability unknown' }}</span>
+         </div>
+       </section>
+ 
+@@ -124,11 +132,16 @@ definePageMeta({ layout: 'default' })
+ 
+ const route = useRoute()
+ const name = route.params.id as string
+-const { key, rotateKey, destroyKey } = useArcaniumApi()
++const { key, rotateKey, destroyKey, health } = useArcaniumApi()
+ 
+ const loading = ref(true)
+ const error = ref('')
+ const keyData = ref<TransitKey | null>(null)
++// Prompt 37 — distinguishes "evidence ingestion is disabled for this
++// deployment" from "this key has genuinely never been used" in the Use
++// stage's note below; defaults true (the honest not-yet-observed wording)
++// until /health actually says otherwise, never assumed false.
++const evidenceIngestEnabled = ref(true)
+ const busy = ref('')
+ const actionMsg = ref('')
+ 
+@@ -172,7 +185,13 @@ const stages = computed(() => {
+   const k = keyData.value
+   if (!k) return []
+   return [
+-    { k: 'Generate', on: true, note: `Created in Vault Transit` },
++    // Prompt 37 — previously hardcoded "Created in Vault Transit" for
++    // every key, including document-signing-key — a PKCS#11 Managed Key
++    // on a different cluster, never actually a Vault Transit software
++    // key. `on: true` is still correct for every key (a key that exists
++    // was, by definition, generated somewhere) — only the note now
++    // reflects where.
++    { k: 'Generate', on: true, note: k.hsm_backed ? 'Created as a SoftHSM (PKCS#11) Managed Key' : 'Created in Vault Transit' },
+     // Prompt 33 — previously hardcoded on: true for every key with a
+     // never-checked generic claim. Now derived from a real
+     // crypto_profiles join (distributionOf() in keys.js); null (not
+@@ -196,7 +215,13 @@ const stages = computed(() => {
+       on: !!k.usage,
+       note: k.usage
+         ? `${k.usage.count} operation${k.usage.count === 1 ? '' : 's'} observed — most recent: ${k.usage.last_operation}`
+-        : 'Operation evidence not yet ingested',
++        // Prompt 37 — previously this exact wording regardless of
++        // whether ingestion is even enabled for this deployment, which
++        // reads as "hasn't happened yet" when the real fact could be
++        // "structurally cannot happen here at all."
++        : evidenceIngestEnabled.value
++          ? 'Operation evidence not yet ingested'
++          : 'Operation evidence ingestion is disabled for this deployment',
+     },
+     { k: 'Rotate', on: (k.auto_rotate_period ?? 0) > 0 || (k.latest_version ?? 1) > 1, note: (k.auto_rotate_period ?? 0) > 0 ? 'Auto-rotation policy active' : (k.latest_version ?? 1) > 1 ? `${k.latest_version} versions` : 'No rotation yet' },
+     { k: 'Destroy', on: false, note: k.deletion_allowed ? 'Deletion permitted' : 'Deletion protected' },
+@@ -218,6 +243,14 @@ function formatPeriod(secs: number) {
+ }
+ 
+ onMounted(async () => {
++  // Best-effort, non-blocking of the main key fetch below — a failed
++  // health check should never prevent the key page itself from loading;
++  // evidenceIngestEnabled just keeps its honest default (true) on failure.
++  health().then((h) => {
++    if (typeof h?.evidence?.ingestEnabled === 'boolean') {
++      evidenceIngestEnabled.value = h.evidence.ingestEnabled
++    }
++  }).catch(() => {})
+   try {
+     keyData.value = await key(name)
+   } catch (e: unknown) {
+@@ -252,6 +285,7 @@ onMounted(async () => {
+ .kb { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 5px; }
+ .kb.ok { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
+ .kb.warn { background: var(--arc-pending-bg); color: var(--arc-governance); }
++.kb.unknown { background: rgba(125,133,151,0.12); color: var(--arc-text-muted); }
+ .kb.hsm { background: rgba(255, 170, 0, 0.14); color: var(--arc-governance); border: 1px solid rgba(255, 170, 0, 0.3); }
+ 
+ .card { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: 12px; padding: 16px 18px; box-shadow: inset 0 1px 0 var(--arc-glass-hi); }
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index 92c9364..b254b3d 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -3216,6 +3216,8 @@ export interface components {
+             environment?: string;
+             /** Format: date-time */
+             registered_at: string;
++            /** @description Prompt 37 — a real crypto_profiles row exists for this application (it was actually provisioned with an AppRole + key), not merely registered. Only present on GET /api/v1/applications (the list route); absent elsewhere. */
++            provisioned?: boolean;
+             crypto_profiles?: components["schemas"]["CryptoProfile"][];
+         };
+         Team: {
+diff --git a/arcanium/ui/app/types/arcanium.ts b/arcanium/ui/app/types/arcanium.ts
+index 11bd90b..fc91799 100644
+--- a/arcanium/ui/app/types/arcanium.ts
++++ b/arcanium/ui/app/types/arcanium.ts
+@@ -16,6 +16,9 @@ export interface Application {
+   supplier_id?: string | null
+   category?: 'platform' | 'tenant' | 'unscoped'
+   registered_at: string
++  /** Prompt 37 — a real crypto_profiles row exists (actually provisioned,
++   *  not merely registered). Only present on GET /api/v1/applications. */
++  provisioned?: boolean
+   crypto_profiles?: CryptoProfile[]
+ }
+ 
+@@ -188,6 +191,9 @@ export interface ApiHealth {
+     reachable: boolean
+     latencyMs?: number
+   }
++  /** Prompt 37 — distinguishes "ingestion is disabled entirely" from
++   *  "this key has genuinely never been used" on the key detail page. */
++  evidence?: { ingestEnabled: boolean }
+ }
+ 
+ export type LifecycleStage =
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 323a1b9..8e40658 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -129,6 +129,9 @@ components:
+           type: string
+           description: "Prompt 27 — defaults to 'production' when omitted at registration; explicitly recorded, never left null."
+         registered_at: { type: string, format: date-time }
++        provisioned:
++          type: boolean
++          description: "Prompt 37 — a real crypto_profiles row exists for this application (it was actually provisioned with an AppRole + key), not merely registered. Only present on GET /api/v1/applications (the list route); absent elsewhere."
+         crypto_profiles:
+           type: array
+           items: { $ref: "#/components/schemas/CryptoProfile" }
+diff --git a/state/CURRENT b/state/CURRENT
+index edb2c20..b100241 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-36-destroy-path-safety
++state/baselines/2026-09-13_pre-prompt-37-generate-store-use

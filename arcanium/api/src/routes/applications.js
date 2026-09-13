@@ -51,14 +51,24 @@ applicationsRouter.get("/", async (req, res, next) => {
         if (team.scoped) supplierIdFilter = team.supplierIds; // null here still means "this team covers everything"
       }
     }
+    // Prompt 37 — `provisioned` (a real crypto_profiles row exists) lets
+    // a consumer tell "registered" apart from "actually provisioned with
+    // a real AppRole + key" — the dashboard's own "Distribute —
+    // Demonstrated" badge previously just counted registered rows,
+    // which is real registry data but not evidence of anything being
+    // distributed yet.
     const { rows } =
       supplierIdFilter !== null
         ? await query(
-            "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications WHERE supplier_id = ANY($1) ORDER BY registered_at DESC",
+            `SELECT a.id, a.name, a.description, a.supplier_id, a.category, a.environment, a.registered_at,
+                    EXISTS (SELECT 1 FROM crypto_profiles cp WHERE cp.application_id = a.id) AS provisioned
+               FROM applications a WHERE a.supplier_id = ANY($1) ORDER BY a.registered_at DESC`,
             [supplierIdFilter],
           )
         : await query(
-            "SELECT id, name, description, supplier_id, category, environment, registered_at FROM applications ORDER BY registered_at DESC",
+            `SELECT a.id, a.name, a.description, a.supplier_id, a.category, a.environment, a.registered_at,
+                    EXISTS (SELECT 1 FROM crypto_profiles cp WHERE cp.application_id = a.id) AS provisioned
+               FROM applications a ORDER BY a.registered_at DESC`,
           );
     res.json(rows);
   } catch (err) {

@@ -129,6 +129,9 @@ components:
           type: string
           description: "Prompt 27 — defaults to 'production' when omitted at registration; explicitly recorded, never left null."
         registered_at: { type: string, format: date-time }
+        provisioned:
+          type: boolean
+          description: "Prompt 37 — a real crypto_profiles row exists for this application (it was actually provisioned with an AppRole + key), not merely registered. Only present on GET /api/v1/applications (the list route); absent elsewhere."
         crypto_profiles:
           type: array
           items: { $ref: "#/components/schemas/CryptoProfile" }

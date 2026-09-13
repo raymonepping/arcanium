@@ -91,15 +91,22 @@ async function distributionOf(name) {
 // `evidence` the whole time. null (not a zero-count object) when this
 // key genuinely has no evidence rows yet, so the UI can keep its existing
 // honest not-yet-observed wording for that case.
-async function usageOf(name) {
+// Prompt 37 — was not scoped by namespace at all: a root-namespace key's
+// usage count could include a same-named supplier-tenant key's own
+// operations (evidence.namespace is stored per-row — ingest.js — but was
+// never queried by it here), inflating a compliance-facing number and
+// leaking cross-tenant activity. This route only ever resolves
+// root-namespace keys (resolveKeyMeta()'s own scope), so 'root' is the
+// correct, permanent scope for this call site.
+async function usageOf(name, namespace = "root") {
   const { rows } = await query(
     `SELECT count(*)::int AS count, max(ts) AS last_at,
             (SELECT operation FROM evidence
-              WHERE resource_type = 'key' AND resource_id = $1
+              WHERE resource_type = 'key' AND resource_id = $1 AND namespace = $2
               ORDER BY ts DESC LIMIT 1) AS last_operation
        FROM evidence
-      WHERE resource_type = 'key' AND resource_id = $1`,
-    [name],
+      WHERE resource_type = 'key' AND resource_id = $1 AND namespace = $2`,
+    [name, namespace],
   );
   const row = rows[0];
   return row && row.count > 0
@@ -117,8 +124,11 @@ const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
 // Exported for reuse by aggregation/intent.js (Prompt 25) — one custody
 // derivation, not a second copy.
 export function custodyOf(meta) {
-  if (meta?._managedKey || meta?.type === "managed_key")
-    return "SoftHSM (PKCS#11 Managed Key)";
+  // Prompt 37 — meta._managedKey no longer exists (vault.js's
+  // getHsmTransitKey() dropped the separate, uncorrelated LIST call that
+  // used to populate it); meta.type === "managed_key" was always the
+  // correct, sufficient, real signal on its own.
+  if (meta?.type === "managed_key") return "SoftHSM (PKCS#11 Managed Key)";
   if (meta?.exportable === true) return "Vault Transit · exportable";
   return "Vault Transit (software)";
 }
@@ -134,7 +144,7 @@ export function custodyOf(meta) {
 //
 // Deliberately NOT a check against meta.type — found live, the hard way:
 // an HSM-backed Managed Key reports type: "managed_key", not "rsa-4096"
-// (the underlying algorithm is only visible nested under _managedKey), so
+// (the underlying algorithm isn't exposed on this metadata at all), so
 // an rsa-/ecdsa-/ed25519 type-string allowlist silently excludes exactly
 // the one key (document-signing-key) this feature was built for. Vault's
 // own response shape is the real, more robust signal: a symmetric key's
@@ -168,8 +178,13 @@ export function projectKey(name, meta) {
     min_decryption_version: meta.min_decryption_version,
     min_encryption_version: meta.min_encryption_version,
     custody: custodyOf(meta),
-    hsm_backed: Boolean(meta._managedKey || meta.type === "managed_key"),
-    managed_key_name: meta._managedKey?.name ?? null,
+    hsm_backed: meta.type === "managed_key",
+    // Prompt 37 — reads Vault's own managed_key_name field directly off
+    // this key's metadata (present on the raw read for a managed_key
+    // type — see vault.js's getHsmTransitKey() and terraform/vault-
+    // managed-keys/transit.tf), not a separately-LISTed, uncorrelated
+    // pick.
+    managed_key_name: meta.managed_key_name ?? null,
     // Prompt 31 — the public half of an asymmetric key only; null for
     // every symmetric key (aes256-gcm96), which has no public half at
     // all. See publicKeyOf()'s own header comment for what this
@@ -201,12 +216,23 @@ keysRouter.get("/", async (_req, res, next) => {
       try {
         byName.set(name, projectKey(name, await getTransitKey(name)));
       } catch {
+        // Prompt 37 — deletion_allowed/exportable/hsm_backed/
+        // has_public_key were previously left undefined here. A
+        // consumer using truthiness (keyData.deletion_allowed ? 'warn'
+        // : 'ok') would render a FALSE "protected"/"non-exportable"
+        // claim for a key whose real state is genuinely unknown, not
+        // known-safe. Explicit null/false — "unknown," never "known
+        // good" — for a key this individual read failed on.
         byName.set(name, {
           name,
           type: "unknown",
           versions: null,
           min_decryption_version: null,
           custody: "Unavailable",
+          deletion_allowed: null,
+          exportable: null,
+          hsm_backed: false,
+          has_public_key: false,
         });
       }
     }
@@ -246,8 +272,15 @@ export async function resolveKeyMeta(name) {
     return {
       ...meta,
       custody: custodyOf(meta),
-      hsm_backed: true,
-      managed_key_name: meta._managedKey?.name ?? null,
+      // Prompt 37 — was hardcoded true for anything read successfully
+      // off the vault-hsm cluster, which contradicted custodyOf() (same
+      // object, same response) for a plain SOFTWARE Transit key that
+      // merely happens to live on that cluster — nothing stops one being
+      // created there. projectKey() (the LIST route) already derived
+      // this correctly; the detail route disagreed with it for the same
+      // key. Same derivation now, both routes.
+      hsm_backed: meta.type === "managed_key",
+      managed_key_name: meta.managed_key_name ?? null,
       // Found live via Playwright, not the earlier curl-based check (which
       // happened to verify the LIST route's projectKey() output, a
       // different code path that already had this field) — this function
@@ -356,6 +389,17 @@ keysRouter.post("/", async (req, res, next) => {
       });
 
     const result = await createTransitKey(name, type);
+    // Prompt 37 — no crypto_profiles row: this route has no application
+    // context at all (a bare root key, not tied to any provisioning
+    // flow), and fabricating a placeholder application to attach one to
+    // would repeat the exact anti-pattern Prompt 36 just eliminated
+    // elsewhere. A lifecycle_events row is still real, honest evidence
+    // that this key was created, through this path, by this identity.
+    await query(
+      `INSERT INTO lifecycle_events (resource_type, resource_id, event, detail, actor, source)
+       VALUES ('key', $1, 'key.created', $2, $3, 'local')`,
+      [name, JSON.stringify({ type }), req.identity?.user ?? "arcanium"],
+    ).catch(() => {});
     res.status(201).json(result);
   } catch (err) {
     next(err);

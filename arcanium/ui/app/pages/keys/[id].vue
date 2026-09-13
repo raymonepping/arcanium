@@ -19,8 +19,16 @@
         </div>
         <div class="kh-badges">
           <span v-if="keyData.hsm_backed" class="kb hsm">HSM-backed · Managed Key</span>
-          <span class="kb" :class="keyData.deletion_allowed ? 'warn' : 'ok'">{{ keyData.deletion_allowed ? 'Deletion allowed' : 'Delete-protected' }}</span>
-          <span class="kb" :class="keyData.exportable ? 'warn' : 'ok'">{{ keyData.exportable ? 'Exportable' : 'Non-exportable' }}</span>
+          <!-- Prompt 37 — strict equality, defensively: no live path
+               reaches this page with deletion_allowed/exportable as
+               anything but a real boolean today, but a truthiness check
+               would render a FALSE "protected"/"non-exportable" claim
+               for a genuinely unknown (null) state, were one ever to
+               reach here (see the LIST route's own degraded-key
+               fallback, which now returns null rather than leaving
+               these undefined). -->
+          <span class="kb" :class="keyData.deletion_allowed === true ? 'warn' : keyData.deletion_allowed === false ? 'ok' : 'unknown'">{{ keyData.deletion_allowed === true ? 'Deletion allowed' : keyData.deletion_allowed === false ? 'Delete-protected' : 'Protection unknown' }}</span>
+          <span class="kb" :class="keyData.exportable === true ? 'warn' : keyData.exportable === false ? 'ok' : 'unknown'">{{ keyData.exportable === true ? 'Exportable' : keyData.exportable === false ? 'Non-exportable' : 'Exportability unknown' }}</span>
         </div>
       </section>
 
@@ -124,11 +132,16 @@ definePageMeta({ layout: 'default' })
 
 const route = useRoute()
 const name = route.params.id as string
-const { key, rotateKey, destroyKey } = useArcaniumApi()
+const { key, rotateKey, destroyKey, health } = useArcaniumApi()
 
 const loading = ref(true)
 const error = ref('')
 const keyData = ref<TransitKey | null>(null)
+// Prompt 37 — distinguishes "evidence ingestion is disabled for this
+// deployment" from "this key has genuinely never been used" in the Use
+// stage's note below; defaults true (the honest not-yet-observed wording)
+// until /health actually says otherwise, never assumed false.
+const evidenceIngestEnabled = ref(true)
 const busy = ref('')
 const actionMsg = ref('')
 
@@ -172,7 +185,13 @@ const stages = computed(() => {
   const k = keyData.value
   if (!k) return []
   return [
-    { k: 'Generate', on: true, note: `Created in Vault Transit` },
+    // Prompt 37 — previously hardcoded "Created in Vault Transit" for
+    // every key, including document-signing-key — a PKCS#11 Managed Key
+    // on a different cluster, never actually a Vault Transit software
+    // key. `on: true` is still correct for every key (a key that exists
+    // was, by definition, generated somewhere) — only the note now
+    // reflects where.
+    { k: 'Generate', on: true, note: k.hsm_backed ? 'Created as a SoftHSM (PKCS#11) Managed Key' : 'Created in Vault Transit' },
     // Prompt 33 — previously hardcoded on: true for every key with a
     // never-checked generic claim. Now derived from a real
     // crypto_profiles join (distributionOf() in keys.js); null (not
@@ -196,7 +215,13 @@ const stages = computed(() => {
       on: !!k.usage,
       note: k.usage
         ? `${k.usage.count} operation${k.usage.count === 1 ? '' : 's'} observed — most recent: ${k.usage.last_operation}`
-        : 'Operation evidence not yet ingested',
+        // Prompt 37 — previously this exact wording regardless of
+        // whether ingestion is even enabled for this deployment, which
+        // reads as "hasn't happened yet" when the real fact could be
+        // "structurally cannot happen here at all."
+        : evidenceIngestEnabled.value
+          ? 'Operation evidence not yet ingested'
+          : 'Operation evidence ingestion is disabled for this deployment',
     },
     { k: 'Rotate', on: (k.auto_rotate_period ?? 0) > 0 || (k.latest_version ?? 1) > 1, note: (k.auto_rotate_period ?? 0) > 0 ? 'Auto-rotation policy active' : (k.latest_version ?? 1) > 1 ? `${k.latest_version} versions` : 'No rotation yet' },
     { k: 'Destroy', on: false, note: k.deletion_allowed ? 'Deletion permitted' : 'Deletion protected' },
@@ -218,6 +243,14 @@ function formatPeriod(secs: number) {
 }
 
 onMounted(async () => {
+  // Best-effort, non-blocking of the main key fetch below — a failed
+  // health check should never prevent the key page itself from loading;
+  // evidenceIngestEnabled just keeps its honest default (true) on failure.
+  health().then((h) => {
+    if (typeof h?.evidence?.ingestEnabled === 'boolean') {
+      evidenceIngestEnabled.value = h.evidence.ingestEnabled
+    }
+  }).catch(() => {})
   try {
     keyData.value = await key(name)
   } catch (e: unknown) {
@@ -252,6 +285,7 @@ onMounted(async () => {
 .kb { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 5px; }
 .kb.ok { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .kb.warn { background: var(--arc-pending-bg); color: var(--arc-governance); }
+.kb.unknown { background: rgba(125,133,151,0.12); color: var(--arc-text-muted); }
 .kb.hsm { background: rgba(255, 170, 0, 0.14); color: var(--arc-governance); border: 1px solid rgba(255, 170, 0, 0.3); }
 
 .card { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: 12px; padding: 16px 18px; box-shadow: inset 0 1px 0 var(--arc-glass-hi); }

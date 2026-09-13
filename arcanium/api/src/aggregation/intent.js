@@ -88,9 +88,11 @@ export async function getApplicationIntent(appId) {
       vault_path: p.vault_path,
       type: p.type,
       custody: live ? custodyOf(live) : (p.custody ?? "unknown"),
-      hsm_backed: live
-        ? Boolean(live._managedKey || live.type === "managed_key")
-        : null, // null = not live-confirmable right now, never guessed as false
+      // Prompt 37 — live._managedKey no longer exists (vault.js dropped
+      // the separate, uncorrelated LIST call that used to populate it);
+      // live.type === "managed_key" was always the correct, sufficient
+      // signal on its own.
+      hsm_backed: live ? live.type === "managed_key" : null, // null = not live-confirmable right now, never guessed as false
       rotation_days: p.rotation_days,
     });
   }

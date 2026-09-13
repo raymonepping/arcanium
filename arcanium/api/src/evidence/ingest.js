@@ -104,6 +104,7 @@ export async function ingestAuditLog() {
   // The last element may be a partial line — leave it for next pass.
   const partialLen = Buffer.byteLength(lines.pop() ?? "", "utf8");
   let ingested = 0;
+  let dropped = 0;
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -148,8 +149,22 @@ export async function ingestAuditLog() {
         ],
       );
       if (r.rowCount) ingested++;
-    } catch {
-      /* skip malformed row */
+    } catch (err) {
+      // Prompt 37 — previously swallowed with zero visibility, no
+      // counter, no log. This catch is specifically about a genuine
+      // DB-level failure (schema mismatch, constraint violation, a
+      // transient connection error) — malformed JSON is already filtered
+      // out above, before reaching here. The cursor still advances past
+      // a dropped row (the alternative — stalling the whole pipeline on
+      // one repeatedly-failing row — would silently block every LATER
+      // operation's evidence too, a worse outcome for a non-safety-
+      // critical audit trail than losing one row), but this is no longer
+      // silent: every drop is counted and logged with enough detail to
+      // investigate.
+      dropped++;
+      console.error(
+        `[evidence] dropped a row during ingest (ts=${ts} op=${c.operation} resource=${c.resource_id}): ${err.message}`,
+      );
     }
   }
 
@@ -160,5 +175,5 @@ export async function ingestAuditLog() {
     [AUDIT_PATH, size - partialLen],
   );
 
-  return { ingested };
+  return { ingested, dropped };
 }
