@@ -255,13 +255,13 @@ onMounted(load)
 .breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 20px; }
 .bc-link { color: var(--arc-action-bright); text-decoration: none; }
 .bc-link:hover { text-decoration: underline; }
-.bc-sep { color: var(--arc-text-dim); }
+.bc-sep { color: var(--arc-text-secondary); }
 .bc-current { color: var(--arc-text-secondary); }
 
 .rc-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; background: var(--arc-bg-card); border: 1px solid var(--arc-border-subtle); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
 .hero-name { font-size: 18px; font-weight: 700; color: var(--arc-text-primary); margin: 0 0 4px; }
 .hero-sub { font-size: 12px; color: var(--arc-text-muted); }
-.hero-tenant { font-size: 11px; color: var(--arc-text-dim); margin-top: 4px; }
+.hero-tenant { font-size: 11px; color: var(--arc-text-muted); margin-top: 4px; }
 .hero-badges { display: flex; gap: 8px; }
 
 .compare-grid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; margin-bottom: 8px; }
@@ -269,12 +269,12 @@ onMounted(load)
 .compare-card.drift { border-color: rgba(220,47,2,0.35); background: var(--arc-critical-bg); }
 .compare-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-muted); }
 .compare-value { font-size: 22px; font-weight: 800; color: var(--arc-text-primary); }
-.compare-meta { font-size: 11px; color: var(--arc-text-dim); }
-.compare-arrow { font-size: 11px; color: var(--arc-text-dim); text-transform: uppercase; }
+.compare-meta { font-size: 11px; color: var(--arc-text-muted); }
+.compare-arrow { font-size: 11px; color: var(--arc-text-muted); text-transform: uppercase; }
 .run-detail-note { font-size: 12px; color: var(--arc-text-muted); margin: 0 0 16px; }
 
 .action-bar { display: flex; gap: 10px; margin: 16px 0 6px; }
-.hint { font-size: 11.5px; color: var(--arc-text-dim); margin: 0 0 8px; }
+.hint { font-size: 11.5px; color: var(--arc-text-muted); margin: 0 0 8px; }
 .inline-notice { font-size: 12px; color: var(--arc-action-bright); margin: 8px 0; padding: 8px 12px; background: rgba(0,119,182,0.08); border: 1px solid var(--arc-glass-border); border-radius: 8px; }
 .inline-notice.error { background: var(--arc-critical-bg); color: var(--arc-critical); border-color: rgba(220,47,2,0.25); }
 

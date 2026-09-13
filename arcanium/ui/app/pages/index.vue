@@ -614,7 +614,7 @@ watch(healthyCount, firePulse)
 .card-fold:hover .fold-caret { color: var(--arc-action-bright); }
 .fold-caret { font-size: 11px; color: var(--arc-text-muted); transition: transform 0.15s, color 0.15s; display: inline-block; }
 .fold-caret.open { transform: rotate(90deg); }
-.card-note { font-size: 10.5px; color: var(--arc-text-dim); font-family: ui-monospace, monospace; }
+.card-note { font-size: 10.5px; color: var(--arc-text-muted); font-family: ui-monospace, monospace; }
 .card-link { font-size: 12px; color: var(--arc-action-bright); text-decoration: none; white-space: nowrap; }
 .card-link:hover { text-decoration: underline; }
 
@@ -690,7 +690,7 @@ watch(healthyCount, firePulse)
 .node-chip.unreachable .node-chip-dot, .node-chip.uninitialized .node-chip-dot { background: var(--arc-text-dim); }
 .node-chip-name { font-weight: 700; color: var(--arc-text-primary); }
 .node-chip-role { color: var(--arc-text-muted); font-size: 10.5px; }
-.node-chip-ver { color: var(--arc-text-dim); font-size: 10.5px; }
+.node-chip-ver { color: var(--arc-text-muted); font-size: 10.5px; }
 
 /* Table */
 .table-wrap { border: 1px solid var(--arc-border-subtle); border-radius: 10px; overflow: hidden; }

@@ -339,7 +339,7 @@ function reset() {
 .hero-title { font-size: 22px; font-weight: 750; letter-spacing: -0.02em; color: var(--arc-text-primary); margin: 0 0 8px; }
 .hero-sub { font-size: 12.5px; color: var(--arc-text-muted); line-height: 1.6; max-width: 460px; margin: 0; }
 .steps { display: flex; flex-direction: column; gap: 4px; }
-.step { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--arc-text-dim); }
+.step { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--arc-text-muted); }
 .step.on { color: var(--arc-text-primary); }
 .step.done { color: var(--arc-text-muted); }
 .step-n { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--arc-border-strong); display: grid; place-items: center; font-size: 9px; }
@@ -367,7 +367,7 @@ function reset() {
 .jdot.succeeded { background: var(--arc-healthy); }
 .jdot.failed { background: var(--arc-critical); }
 .jstep.failed { color: var(--arc-critical); }
-.jdetail { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--arc-text-dim); }
+.jdetail { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--arc-text-muted); }
 .done-links { display: flex; gap: 10px; margin-top: 16px; }
 
 .nav { display: flex; align-items: center; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--arc-border-subtle); }
@@ -387,10 +387,10 @@ function reset() {
 .pv-v code, .pv-res-n { font-family: ui-monospace, monospace; font-size: 11px; color: var(--arc-info); }
 .pv-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 4px; background: rgba(0, 119, 182, 0.14); color: var(--arc-action-bright); }
 .pv-list { flex-direction: column; align-items: flex-start; gap: 3px; }
-.pv-none { color: var(--arc-text-dim); }
+.pv-none { color: var(--arc-text-muted); }
 .pv-res { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .pv-res li { display: flex; align-items: baseline; gap: 7px; font-size: 11.5px; color: var(--arc-text-secondary); }
-.pv-res-mark { color: var(--arc-text-dim); width: 10px; flex-shrink: 0; }
+.pv-res-mark { color: var(--arc-text-muted); width: 10px; flex-shrink: 0; }
 .pv-res li.ok .pv-res-mark { color: var(--arc-healthy); }
 .pv-res li.fail { color: var(--arc-critical); }
 .pv-res li.fail .pv-res-mark { color: var(--arc-critical); }

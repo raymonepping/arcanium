@@ -149,8 +149,8 @@ usePolling(load, 10000)
 .job-status.failed, .job-status.rolled_back { background: var(--arc-critical-bg); color: var(--arc-critical); }
 .job-status.running { background: rgba(0,180,216,0.12); color: var(--arc-action-bright); }
 .job-status.pending { background: rgba(125,133,151,0.12); color: var(--arc-text-muted); }
-.job-when { font-size: 11px; color: var(--arc-text-dim); }
-.job-caret { font-size: 10px; color: var(--arc-text-dim); }
+.job-when { font-size: 11px; color: var(--arc-text-muted); }
+.job-caret { font-size: 10px; color: var(--arc-text-muted); }
 
 .job-steps { padding: 4px 16px 14px 36px; display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--arc-border-subtle); }
 .step { display: flex; align-items: baseline; gap: 10px; font-size: 12px; padding: 4px 0; }
@@ -160,9 +160,9 @@ usePolling(load, 10000)
 .step-dot.running { background: var(--arc-action-bright); }
 .step-name { color: var(--arc-text-secondary); }
 .step.failed .step-name { color: var(--arc-critical); }
-.step-detail { color: var(--arc-text-dim); font-family: ui-monospace, monospace; font-size: 10.5px; }
+.step-detail { color: var(--arc-text-muted); font-family: ui-monospace, monospace; font-size: 10.5px; }
 .job-error { font-size: 11px; color: var(--arc-critical); font-family: ui-monospace, monospace; margin-top: 6px; padding: 8px 10px; background: var(--arc-critical-bg); border-radius: 6px; }
-.job-request-id { font-size: 10.5px; color: var(--arc-text-dim); font-family: ui-monospace, monospace; margin-top: 4px; }
+.job-request-id { font-size: 10.5px; color: var(--arc-text-muted); font-family: ui-monospace, monospace; margin-top: 4px; }
 
 .stuck-alert { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 10px; background: var(--arc-critical-bg); border: 1px solid rgba(220,47,2,0.3); font-size: 12.5px; color: var(--arc-text-primary); }
 .stuck-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--arc-critical); flex-shrink: 0; animation: pulse 1.4s ease-in-out infinite; }

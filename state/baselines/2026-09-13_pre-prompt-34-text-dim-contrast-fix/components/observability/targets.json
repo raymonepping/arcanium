@@ -1,0 +1,28 @@
+{
+  "activeTargets": [
+    {
+      "job": "arcanium-api",
+      "health": "up"
+    },
+    {
+      "job": "otel-collector",
+      "health": "up"
+    },
+    {
+      "job": "prometheus",
+      "health": "up"
+    },
+    {
+      "job": "vault",
+      "health": "up"
+    },
+    {
+      "job": "vault",
+      "health": "up"
+    },
+    {
+      "job": "vault",
+      "health": "up"
+    }
+  ]
+}

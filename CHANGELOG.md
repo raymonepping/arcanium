@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- App-wide `--arc-text-dim` contrast violation (Prompt 34,
+  `FRONTEND_QUALITY_GATE.md` Finding B): 45 real instances across 17
+  files (a superset of the originally reported 28/20+ — re-auditing
+  before fixing found cases the original same-line grep missed, where
+  the small font-size came from a parent/base selector rather than the
+  same line as the color) of small body-adjacent text
+  (footnotes, breadcrumb separators, timestamps, request IDs, badges,
+  hints) using the large/bold-only `--arc-text-dim` token (~4.3:1).
+  Promoted to `--arc-text-muted` (6.4:1, AA body floor), except five
+  breadcrumb separators promoted to `--arc-text-secondary` (11:1) to
+  match the adjacent "current page" segment already using it. No layout
+  change (color value only); full regression green; live computed-style
+  spot-check and a Playwright screenshot sweep confirmed no regression.
+
 ### Added
 
 - Real evidence behind the key detail page's lifecycle strip (Prompt

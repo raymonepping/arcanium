@@ -77,7 +77,7 @@ const links = [
   align-items: center;
   gap: 0;
   font-size: 11px;
-  color: var(--arc-text-dim);
+  color: var(--arc-text-muted);
   letter-spacing: 0.02em;
 }
 

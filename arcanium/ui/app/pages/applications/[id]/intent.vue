@@ -195,7 +195,7 @@ onMounted(async () => {
 .breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 12px; }
 .bc-link { color: var(--arc-action-bright); text-decoration: none; }
 .bc-link:hover { text-decoration: underline; }
-.bc-sep { color: var(--arc-text-dim); }
+.bc-sep { color: var(--arc-text-secondary); }
 .bc-current { color: var(--arc-text-secondary); }
 
 .page-title { font-size: 18px; font-weight: 700; color: var(--arc-text-primary); margin: 0 0 16px; }
@@ -241,7 +241,7 @@ onMounted(async () => {
 .status-pill.COMPLIANT, .status-pill.PASS, .status-pill.approved { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .status-pill.DRIFTED, .status-pill.FAIL, .status-pill.rejected { background: var(--arc-critical-bg); color: var(--arc-critical); }
 .status-pill.UNKNOWN, .status-pill.pending { background: var(--arc-pending-bg); color: var(--arc-governance); }
-.status-pill.N-A { background: rgba(148,163,184,0.14); color: var(--arc-text-dim); }
+.status-pill.N-A { background: rgba(148,163,184,0.14); color: var(--arc-text-muted); }
 
 .disposition-pill { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.04em; }
 .disposition-pill.OPEN { background: rgba(148,163,184,0.12); color: var(--arc-text-muted); }

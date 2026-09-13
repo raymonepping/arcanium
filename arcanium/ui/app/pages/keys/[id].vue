@@ -238,7 +238,7 @@ onMounted(async () => {
 .crumb { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
 .crumb-link { color: var(--arc-action-bright); text-decoration: none; }
 .crumb-link:hover { text-decoration: underline; }
-.crumb-sep { color: var(--arc-text-dim); }
+.crumb-sep { color: var(--arc-text-secondary); }
 .crumb-cur { color: var(--arc-text-secondary); }
 .mono { font-family: ui-monospace, monospace; color: var(--arc-action-bright); font-size: 12px; }
 
@@ -292,8 +292,8 @@ onMounted(async () => {
 .ver-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 4px; background: rgba(0,119,182,0.12); color: var(--arc-action-bright); }
 .ver-ts { margin-left: auto; font-size: 11px; color: var(--arc-text-muted); }
 
-.foot-note { font-size: 10.5px; color: var(--arc-text-dim); margin: 0; }
+.foot-note { font-size: 10.5px; color: var(--arc-text-muted); margin: 0; }
 .key-actions { display: flex; gap: 12px; align-items: center; }
 .action-msg { font-size: 12px; color: var(--arc-action-bright); margin: 10px 0 0; line-height: 1.5; }
-.action-note { font-size: 10.5px; color: var(--arc-text-dim); margin: 8px 0 0; line-height: 1.5; }
+.action-note { font-size: 10.5px; color: var(--arc-text-muted); margin: 8px 0 0; line-height: 1.5; }
 </style>

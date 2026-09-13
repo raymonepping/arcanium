@@ -225,7 +225,7 @@ const showSlo = computed(() => folds.value.slo)
 .panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arc-text-muted); margin-bottom: 10px; }
 .collect { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--arc-text-secondary); line-height: 1.8; }
 .collect code, .cmd { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--arc-action-bright); }
-.collect-note { font-size: 11px; color: var(--arc-text-dim); line-height: 1.6; margin: 10px 0 0; }
+.collect-note { font-size: 11px; color: var(--arc-text-muted); line-height: 1.6; margin: 10px 0 0; }
 .cmd { display: inline-block; margin: 12px 0; padding: 8px 14px; background: rgba(0,8,24,0.5); border: 1px solid var(--arc-glass-border); border-radius: 8px; }
 
 /* Foldable card — matches the Dashboard's own convention (Prompt 16.5/16-followups) */

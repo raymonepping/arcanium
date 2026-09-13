@@ -701,7 +701,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .umf-groups { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .umf-chip {
   font-size: 10.5px;
-  color: var(--arc-text-dim);
+  color: var(--arc-text-muted);
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--arc-glass-border);
   border-radius: 100px;

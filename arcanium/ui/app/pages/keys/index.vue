@@ -216,7 +216,7 @@ onMounted(async () => {
 .tag.warn { background: var(--arc-pending-bg); color: var(--arc-governance); }
 .tag.hsm { background: rgba(255, 170, 0, 0.14); color: var(--arc-governance); border: 1px solid rgba(255, 170, 0, 0.3); }
 
-.foot-note { font-size: 10.5px; color: var(--arc-text-dim); line-height: 1.5; max-width: 720px; margin: 0; }
+.foot-note { font-size: 10.5px; color: var(--arc-text-muted); line-height: 1.5; max-width: 720px; margin: 0; }
 
 .dist { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: 12px; padding: 16px 18px; }
 .dist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
@@ -228,9 +228,9 @@ onMounted(async () => {
 .dist-line { margin: 0 0 6px; }
 .dist-line.muted, .dist-body.muted { color: var(--arc-text-muted); font-size: 11.5px; }
 .dist-key { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 12px; }
-.dist-arrow { color: var(--arc-text-dim); }
+.dist-arrow { color: var(--arc-text-muted); }
 .dist-target { color: var(--arc-text-secondary); display: inline-flex; align-items: center; gap: 6px; }
-.dist-target.muted { color: var(--arc-text-dim); }
+.dist-target.muted { color: var(--arc-text-muted); }
 .dist-emu { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 4px; background: rgba(180,140,40,0.16); color: #b48c28; }
 .dist-status { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 4px; }
 .dist-status.ok { background: var(--arc-healthy-bg); color: var(--arc-healthy); }

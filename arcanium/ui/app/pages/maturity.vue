@@ -232,7 +232,7 @@ onMounted(async () => {
 
 .ladder { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
 .rung { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 6px; border-radius: 10px; text-align: center; border: 1px solid var(--arc-border-subtle); background: rgba(4, 16, 38, 0.4); }
-.rung-n { font-size: 13px; font-weight: 800; color: var(--arc-text-dim); }
+.rung-n { font-size: 13px; font-weight: 800; color: var(--arc-text-muted); }
 .rung-name { font-size: 10px; color: var(--arc-text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .rung.reached { border-color: rgba(0, 119, 182, 0.3); }
 .rung.reached .rung-n { color: var(--arc-action-bright); }
@@ -264,7 +264,7 @@ onMounted(async () => {
 .status-pill.PASS { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .status-pill.FAIL { background: var(--arc-critical-bg); color: var(--arc-critical); }
 .status-pill.UNKNOWN { background: var(--arc-pending-bg); color: var(--arc-governance); }
-.status-pill.N-A { background: rgba(148,163,184,0.14); color: var(--arc-text-dim); }
+.status-pill.N-A { background: rgba(148,163,184,0.14); color: var(--arc-text-muted); }
 .conf-pill { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; letter-spacing: 0.04em; }
 .conf-pill.HIGH { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .conf-pill.MEDIUM { background: rgba(72,202,228,0.12); color: var(--arc-info); }
@@ -296,7 +296,7 @@ onMounted(async () => {
 .coming-notice { display: flex; align-items: flex-start; gap: 8px; padding: 14px 18px; background: rgba(255,255,255,0.02); border: 1px solid var(--arc-border-subtle); border-radius: 10px; font-size: 11.5px; color: var(--arc-text-muted); line-height: 1.6; }
 .coming-notice.err { border-color: rgba(220,47,2,0.3); color: var(--arc-critical); }
 .coming-notice svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; }
-.gen { color: var(--arc-text-dim); }
+.gen { color: var(--arc-text-muted); }
 
 @media (max-width: 720px) { .ladder { grid-template-columns: repeat(3, 1fr); } }
 </style>

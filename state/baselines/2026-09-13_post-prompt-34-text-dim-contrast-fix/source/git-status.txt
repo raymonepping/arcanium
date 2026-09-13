@@ -1,0 +1,23 @@
+ M CHANGELOG.md
+ M Makefile
+ M arcanium/ui/app/assets/css/main.css
+ M arcanium/ui/app/components/AppFooter.vue
+ M arcanium/ui/app/components/ClusterTopology.vue
+ M arcanium/ui/app/layouts/default.vue
+ M arcanium/ui/app/pages/applications/[id]/index.vue
+ M arcanium/ui/app/pages/applications/[id]/intent.vue
+ M arcanium/ui/app/pages/evidence.vue
+ M arcanium/ui/app/pages/index.vue
+ M arcanium/ui/app/pages/jobs.vue
+ M arcanium/ui/app/pages/keys/[id].vue
+ M arcanium/ui/app/pages/keys/index.vue
+ M arcanium/ui/app/pages/maturity.vue
+ M arcanium/ui/app/pages/observability.vue
+ M arcanium/ui/app/pages/onboard.vue
+ M arcanium/ui/app/pages/reconciliation/[id].vue
+ M arcanium/ui/app/pages/suppliers/[id].vue
+ M arcanium/ui/app/pages/teams.vue
+ M docs/frontend/UI_IMPROVEMENT_PLAN.md
+ M state/CURRENT
+?? scripts/clean-slate.sh
+?? state/baselines/2026-09-13_pre-prompt-34-text-dim-contrast-fix/

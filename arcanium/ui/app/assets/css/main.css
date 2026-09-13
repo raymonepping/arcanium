@@ -294,7 +294,7 @@ a:hover { color: var(--arc-focus); }
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--arc-text-dim);
+  color: var(--arc-text-muted);
   padding: 12px 16px 4px;
 }
 
@@ -348,7 +348,7 @@ a:hover { color: var(--arc-focus); }
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--arc-text-dim);
+  color: var(--arc-text-muted);
   background: var(--arc-bg-neutral);
   border: 1px solid var(--arc-border-subtle);
   border-radius: 3px;
@@ -477,7 +477,7 @@ a:hover { color: var(--arc-focus); }
 
 .arc-kpi-sub {
   font-size: 11px;
-  color: var(--arc-text-dim);
+  color: var(--arc-text-muted);
 }
 
 .arc-kpi-card--accent .arc-kpi-value { color: var(--arc-action-bright); }
@@ -835,7 +835,7 @@ a:hover { color: var(--arc-focus); }
   color: var(--arc-text-muted);
 }
 
-.arc-tenant-arrow { text-align: center; color: var(--arc-text-dim); font-size: 20px; }
+.arc-tenant-arrow { text-align: center; color: var(--arc-text-muted); font-size: 20px; }
 
 .arc-isolation-check {
   display: flex;
@@ -884,7 +884,7 @@ a:hover { color: var(--arc-focus); }
 
 .arc-stage__icon { font-size: 18px; }
 .arc-stage__label { font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--arc-text-muted); }
-.arc-stage__component { font-size: 11px; color: var(--arc-text-dim); text-align: center; }
+.arc-stage__component { font-size: 11px; color: var(--arc-text-muted); text-align: center; }
 .arc-stage--active .arc-stage__label { color: var(--arc-action-bright); }
 .arc-stage--active .arc-stage__icon { filter: drop-shadow(0 0 4px var(--arc-action-primary)); }
 
@@ -907,7 +907,7 @@ a:hover { color: var(--arc-focus); }
 .arc-node-card__header { display: flex; align-items: center; justify-content: space-between; }
 .arc-node-card__name { font-size: 14px; font-weight: 700; color: var(--arc-text-primary); font-family: monospace; }
 .arc-node-card__role { font-size: 11px; color: var(--arc-text-muted); }
-.arc-node-card__version { font-size: 11px; color: var(--arc-text-dim); font-family: monospace; }
+.arc-node-card__version { font-size: 11px; color: var(--arc-text-muted); font-family: monospace; }
 
 /* ── Command palette ────────────────────────────────────────────────────── */
 .arc-palette-backdrop {
@@ -1021,7 +1021,7 @@ a:hover { color: var(--arc-focus); }
 }
 
 .arc-filter-input:focus { border-color: var(--arc-action-primary); }
-.arc-filter-input::placeholder { color: var(--arc-text-dim); }
+.arc-filter-input::placeholder { color: var(--arc-text-muted); }
 
 .arc-filter-select {
   background: var(--arc-bg-surface);
@@ -1171,7 +1171,7 @@ a:hover { color: var(--arc-focus); }
   background: var(--arc-action-bright);
   box-shadow: 0 0 10px var(--arc-glow-blue);
 }
-.arc-kml__idx { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: var(--arc-text-dim); }
+.arc-kml__idx { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: var(--arc-text-muted); }
 .arc-kml__name { font-size: 12px; font-weight: 700; color: var(--arc-text-secondary); }
 .arc-kml__stage--on .arc-kml__name { color: var(--arc-text-primary); }
 .arc-kml__meta { font-size: 10.5px; color: var(--arc-text-muted); line-height: 1.45; }
@@ -1294,9 +1294,9 @@ a:hover { color: var(--arc-focus); }
   color: var(--arc-text-primary); font-family: inherit; outline: none; transition: border-color 0.14s;
 }
 .form-field input:focus, .form-field select:focus { border-color: var(--arc-action-bright); }
-.form-field small { font-weight: 400; font-size: 11px; color: var(--arc-text-dim); }
+.form-field small { font-weight: 400; font-size: 11px; color: var(--arc-text-muted); }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
-.registry-note { margin-top: 22px; max-width: 820px; font-size: 11.5px; color: var(--arc-text-dim); line-height: 1.6; }
+.registry-note { margin-top: 22px; max-width: 820px; font-size: 11.5px; color: var(--arc-text-muted); line-height: 1.6; }
 
 /* ── Misc ───────────────────────────────────────────────────────────────── */
 .arc-divider {

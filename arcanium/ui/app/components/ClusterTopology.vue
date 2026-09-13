@@ -72,8 +72,8 @@ function label(n?: ClusterNode) {
 
 .topo-edge { display: flex; align-items: center; gap: 3px; padding: 0 2px; }
 .te-line { width: 14px; height: 1px; background: var(--arc-border-strong); }
-.te-tag { font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-dim); }
-.te-arrow { font-size: 8px; color: var(--arc-text-dim); }
+.te-tag { font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-muted); }
+.te-arrow { font-size: 8px; color: var(--arc-text-muted); }
 
 .topo-raft { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px dashed var(--arc-border-strong); border-radius: 12px; }
 .tr-tag { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--arc-text-muted); text-align: center; }

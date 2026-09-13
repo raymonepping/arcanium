@@ -226,7 +226,7 @@ onMounted(async () => {
 .breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 20px; }
 .bc-link { color: var(--arc-action-bright); text-decoration: none; }
 .bc-link:hover { text-decoration: underline; }
-.bc-sep { color: var(--arc-text-dim); }
+.bc-sep { color: var(--arc-text-secondary); }
 .bc-current { color: var(--arc-text-secondary); }
 
 .app-hero {

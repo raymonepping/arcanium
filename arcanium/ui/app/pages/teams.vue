@@ -201,7 +201,7 @@ async function save() {
 .team-suppliers, .team-envs { display: flex; flex-wrap: wrap; gap: 6px; }
 .team-chip { font-size: 11px; padding: 2px 9px; border-radius: 100px; background: rgba(4,16,38,0.5); border: 1px solid var(--arc-border-subtle); color: var(--arc-text-secondary); }
 .team-chip--all { color: var(--arc-governance); border-color: var(--arc-pending-bg); }
-.team-chip--empty { color: var(--arc-text-dim); font-style: italic; }
+.team-chip--empty { color: var(--arc-text-muted); font-style: italic; }
 .env-chip { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 4px; background: rgba(72,202,228,0.1); color: var(--arc-info); }
 .team-group-box { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px dashed var(--arc-border-strong); border-radius: 8px; }
 .team-group-box span { font-size: 9.5px; letter-spacing: 0.1em; color: var(--arc-text-muted); }

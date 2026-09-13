@@ -189,7 +189,7 @@ usePolling(load, 15000)
 .outcome { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 100px; }
 .outcome.ok { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .outcome.denied, .outcome.error { background: var(--arc-critical-bg); color: var(--arc-critical); }
-.origin { font-size: 9.5px; color: var(--arc-text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.origin { font-size: 9.5px; color: var(--arc-text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .origin.audit-log { color: var(--arc-info); }
 
 /* KML lifecycle strip + per-row stage tag (Prompt 16.6) */

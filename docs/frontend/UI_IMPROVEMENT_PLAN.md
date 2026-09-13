@@ -33,21 +33,23 @@ consistent radius/shadow scale) — this pass formalized it into
 `docs/frontend/config/DESIGN.md` rather than needing to fix
 inconsistencies. No changes made under this wave.
 
-## Wave 3 — UX improvements (not started — Required + Recommended)
+## Wave 3 — UX improvements
 
-- **`--arc-text-dim` app-wide contrast fix (Required)**
-  (`FRONTEND_QUALITY_GATE.md` Finding B). 28 CSS rules across 20+ files
-  use `--arc-text-dim` (documented large/bold-only, ~4.3:1) on small
-  (9.5–13px) body-adjacent text — footnotes, breadcrumb separators,
-  timestamps, request IDs, hints. Real, systemic, pre-existing violation
-  of the project's own contrast rule; not fixed in this pass given its
-  true blast radius (20+ files). Needs its own dedicated pass: promote
-  each instance to `--arc-text-muted` (or `--arc-text-secondary` where
-  the surrounding text already uses that), then a full before/after
-  screenshot sweep across every affected route at all three viewports —
-  the same discipline used for Wave 1's fixes, just at 20x the file
-  count, which is why it wasn't attempted as a rushed blanket
-  find-replace here.
+- **`--arc-text-dim` app-wide contrast fix — DONE** (`prompts/
+  base_project/34_01_text_dim_contrast_fix.md`, `FRONTEND_QUALITY_GATE.md`
+  Finding B). Re-auditing before fixing (not trusting the original
+  same-line grep as complete) found **45 real violations across 17
+  files** — a superset of the originally reported 28/20+, since the
+  original grep missed any case where the small font-size came from a
+  parent/base selector rather than the same CSS line as the color. Every
+  instance promoted to `--arc-text-muted` (6.4:1), except the five
+  breadcrumb separators promoted to `--arc-text-secondary` (11:1) to
+  match the adjacent "current page" segment already using it. Verified:
+  full regression (fitness/negative-auth/verify-stack) green; live
+  computed-style spot-check via Playwright confirmed both tokens render
+  their documented hex values, not a stale cascade; screenshot sweep
+  across the most-touched routes at desktop and mobile widths showed no
+  layout shift (color-only change, as expected).
 - **Hydration-mismatch fix on first unauthenticated load**
   (`UI_AUDIT.md` Finding 4). Requires a dedicated pass: reproduce with
   Vue/Nuxt SSR debug logging enabled, understand exactly why the SSR
