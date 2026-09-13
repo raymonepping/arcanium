@@ -1,0 +1,27 @@
+[
+  {
+    "name": "arcanium-payments-api",
+    "state": "running",
+    "status": "Up 18 hours (healthy)"
+  },
+  {
+    "name": "arcanium-pki-client",
+    "state": "running",
+    "status": "Up 18 hours (healthy)"
+  },
+  {
+    "name": "arcanium-kmip-client",
+    "state": "running",
+    "status": "Up 5 minutes (healthy)"
+  },
+  {
+    "name": "arcanium-document-signing",
+    "state": "running",
+    "status": "Up 18 hours (healthy)"
+  },
+  {
+    "name": "arcanium-external-supplier",
+    "state": "running",
+    "status": "Up 18 hours (healthy)"
+  }
+]

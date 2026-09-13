@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Real OIDC authentication (Keycloak, OpenLDAP-federated) replacing the
+  earlier Vault-userpass-backed session model; roles and tenant scope
+  derive from OIDC groups, not a hardcoded username map. Deny-by-default
+  authorization centralized in one `authorize()` gate. See
+  [security.md](docs/security.md) and [personas.md](docs/personas.md).
+- Desired-state reconciliation: a declared rotation policy (and, later,
+  a declared key-expiry date) observed against Vault's live state, with
+  an independent `observation_status`/`disposition` model, a governed
+  reconcile action, and a time-boxed governed exception path. See
+  [api.md](docs/api.md).
+- A gated, evidence-based maturity model (`GET /api/v1/maturity`)
+  replacing an earlier averaged score — a single mandatory control at
+  `FAIL` or `UNKNOWN` caps the level regardless of every other
+  dimension. See [maturity-model.md](docs/maturity-model.md).
+- Architecture fitness tests, an OpenAPI contract
+  (`openapi/arcanium.yaml`) as the authoritative machine-checked route
+  contract, and generated TypeScript types kept in sync with it.
+- Control-plane multitenancy: environment/team scoped grants alongside
+  the existing role and tenant-scope axes, a teams registry, and a live
+  isolation proof using real, narrowly-scoped OIDC sessions. See
+  [multitenancy.md](docs/multitenancy.md).
+- External integration surface: a service-account (Bearer token)
+  machine identity, webhooks for reconciliation/expiry events
+  (HMAC-signed, every delivery attempt recorded), and a minimal,
+  unpublished Terraform provider skeleton proven against a real
+  `terraform apply`/`destroy`. See
+  [external-integration.md](docs/external-integration.md).
+- Key-lifecycle completion: an `expiry_date` desired-state requirement
+  whose reconcile action submits a governed destroy request rather than
+  mutating Vault directly, and a governed application-offboarding
+  workflow (never a cascade delete). See
+  [external-integration.md](docs/external-integration.md).
+- Operability drills: a real Vault Raft snapshot/restore drill and a
+  real PostgreSQL loss/recovery drill, both against live containers and
+  volumes, not simulated.
+- Frontend design-toolchain and quality-gate passes: an explicit,
+  evidence-derived `DESIGN.md`, a Playwright-driven baseline/regression
+  process, and a documented release verdict. See
+  [docs/frontend/](docs/frontend/).
+
 - Three-node Vault Raft cluster with a Transit seal provider (`vault-s`) and a
   separate `+ent.hsm` instance (`vault-hsm`) backed by SoftHSM over a PKCS#11
   proxy. Bootstrap, status and Raft snapshot scripts.

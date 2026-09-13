@@ -93,8 +93,8 @@ violation but wasted/racy writes) for the rest.
 ## PostgreSQL HA
 
 **Not yet addressed.** `compose/infra/compose.yaml` runs a single
-`postgres:16-alpine` container with one named volume. There is no
-replication, no standby, no connection-pooler/failover layer. Deliverable
+`postgres:16-alpine` container with one named volume — no replication,
+no standby, no connection-pooler/failover layer. Deliverable
 7's Drill B (`scenarios/15_operability/test_postgres_recovery.sh`) proves
 Postgres can be *recovered* after total loss (destroy → recreate →
 restore → migrate → verify, with measured RTO/RPO) — that is disaster

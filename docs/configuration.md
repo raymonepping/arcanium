@@ -29,6 +29,10 @@ The browser uses same-origin API transport. Never expose the internal Vault toke
 | `ARCANIUM_HSM_ROLE_ID`, `ARCANIUM_HSM_SECRET_ID` | Optional read identity for HSM metadata enrichment |
 | `ARCANIUM_AUTH_ENABLED` | Human session enforcement; false by default |
 | `ARCANIUM_DEMO_PERSONA_SWITCH` | Presentation-only persona switching; false by default |
+| `ARCANIUM_BASE_URL` | The app's own public origin (default `http://localhost:3000`) — used both as the OIDC redirect base and as the exact `post_logout_redirect_uri` Keycloak must have registered for this client; the two must match |
+| `ARCANIUM_OIDC_ISSUER`, `ARCANIUM_OIDC_CLIENT_ID`, `ARCANIUM_OIDC_CLIENT_SECRET` | The confidential OIDC client Express authenticates as |
+| `ARCANIUM_OIDC_INTERNAL_URL`, `ARCANIUM_OIDC_PUBLIC_URL` | Keycloak's container-network address vs. its browser-reachable published address — deliberately two separate settings, not `host.docker.internal`; see [security.md](security.md) |
+| `KEYCLOAK_ADMIN`, `KEYCLOAK_ADMIN_PASSWORD` | Realm bootstrap credentials, consumed by `compose/identity/keycloak/setup_keycloak.sh` |
 | `WORKER_POLL_MS` | Worker polling interval; defaults to 3000 ms |
 | `EVIDENCE_INGEST_ENABLED` | Enables worker audit-log ingestion when true |
 | `AUDIT_LOG_PATH` | Audit input path the worker tails; Compose default `/vault/audit/vault-audit-r.log` (the world-readable file device) |

@@ -130,10 +130,17 @@ successful cryptographic operations, even when the coarse `outcome` field says
 | POST | `/api/v1/reconciliation/run` | On-demand observe→compare→persist sweep — never mutates Vault |
 | PATCH | `/api/v1/reconciliation/desired-state/:id` | Edit the desired value itself (e.g. change desired rotation from 30 to 90 days) |
 | GET | `/api/v1/reconciliation/:run_id` | One run in full — desired-state history + reconcile/accept-exception action history |
-| POST | `/api/v1/reconciliation/:run_id/reconcile` | Correct drift — writes the desired value back to Vault, re-observes; only on a `DRIFTED` run |
+| POST | `/api/v1/reconciliation/:run_id/reconcile` | Correct drift — for `rotation_period`, writes the desired value back to Vault and re-observes; for `expiry_date` (Prompt 28), submits a `destroy_request` approval instead and never touches Vault directly — only on a `DRIFTED` run |
 | POST | `/api/v1/reconciliation/:run_id/accept-exception` | Governed, time-boxed exception — does **not** touch Vault; `reason` and `expires_at` both required |
 
 Every reconciliation row carries `observation_status` (`COMPLIANT`/`DRIFTED`/`UNKNOWN`) and `disposition` (`OPEN`/`EXCEPTION_ACCEPTED`/`RECONCILED`) as two **independent** fields — never merged into one combined value. An accepted exception does not change what was actually observed in Vault; it only changes how Arcanium treats that observation. A `DRIFTED` run with `disposition: EXCEPTION_ACCEPTED` is still drifted.
+
+`desired_state.requirement` is `rotation_period` or, since Prompt 28,
+`expiry_date` (`desired_value = {"not_after": "2027-01-01"}` — "this key
+must not still be active after this date," `COMPLIANT` with
+`approaching_expiry: true` inside 14 days). See
+[external-integration.md](external-integration.md) for why its reconcile
+action is deliberately heavier than `rotation_period`'s.
 
 ## Controls / Evidence v2 (Phase 21)
 
@@ -142,7 +149,48 @@ Every reconciliation row carries `observation_status` (`COMPLIANT`/`DRIFTED`/`UN
 | GET | `/api/v1/controls` | Latest assessment per `(control_id, scope)`; tenant-scoped from its first commit |
 | GET | `/api/v1/controls/:id` | One control's catalogue definition plus its per-scope assessments |
 
-Every assessment carries `status` (`PASS`/`FAIL`/`UNKNOWN`/`N/A`), `confidence` (`HIGH`/`MEDIUM`/`LOW`), and `evidence_refs` pointing at what was actually read — a live Vault call, a reconciliation run id, a Sentinel EGP list, a recorded hostile-scenario result. `GET /api/v1/maturity` is the aggregate/gated view over this same evidence; these two routes are the per-control detail behind it.
+Every assessment carries `status` (`PASS`/`FAIL`/`UNKNOWN`/`N/A`), `confidence` (`HIGH`/`MEDIUM`/`LOW`), and `evidence_refs` pointing at what was actually read — a live Vault call, a reconciliation run id, a Sentinel EGP list, a recorded hostile-scenario result. `GET /api/v1/maturity` is the aggregate/gated view over this same evidence; these two routes are the per-control detail behind it. Two controls added in Prompt 28 — `KML-DESTR-01` and `KML-OFFBOARD-01` — follow the identical pattern; see [maturity-model.md](maturity-model.md).
+
+## Teams and control-plane multitenancy (Prompt 27)
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| GET / POST | `/api/v1/teams` | Estate-wide-only registry; `supplier_ids` (`NULL` = all suppliers) and `environments` |
+| GET / PATCH / DELETE | `/api/v1/teams/:id` | Inspect / update / remove |
+
+`applications.environment` (`TEXT NOT NULL DEFAULT 'production'`) and a
+new `env`/`team` dimension on `authorize()` sit alongside every existing
+role/tenant check — see [multitenancy.md](multitenancy.md) for the full
+scoped-grant model and the routes it touches.
+
+## Service accounts and webhooks (Prompt 28)
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| GET / POST | `/api/v1/service-accounts` | Registry / create (`roles[]`, optional `tenant_scopes[]`) |
+| GET / PATCH / DELETE | `/api/v1/service-accounts/:id` | Inspect / update / revoke — never returns a token or its hash |
+| POST | `/api/v1/service-accounts/:id/tokens` | Issue a token — plaintext returned exactly once, in this response only |
+| DELETE | `/api/v1/service-accounts/:id/tokens/:token_id` | Revoke one token |
+| GET / POST | `/api/v1/webhooks` | Registry / create (`url`, `events[]`) — plaintext signing secret returned exactly once |
+| GET / PATCH / DELETE | `/api/v1/webhooks/:id` | Inspect / update / remove |
+| GET | `/api/v1/webhooks/:id/deliveries` | Delivery attempt history, `?status=failed` to filter |
+
+A service account authenticates with `Authorization: Bearer <token>`,
+checked before the cookie session path, and reaches `authorize()` through
+the identical code path a human session does. See
+[external-integration.md](external-integration.md) for the full model,
+including the webhook signing/delivery design and the Terraform provider
+skeleton that authenticates this same way.
+
+## Offboarding (Prompt 28)
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| POST | `/api/v1/applications/:id/offboard` | Begins a governed offboarding workflow — never a cascade delete; see [external-integration.md](external-integration.md) |
+
+Returns `202` immediately; the application is not marked offboarded until
+every affected key's destroy request has actually been resolved, which
+can happen well after this call returns.
 
 ## Authentication (Phase 18 — OIDC)
 
@@ -154,9 +202,14 @@ Every assessment carries `status` (`PASS`/`FAIL`/`UNKNOWN`/`N/A`), `confidence` 
 | POST | `/api/v1/auth/logout` | Destroys the session |
 | POST | `/api/v1/auth/demo-persona` | Presentation-only persona switch — never a real privilege change; scoped grants (if any) are set only by actual OIDC group membership |
 
-There is no `POST /api/v1/auth/login` — the userpass path was removed with Phase 18. Express is the OIDC client end-to-end; the browser only ever holds the opaque `arc_session` cookie, never a token. `/login` and `/callback` are the two routes that must issue a real browser redirect rather than be proxied as JSON — the UI gateway fronts them with dedicated relay routes (`ui/server/routes/gateway/api/v1/auth/{login,callback}.get.ts`), not the generic `[...path].ts` proxy every other route goes through.
+No `POST /api/v1/auth/login` route exists — the userpass path was removed with Phase 18. Express is the OIDC client end-to-end; the browser only ever holds the opaque `arc_session` cookie, never a token. `/login` and `/callback` are the two routes that must issue a real browser redirect rather than be proxied as JSON — the UI gateway fronts them with dedicated relay routes (`ui/server/routes/gateway/api/v1/auth/{login,callback}.get.ts`), not the generic `[...path].ts` proxy every other route goes through.
 
 Authentication is off unless `ARCANIUM_AUTH_ENABLED` is set — every session then defaults to an estate-wide operator identity, and every mutating route's `authorize()` check trivially passes. The cookie carries an idle timeout; see [security](security.md) and [personas](personas.md) for the full authorization matrix.
+
+A second, independent auth path exists for machines: `Authorization:
+Bearer <token>`, checked first, before the cookie. See
+[external-integration.md](external-integration.md) for the service-account
+identity model this issues tokens against.
 
 ## Errors and compatibility
 

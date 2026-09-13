@@ -28,7 +28,11 @@ guides by task. All documentation lives in `docs/`; only `README.md`,
 - [Contributing](../CONTRIBUTING.md)
 - [Runtime orchestration](orchestration.md): how intent becomes Vault configuration.
 - [Authentication and personas](personas.md)
+- [Identity configuration](identity-configuration.md): Keycloak/OpenLDAP provisioning for the scoped-grant demo accounts (Prompt 27).
 - [Security](security.md): OIDC trust model, deny-by-default authorization matrix, session/CSRF/header hardening (Prompt 18).
+- [Authorization audit](authorization-audit.md): the route-by-route env/team scoping review (Prompt 27), including the gaps it found and closed.
+- [Control-plane multitenancy](multitenancy.md): the environment/team scoped-grant model, teams registry, and its live isolation proof (Prompt 27).
+- [External integration surface](external-integration.md): service accounts, webhooks, the Terraform provider skeleton, key expiry and offboarding (Prompt 28).
 
 ## Cryptography and assurance
 
@@ -38,6 +42,19 @@ guides by task. All documentation lives in `docs/`; only `README.md`,
 - [Maturity model](maturity-model.md): the server-side assessment.
 - [Security model](security.md)
 - [Scenario guide](scenarios.md)
+
+## Frontend and documentation quality
+
+- [Frontend design toolchain report](frontend/UI_TOOLCHAIN_REPORT.md) and
+  [DESIGN.md](frontend/config/DESIGN.md): the UI's own visual contract,
+  derived from the deployed application, not invented.
+- [Frontend quality gate](frontend/FRONTEND_QUALITY_GATE.md): the
+  repeatable gate the UI is validated against.
+- [Documentation toolchain report](writing/DOCS_TOOLCHAIN_REPORT.md) and
+  [STYLE.md](writing/config/STYLE.md): this documentation set's own
+  written-voice contract.
+- [Documentation quality gate](writing/DOCS_QUALITY_GATE.md): the
+  repeatable gate this documentation set is validated against.
 
 ## Component guides
 

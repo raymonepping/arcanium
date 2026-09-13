@@ -61,6 +61,32 @@ Mutation gates are now enforced centrally by `auth/authorize.js`, not
 inline per-route (Prompt 18) — see [security.md](security.md) for the full
 matrix and the two pre-existing gaps closing this actually found.
 
+## Scoped grants — a narrower identity, not a different one (Prompt 27)
+
+Four of the roles above (`ciso`, `architect`, `operator`, `auditor`) can
+also be granted narrowed to one environment or one team, via an extra
+LDAP/Keycloak group shape: `arcanium-<role>:env:<environment>` or
+`arcanium-<role>:team:<team>`. This is independent of, and stacks with,
+the tenant-scope axis above — a scoped grant narrows *what an estate-wide
+role could otherwise reach*, it does not grant a new role.
+
+An identity holding **only** scoped groups (no bare `arcanium-<role>`
+group at all) gets the persona value `"scoped"` — a deliberate sentinel
+this document's own role table has no entry for, so such an identity is
+never silently treated as estate-wide. See
+[multitenancy.md](multitenancy.md) for the full mechanism, the real
+design bug this sentinel was added to prevent, and the two extra demo
+accounts (`demo-operator-prod`, `demo-auditor-platform`) that exercise it.
+
+## Service accounts — a separate, non-human identity (Prompt 28)
+
+Machines authenticate differently: a service account carries its own
+`roles`/`tenant_scopes` set directly at creation, never derived from LDAP
+groups, and presents `Authorization: Bearer <token>` instead of a session
+cookie. It reaches the same `authorize()` this whole document describes,
+through a different front door. See
+[external-integration.md](external-integration.md).
+
 ## Persona ≠ security boundary
 
 Persona scoping in Arcanium is **defense in depth and UX**. A `pepsi-admin`

@@ -17,6 +17,7 @@ intent naar Vault configuration"). Terraform stays the **bootstrap** authority.
 | A **new** application's workload identity + policy + Transit key | | ✅ `POST /api/v1/applications/:id/provision` |
 | Key rotate / rewrap | | ✅ `POST /api/v1/keys/:name/rotate` \| `/rewrap` |
 | Key destroy (governance-gated) | | ✅ `POST /api/v1/keys/:name/destroy` → approval |
+| Application offboarding (governance-gated, Prompt 28) | | ✅ `POST /api/v1/applications/:id/offboard` → per-key approvals |
 
 `terraform/vault-workloads/` is **not** removed — it still seeds the demonstration workloads. New resources go through the API.
 
@@ -30,6 +31,7 @@ intent naar Vault configuration"). Terraform stays the **bootstrap** authority.
 | `POST` | `/api/v1/keys/:name/rotate` | `transit/keys/:name/rotate`, recorded as a job. |
 | `POST` | `/api/v1/keys/:name/rewrap` | `{ ciphertext }` → rewrapped ciphertext at the latest version. **The one crypto-data-plane call Arcanium makes** — ciphertext only, never plaintext. Operator/architect persona only. |
 | `POST` | `/api/v1/keys/:name/destroy` | Records an `approval_requests` row (`action = revoke`), returns `202`. Does **not** delete the key — follow-up execution must be verified separately; the current approval-recording endpoint alone does not demonstrate deletion or native authorization. |
+| `POST` | `/api/v1/applications/:id/offboard` | Prompt 28 — begins a governed offboarding workflow, not a cascade delete. Submits a `destroy_request` (same path as `/keys/:name/destroy`) for every still-active key; already-inactive keys are tombstoned immediately. `applications.offboarded_at` is only set once every submitted request has actually been resolved — see [external-integration.md](external-integration.md). |
 | `GET` | `/api/v1/jobs` `?status=` | Provisioning job history. |
 | `GET` | `/api/v1/jobs/:id` | One job with its ordered steps. |
 

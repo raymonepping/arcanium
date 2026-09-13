@@ -84,13 +84,28 @@ API inline-checks `req.identity.persona` against a literal string.
 > The UI may hide functionality. The API must forbid it.
 > Button hidden ≠ authorization. API 403 = authorization.
 
-| Persona        | Read | Provision | Rotate | Rewrap | Destroy request | Approve | Tenant   |
-| -------------- | ---: | --------: | -----: | -----: | ---------------: | ------: | -------- |
-| CISO           |    ✓ |         ✗ |      ✗ |      ✗ |                 ✓ |       ✓ | estate   |
-| Architect      |    ✓ |         ✓ |      ✓ |      ✗ |                 ✓ |       ✗ | estate   |
-| Operator       |    ✓ |         ✓ |      ✓ |      ✓ |                 ✓ |       ✗ | estate   |
-| Auditor        |    ✓ |         ✗ |      ✗ |      ✗ |                 ✗ |       ✗ | estate   |
-| Supplier Admin |    ✓ |   limited |limited |      ✗ |           limited |       ✗ | own only |
+| Persona        | Read | Provision | Rotate | Rewrap | Destroy request | Approve | Reconcile | Tenant   |
+| -------------- | ---: | --------: | -----: | -----: | ---------------: | ------: | --------: | -------- |
+| CISO           |    ✓ |         ✗ |      ✗ |      ✗ |                 ✓ |       ✓ |         ✗ | estate   |
+| Architect      |    ✓ |         ✓ |      ✓ |      ✗ |                 ✓ |       ✗ |         ✓ | estate   |
+| Operator       |    ✓ |         ✓ |      ✓ |      ✓ |                 ✓ |       ✗ |         ✓ | estate   |
+| Auditor        |    ✓ |         ✗ |      ✗ |      ✗ |                 ✗ |       ✗ |         ✗ | estate   |
+| Supplier Admin |    ✓ |   limited |limited |      ✗ |           limited |       ✗ |         ✗ | own only |
+
+`Reconcile` (Prompt 20) shares its row with `Rotate` for every persona —
+correcting drift back to a declared policy is operationally equivalent to
+a rotate-class action.
+
+Since Prompt 27, `authorize()` also takes an optional `env`/`team`
+dimension: four of these roles (`ciso`, `architect`, `operator`,
+`auditor`) can additionally be granted *scoped* — narrowed to one
+environment or team rather than estate-wide — via LDAP/Keycloak groups
+shaped `arcanium-<role>:env:<x>` or `arcanium-<role>:team:<x>`. This
+table describes the estate-wide grant; see
+[multitenancy.md](multitenancy.md) for the scoped-grant model, and
+[external-integration.md](external-integration.md) for the separate
+service-account (Bearer token) identity Prompt 28 added alongside human
+OIDC sessions.
 
 Wiring this in found and fixed two pre-existing gaps, not just formalised
 existing behavior:
@@ -182,9 +197,13 @@ Present on every response, both API (`middleware/securityHeaders.js`) and UI
 
 This prompt does not finish because OIDC login works. It finishes when
 [scenarios/11_security_foundation/test_negative_auth.sh](../scenarios/11_security_foundation/test_negative_auth.sh)
-proves all 13 hostile assertions from `input/35` — anonymous access,
+proves its hostile assertions from `input/35` — anonymous access,
 role-mismatched mutations, cross-tenant reads, forged/expired sessions, and
-a rejected OIDC callback under a wrong state/issuer/audience. See the
+a rejected OIDC callback under a wrong state/issuer/audience. The suite has
+grown well past its original 13 as later prompts added their own
+authorization surface to prove against (29 assertions as of Prompt 28) —
+run it and read its own output for the current count rather than trusting
+a number in this document. See the
 Prompt 18 execution log for the actual, current result of that run — this
 document describes the design, the log records what was proven.
 

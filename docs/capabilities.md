@@ -15,7 +15,10 @@ This matrix describes source capability. Confirm actual deployment with health r
 | Approvals | Governance records and decision endpoints | Database decision is not Vault-native authorization |
 | Evidence | Approval-derived rows plus optional audit ingestion | Ingestion requires worker/flag/mount; origin matters |
 | Maturity | Server-computed dimensions and level heuristic | Not certification; inspect formula and data quality |
-| Authentication | Optional Vault userpass-backed sessions | Off by default; verify route-level authorization separately |
+| Authentication | Real OIDC (Keycloak, LDAP-federated) human sessions, plus service-account Bearer tokens | Off by default; verify route-level authorization separately. The earlier Vault-userpass-backed session model was retired at Phase 18 — there is no `POST /api/v1/auth/login` any more |
+| Multitenancy | Environment/team scoped grants alongside role and tenant-scope | Four roles are scopable (`ciso`/`architect`/`operator`/`auditor`); a route must pass `env`/`team` into `authorize()` for a scoped grant to actually narrow it there |
+| External integration | Service accounts, webhooks, a Terraform provider skeleton | Terraform provider is unpublished, proof-only; webhook delivery is fire-and-forget from whichever process runs the reconciliation sweep |
+| Key lifecycle completion | `expiry_date` desired-state requirement, offboarding workflow | Destruction always routes through the same four-eyes approval gate; offboarding is not a cascade delete |
 | Observability | Compose configuration and API adapters | Optional; integration may remain inactive |
 | Cloud distribution | Key-management engine with optional LocalStack | Emulated KMS, not a live cloud account |
 | Sentinel | Policy-as-code demonstrations | Entitlements and provisioner access required |

@@ -9,10 +9,14 @@ flowchart LR
     Browser[Browser] --> UI[Arcanium UI\nNuxt · port 3000]
     UI -->|same-origin gateway| API[Arcanium API\nExpress · port 3001]
     CLI[Arcanium CLI] --> API
+    TFProvider[terraform-provider-arcanium\nskeleton, unpublished] -->|service-account Bearer token| API
     API --> DB[(PostgreSQL\nregistry · jobs · evidence · sessions)]
     API --> Vault[Vault Enterprise\nvault-1 · vault-2 · vault-3]
+    API -->|OIDC Authorization Code + PKCE| Keycloak[Keycloak\nOIDC broker]
+    Keycloak --> LDAP[OpenLDAP\nidentity store]
     Worker[Optional worker] --> DB
     Worker --> Vault
+    Worker -->|webhook delivery, fire-and-forget| External[External webhook endpoint]
     Workloads[Workloads\nTransit · PKI · KMIP · signing] --> Vault
     Workloads -->|registration / governance| API
     Vault -->|Transit auto-unseal| Seal[vault-s\nShamir-sealed provider]
@@ -21,7 +25,11 @@ flowchart LR
     Vault -->|optional distribution| KMS[LocalStack KMS\nemulated]
 ```
 
-The worker, HSM reader, audit ingestion and external KMS integration require explicit configuration. Their source files do not imply that their services are running.
+The worker, HSM reader, audit ingestion, external KMS integration, and
+identity federation (Keycloak/OpenLDAP) require explicit configuration.
+Their source files do not imply that their services are running.
+`OpenLDAP is never a direct authentication target for Arcanium` — Express
+only ever talks to Keycloak; see [security.md](security.md).
 
 ## Service boundaries
 
@@ -31,8 +39,10 @@ The worker, HSM reader, audit ingestion and external KMS integration require exp
 | Express API | Registry, Vault integration, provisioning orchestration, approval records, evidence and maturity API | Replacing all Vault administration |
 | PostgreSQL | Supplier/application metadata, profiles, approvals, jobs, sessions and evidence | Private key custody |
 | Vault cluster | Cryptographic state, policies, auth engines, namespaces, Transit, PKI and KMIP | Business-facing dashboard |
-| Worker | Optional queued jobs and audit ingestion | An independent authoritative registry |
+| Worker | Optional queued jobs, audit ingestion, offboarding sweep, and webhook delivery | An independent authoritative registry |
 | Workloads | Demonstrate actual crypto operations using workload identities | Sharing root credentials with the browser |
+| Keycloak / OpenLDAP | Human identity federation (OIDC broker over an LDAP-backed store) | Ever authenticated to directly by Arcanium — Express only ever talks to Keycloak |
+| terraform-provider-arcanium | Proves the API surface is usable by a real Terraform apply, via a service-account Bearer token | Published to the Terraform Registry — skeleton/proof only |
 
 Arcanium normally manages metadata and configuration. The implemented rewrap endpoint is a specific ciphertext-only exception: the API sends ciphertext to Vault for rewrapping. Do not describe the API as never making any cryptographic data-plane call.
 

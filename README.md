@@ -21,8 +21,10 @@ Vault owns cryptographic state and enforces policies. Arcanium provides manageme
 
 - **Management:** Nuxt 4, Vue 3, TypeScript and Express 5, with Node 24 container runtimes.
 - **Custody:** three-node Vault Raft cluster, a separate Transit seal provider, and a Vault HSM demonstration instance backed by SoftHSM through a PKCS#11 proxy.
-- **Tenancy:** supplier namespaces, workload identities, policies and quotas.
-- **Lifecycle:** Transit, PKI, KMIP, optional Managed Keys, provisioning jobs and governed actions.
+- **Identity:** real OIDC (Keycloak, LDAP-federated) human sessions, plus a separate service-account Bearer-token identity for machine callers.
+- **Tenancy:** supplier namespaces, workload identities, policies and quotas, plus environment/team scoped grants alongside role and tenant scope.
+- **Lifecycle:** Transit, PKI, KMIP, optional Managed Keys, provisioning jobs, desired-state reconciliation (rotation policy and key expiry), governed destruction, and a governed application-offboarding workflow.
+- **Integration:** webhooks for reconciliation/expiry events and a minimal, unpublished Terraform provider skeleton — both authenticate through the same service-account identity as any other machine caller.
 - **Assurance:** source-attributed governance records, optional audit-log ingestion, maturity evaluation and optional observability services.
 
 This is a demonstration environment. Licensed capabilities, feature flags and running services determine which functions are available. SoftHSM is software emulation; LocalStack KMS is an optional cloud KMS emulator. See [capabilities and limitations](docs/capabilities.md).

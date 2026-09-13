@@ -12,6 +12,14 @@ Scenarios exercise real operations in the local lab. Review their source and req
 | `08_evidence` | Timed collection and report | `make evidence-collect` |
 | `09_sentinel` | Policy enforcement and automation restrictions | `make scenario-automation-depth`; inspect individual scripts |
 | `10_key_distribution` | Emulated cloud KMS distribution lifecycle | [KMS guide](../compose/kms-sim/README.md) |
+| `11_security_foundation` | Hostile negative-auth suite — 401/403/forged-session/OIDC-callback assertions | `make scenario-security-foundation` |
+| `12_reconciliation` | Hostile drift-detection proof — observe/drift/evidence/reconcile, survives a mid-sequence restart | `make scenario-reconciliation` |
+| `13_fitness` | Architecture invariant checks (no Vault import in `ui/`, `authorize()` coverage, tenant-scope coverage, OpenAPI route coverage) | `make scenario-fitness` |
+| `14_evidence_v2` | Hostile gated-maturity proof — a forced `FAIL` caps the level, a Vault outage yields `UNKNOWN` (never a fabricated `PASS`), both recover | `make scenario-evidence-v2` |
+| `15_operability` | PostgreSQL loss/recovery drill (destroys and recovers the real database container + volume) | `make scenario-recovery-drill-postgres` |
+| `16_multitenancy` | Scoped environment/team grant isolation, using real LDAP-backed sessions | `make scenario-scope-isolation`; see [multitenancy.md](multitenancy.md) |
+| `17_terraform_provider` | A real `terraform apply`/`destroy` against the live stack, via a service-account Bearer token | `make scenario-terraform-provider`; see [external-integration.md](external-integration.md) |
+| `pre_24_persistence` | Hostile restart/recreate/credential-loss persistence proof | `make scenario-persistence-restart` |
 
 ## Demonstration order
 

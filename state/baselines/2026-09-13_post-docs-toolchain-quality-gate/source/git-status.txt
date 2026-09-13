@@ -1,0 +1,21 @@
+ M CHANGELOG.md
+ M README.md
+ M docs/api.md
+ M docs/architecture.md
+ M docs/capabilities.md
+ M docs/configuration.md
+ M docs/index.md
+ M docs/maturity-model.md
+ M docs/orchestration.md
+ M docs/personas.md
+ M docs/repository-layout.md
+ M docs/scale.md
+ M docs/scenarios.md
+ M docs/security.md
+ M skills-lock.json
+?? .agents/skills/no-ai-slop/
+?? .claude/skills/no-ai-slop
+?? .vale.ini
+?? docs/external-integration.md
+?? docs/multitenancy.md
+?? docs/writing/

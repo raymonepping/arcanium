@@ -1,0 +1,481 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d777efe..d4140a9 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Added
+ 
++- Real OIDC authentication (Keycloak, OpenLDAP-federated) replacing the
++  earlier Vault-userpass-backed session model; roles and tenant scope
++  derive from OIDC groups, not a hardcoded username map. Deny-by-default
++  authorization centralized in one `authorize()` gate. See
++  [security.md](docs/security.md) and [personas.md](docs/personas.md).
++- Desired-state reconciliation: a declared rotation policy (and, later,
++  a declared key-expiry date) observed against Vault's live state, with
++  an independent `observation_status`/`disposition` model, a governed
++  reconcile action, and a time-boxed governed exception path. See
++  [api.md](docs/api.md).
++- A gated, evidence-based maturity model (`GET /api/v1/maturity`)
++  replacing an earlier averaged score — a single mandatory control at
++  `FAIL` or `UNKNOWN` caps the level regardless of every other
++  dimension. See [maturity-model.md](docs/maturity-model.md).
++- Architecture fitness tests, an OpenAPI contract
++  (`openapi/arcanium.yaml`) as the authoritative machine-checked route
++  contract, and generated TypeScript types kept in sync with it.
++- Control-plane multitenancy: environment/team scoped grants alongside
++  the existing role and tenant-scope axes, a teams registry, and a live
++  isolation proof using real, narrowly-scoped OIDC sessions. See
++  [multitenancy.md](docs/multitenancy.md).
++- External integration surface: a service-account (Bearer token)
++  machine identity, webhooks for reconciliation/expiry events
++  (HMAC-signed, every delivery attempt recorded), and a minimal,
++  unpublished Terraform provider skeleton proven against a real
++  `terraform apply`/`destroy`. See
++  [external-integration.md](docs/external-integration.md).
++- Key-lifecycle completion: an `expiry_date` desired-state requirement
++  whose reconcile action submits a governed destroy request rather than
++  mutating Vault directly, and a governed application-offboarding
++  workflow (never a cascade delete). See
++  [external-integration.md](docs/external-integration.md).
++- Operability drills: a real Vault Raft snapshot/restore drill and a
++  real PostgreSQL loss/recovery drill, both against live containers and
++  volumes, not simulated.
++- Frontend design-toolchain and quality-gate passes: an explicit,
++  evidence-derived `DESIGN.md`, a Playwright-driven baseline/regression
++  process, and a documented release verdict. See
++  [docs/frontend/](docs/frontend/).
++
+ - Three-node Vault Raft cluster with a Transit seal provider (`vault-s`) and a
+   separate `+ent.hsm` instance (`vault-hsm`) backed by SoftHSM over a PKCS#11
+   proxy. Bootstrap, status and Raft snapshot scripts.
+diff --git a/README.md b/README.md
+index 54ab776..bfab727 100644
+--- a/README.md
++++ b/README.md
+@@ -21,8 +21,10 @@ Vault owns cryptographic state and enforces policies. Arcanium provides manageme
+ 
+ - **Management:** Nuxt 4, Vue 3, TypeScript and Express 5, with Node 24 container runtimes.
+ - **Custody:** three-node Vault Raft cluster, a separate Transit seal provider, and a Vault HSM demonstration instance backed by SoftHSM through a PKCS#11 proxy.
+-- **Tenancy:** supplier namespaces, workload identities, policies and quotas.
+-- **Lifecycle:** Transit, PKI, KMIP, optional Managed Keys, provisioning jobs and governed actions.
++- **Identity:** real OIDC (Keycloak, LDAP-federated) human sessions, plus a separate service-account Bearer-token identity for machine callers.
++- **Tenancy:** supplier namespaces, workload identities, policies and quotas, plus environment/team scoped grants alongside role and tenant scope.
++- **Lifecycle:** Transit, PKI, KMIP, optional Managed Keys, provisioning jobs, desired-state reconciliation (rotation policy and key expiry), governed destruction, and a governed application-offboarding workflow.
++- **Integration:** webhooks for reconciliation/expiry events and a minimal, unpublished Terraform provider skeleton — both authenticate through the same service-account identity as any other machine caller.
+ - **Assurance:** source-attributed governance records, optional audit-log ingestion, maturity evaluation and optional observability services.
+ 
+ This is a demonstration environment. Licensed capabilities, feature flags and running services determine which functions are available. SoftHSM is software emulation; LocalStack KMS is an optional cloud KMS emulator. See [capabilities and limitations](docs/capabilities.md).
+diff --git a/docs/api.md b/docs/api.md
+index 304ea4c..8aef87a 100644
+--- a/docs/api.md
++++ b/docs/api.md
+@@ -130,11 +130,18 @@ successful cryptographic operations, even when the coarse `outcome` field says
+ | POST | `/api/v1/reconciliation/run` | On-demand observe→compare→persist sweep — never mutates Vault |
+ | PATCH | `/api/v1/reconciliation/desired-state/:id` | Edit the desired value itself (e.g. change desired rotation from 30 to 90 days) |
+ | GET | `/api/v1/reconciliation/:run_id` | One run in full — desired-state history + reconcile/accept-exception action history |
+-| POST | `/api/v1/reconciliation/:run_id/reconcile` | Correct drift — writes the desired value back to Vault, re-observes; only on a `DRIFTED` run |
++| POST | `/api/v1/reconciliation/:run_id/reconcile` | Correct drift — for `rotation_period`, writes the desired value back to Vault and re-observes; for `expiry_date` (Prompt 28), submits a `destroy_request` approval instead and never touches Vault directly — only on a `DRIFTED` run |
+ | POST | `/api/v1/reconciliation/:run_id/accept-exception` | Governed, time-boxed exception — does **not** touch Vault; `reason` and `expires_at` both required |
+ 
+ Every reconciliation row carries `observation_status` (`COMPLIANT`/`DRIFTED`/`UNKNOWN`) and `disposition` (`OPEN`/`EXCEPTION_ACCEPTED`/`RECONCILED`) as two **independent** fields — never merged into one combined value. An accepted exception does not change what was actually observed in Vault; it only changes how Arcanium treats that observation. A `DRIFTED` run with `disposition: EXCEPTION_ACCEPTED` is still drifted.
+ 
++`desired_state.requirement` is `rotation_period` or, since Prompt 28,
++`expiry_date` (`desired_value = {"not_after": "2027-01-01"}` — "this key
++must not still be active after this date," `COMPLIANT` with
++`approaching_expiry: true` inside 14 days). See
++[external-integration.md](external-integration.md) for why its reconcile
++action is deliberately heavier than `rotation_period`'s.
++
+ ## Controls / Evidence v2 (Phase 21)
+ 
+ | Method | Path | Behavior |
+@@ -142,7 +149,48 @@ Every reconciliation row carries `observation_status` (`COMPLIANT`/`DRIFTED`/`UN
+ | GET | `/api/v1/controls` | Latest assessment per `(control_id, scope)`; tenant-scoped from its first commit |
+ | GET | `/api/v1/controls/:id` | One control's catalogue definition plus its per-scope assessments |
+ 
+-Every assessment carries `status` (`PASS`/`FAIL`/`UNKNOWN`/`N/A`), `confidence` (`HIGH`/`MEDIUM`/`LOW`), and `evidence_refs` pointing at what was actually read — a live Vault call, a reconciliation run id, a Sentinel EGP list, a recorded hostile-scenario result. `GET /api/v1/maturity` is the aggregate/gated view over this same evidence; these two routes are the per-control detail behind it.
++Every assessment carries `status` (`PASS`/`FAIL`/`UNKNOWN`/`N/A`), `confidence` (`HIGH`/`MEDIUM`/`LOW`), and `evidence_refs` pointing at what was actually read — a live Vault call, a reconciliation run id, a Sentinel EGP list, a recorded hostile-scenario result. `GET /api/v1/maturity` is the aggregate/gated view over this same evidence; these two routes are the per-control detail behind it. Two controls added in Prompt 28 — `KML-DESTR-01` and `KML-OFFBOARD-01` — follow the identical pattern; see [maturity-model.md](maturity-model.md).
++
++## Teams and control-plane multitenancy (Prompt 27)
++
++| Method | Path | Behavior |
++| --- | --- | --- |
++| GET / POST | `/api/v1/teams` | Estate-wide-only registry; `supplier_ids` (`NULL` = all suppliers) and `environments` |
++| GET / PATCH / DELETE | `/api/v1/teams/:id` | Inspect / update / remove |
++
++`applications.environment` (`TEXT NOT NULL DEFAULT 'production'`) and a
++new `env`/`team` dimension on `authorize()` sit alongside every existing
++role/tenant check — see [multitenancy.md](multitenancy.md) for the full
++scoped-grant model and the routes it touches.
++
++## Service accounts and webhooks (Prompt 28)
++
++| Method | Path | Behavior |
++| --- | --- | --- |
++| GET / POST | `/api/v1/service-accounts` | Registry / create (`roles[]`, optional `tenant_scopes[]`) |
++| GET / PATCH / DELETE | `/api/v1/service-accounts/:id` | Inspect / update / revoke — never returns a token or its hash |
++| POST | `/api/v1/service-accounts/:id/tokens` | Issue a token — plaintext returned exactly once, in this response only |
++| DELETE | `/api/v1/service-accounts/:id/tokens/:token_id` | Revoke one token |
++| GET / POST | `/api/v1/webhooks` | Registry / create (`url`, `events[]`) — plaintext signing secret returned exactly once |
++| GET / PATCH / DELETE | `/api/v1/webhooks/:id` | Inspect / update / remove |
++| GET | `/api/v1/webhooks/:id/deliveries` | Delivery attempt history, `?status=failed` to filter |
++
++A service account authenticates with `Authorization: Bearer <token>`,
++checked before the cookie session path, and reaches `authorize()` through
++the identical code path a human session does. See
++[external-integration.md](external-integration.md) for the full model,
++including the webhook signing/delivery design and the Terraform provider
++skeleton that authenticates this same way.
++
++## Offboarding (Prompt 28)
++
++| Method | Path | Behavior |
++| --- | --- | --- |
++| POST | `/api/v1/applications/:id/offboard` | Begins a governed offboarding workflow — never a cascade delete; see [external-integration.md](external-integration.md) |
++
++Returns `202` immediately; the application is not marked offboarded until
++every affected key's destroy request has actually been resolved, which
++can happen well after this call returns.
+ 
+ ## Authentication (Phase 18 — OIDC)
+ 
+@@ -154,10 +202,15 @@ Every assessment carries `status` (`PASS`/`FAIL`/`UNKNOWN`/`N/A`), `confidence`
+ | POST | `/api/v1/auth/logout` | Destroys the session |
+ | POST | `/api/v1/auth/demo-persona` | Presentation-only persona switch — never a real privilege change; scoped grants (if any) are set only by actual OIDC group membership |
+ 
+-There is no `POST /api/v1/auth/login` — the userpass path was removed with Phase 18. Express is the OIDC client end-to-end; the browser only ever holds the opaque `arc_session` cookie, never a token. `/login` and `/callback` are the two routes that must issue a real browser redirect rather than be proxied as JSON — the UI gateway fronts them with dedicated relay routes (`ui/server/routes/gateway/api/v1/auth/{login,callback}.get.ts`), not the generic `[...path].ts` proxy every other route goes through.
++No `POST /api/v1/auth/login` route exists — the userpass path was removed with Phase 18. Express is the OIDC client end-to-end; the browser only ever holds the opaque `arc_session` cookie, never a token. `/login` and `/callback` are the two routes that must issue a real browser redirect rather than be proxied as JSON — the UI gateway fronts them with dedicated relay routes (`ui/server/routes/gateway/api/v1/auth/{login,callback}.get.ts`), not the generic `[...path].ts` proxy every other route goes through.
+ 
+ Authentication is off unless `ARCANIUM_AUTH_ENABLED` is set — every session then defaults to an estate-wide operator identity, and every mutating route's `authorize()` check trivially passes. The cookie carries an idle timeout; see [security](security.md) and [personas](personas.md) for the full authorization matrix.
+ 
++A second, independent auth path exists for machines: `Authorization:
++Bearer <token>`, checked first, before the cookie. See
++[external-integration.md](external-integration.md) for the service-account
++identity model this issues tokens against.
++
+ ## Errors and compatibility
+ 
+ - `400`: validation failure.
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 51f8349..897e598 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -9,10 +9,14 @@ flowchart LR
+     Browser[Browser] --> UI[Arcanium UI\nNuxt · port 3000]
+     UI -->|same-origin gateway| API[Arcanium API\nExpress · port 3001]
+     CLI[Arcanium CLI] --> API
++    TFProvider[terraform-provider-arcanium\nskeleton, unpublished] -->|service-account Bearer token| API
+     API --> DB[(PostgreSQL\nregistry · jobs · evidence · sessions)]
+     API --> Vault[Vault Enterprise\nvault-1 · vault-2 · vault-3]
++    API -->|OIDC Authorization Code + PKCE| Keycloak[Keycloak\nOIDC broker]
++    Keycloak --> LDAP[OpenLDAP\nidentity store]
+     Worker[Optional worker] --> DB
+     Worker --> Vault
++    Worker -->|webhook delivery, fire-and-forget| External[External webhook endpoint]
+     Workloads[Workloads\nTransit · PKI · KMIP · signing] --> Vault
+     Workloads -->|registration / governance| API
+     Vault -->|Transit auto-unseal| Seal[vault-s\nShamir-sealed provider]
+@@ -21,7 +25,11 @@ flowchart LR
+     Vault -->|optional distribution| KMS[LocalStack KMS\nemulated]
+ ```
+ 
+-The worker, HSM reader, audit ingestion and external KMS integration require explicit configuration. Their source files do not imply that their services are running.
++The worker, HSM reader, audit ingestion, external KMS integration, and
++identity federation (Keycloak/OpenLDAP) require explicit configuration.
++Their source files do not imply that their services are running.
++`OpenLDAP is never a direct authentication target for Arcanium` — Express
++only ever talks to Keycloak; see [security.md](security.md).
+ 
+ ## Service boundaries
+ 
+@@ -31,8 +39,10 @@ The worker, HSM reader, audit ingestion and external KMS integration require exp
+ | Express API | Registry, Vault integration, provisioning orchestration, approval records, evidence and maturity API | Replacing all Vault administration |
+ | PostgreSQL | Supplier/application metadata, profiles, approvals, jobs, sessions and evidence | Private key custody |
+ | Vault cluster | Cryptographic state, policies, auth engines, namespaces, Transit, PKI and KMIP | Business-facing dashboard |
+-| Worker | Optional queued jobs and audit ingestion | An independent authoritative registry |
++| Worker | Optional queued jobs, audit ingestion, offboarding sweep, and webhook delivery | An independent authoritative registry |
+ | Workloads | Demonstrate actual crypto operations using workload identities | Sharing root credentials with the browser |
++| Keycloak / OpenLDAP | Human identity federation (OIDC broker over an LDAP-backed store) | Ever authenticated to directly by Arcanium — Express only ever talks to Keycloak |
++| terraform-provider-arcanium | Proves the API surface is usable by a real Terraform apply, via a service-account Bearer token | Published to the Terraform Registry — skeleton/proof only |
+ 
+ Arcanium normally manages metadata and configuration. The implemented rewrap endpoint is a specific ciphertext-only exception: the API sends ciphertext to Vault for rewrapping. Do not describe the API as never making any cryptographic data-plane call.
+ 
+diff --git a/docs/capabilities.md b/docs/capabilities.md
+index 1850825..3d92c98 100644
+--- a/docs/capabilities.md
++++ b/docs/capabilities.md
+@@ -15,7 +15,10 @@ This matrix describes source capability. Confirm actual deployment with health r
+ | Approvals | Governance records and decision endpoints | Database decision is not Vault-native authorization |
+ | Evidence | Approval-derived rows plus optional audit ingestion | Ingestion requires worker/flag/mount; origin matters |
+ | Maturity | Server-computed dimensions and level heuristic | Not certification; inspect formula and data quality |
+-| Authentication | Optional Vault userpass-backed sessions | Off by default; verify route-level authorization separately |
++| Authentication | Real OIDC (Keycloak, LDAP-federated) human sessions, plus service-account Bearer tokens | Off by default; verify route-level authorization separately. The earlier Vault-userpass-backed session model was retired at Phase 18 — there is no `POST /api/v1/auth/login` any more |
++| Multitenancy | Environment/team scoped grants alongside role and tenant-scope | Four roles are scopable (`ciso`/`architect`/`operator`/`auditor`); a route must pass `env`/`team` into `authorize()` for a scoped grant to actually narrow it there |
++| External integration | Service accounts, webhooks, a Terraform provider skeleton | Terraform provider is unpublished, proof-only; webhook delivery is fire-and-forget from whichever process runs the reconciliation sweep |
++| Key lifecycle completion | `expiry_date` desired-state requirement, offboarding workflow | Destruction always routes through the same four-eyes approval gate; offboarding is not a cascade delete |
+ | Observability | Compose configuration and API adapters | Optional; integration may remain inactive |
+ | Cloud distribution | Key-management engine with optional LocalStack | Emulated KMS, not a live cloud account |
+ | Sentinel | Policy-as-code demonstrations | Entitlements and provisioner access required |
+diff --git a/docs/configuration.md b/docs/configuration.md
+index f89431f..38b8398 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -29,6 +29,10 @@ The browser uses same-origin API transport. Never expose the internal Vault toke
+ | `ARCANIUM_HSM_ROLE_ID`, `ARCANIUM_HSM_SECRET_ID` | Optional read identity for HSM metadata enrichment |
+ | `ARCANIUM_AUTH_ENABLED` | Human session enforcement; false by default |
+ | `ARCANIUM_DEMO_PERSONA_SWITCH` | Presentation-only persona switching; false by default |
++| `ARCANIUM_BASE_URL` | The app's own public origin (default `http://localhost:3000`) — used both as the OIDC redirect base and as the exact `post_logout_redirect_uri` Keycloak must have registered for this client; the two must match |
++| `ARCANIUM_OIDC_ISSUER`, `ARCANIUM_OIDC_CLIENT_ID`, `ARCANIUM_OIDC_CLIENT_SECRET` | The confidential OIDC client Express authenticates as |
++| `ARCANIUM_OIDC_INTERNAL_URL`, `ARCANIUM_OIDC_PUBLIC_URL` | Keycloak's container-network address vs. its browser-reachable published address — deliberately two separate settings, not `host.docker.internal`; see [security.md](security.md) |
++| `KEYCLOAK_ADMIN`, `KEYCLOAK_ADMIN_PASSWORD` | Realm bootstrap credentials, consumed by `compose/identity/keycloak/setup_keycloak.sh` |
+ | `WORKER_POLL_MS` | Worker polling interval; defaults to 3000 ms |
+ | `EVIDENCE_INGEST_ENABLED` | Enables worker audit-log ingestion when true |
+ | `AUDIT_LOG_PATH` | Audit input path the worker tails; Compose default `/vault/audit/vault-audit-r.log` (the world-readable file device) |
+diff --git a/docs/index.md b/docs/index.md
+index aabcb52..4edf8b9 100644
+--- a/docs/index.md
++++ b/docs/index.md
+@@ -28,7 +28,11 @@ guides by task. All documentation lives in `docs/`; only `README.md`,
+ - [Contributing](../CONTRIBUTING.md)
+ - [Runtime orchestration](orchestration.md): how intent becomes Vault configuration.
+ - [Authentication and personas](personas.md)
++- [Identity configuration](identity-configuration.md): Keycloak/OpenLDAP provisioning for the scoped-grant demo accounts (Prompt 27).
+ - [Security](security.md): OIDC trust model, deny-by-default authorization matrix, session/CSRF/header hardening (Prompt 18).
++- [Authorization audit](authorization-audit.md): the route-by-route env/team scoping review (Prompt 27), including the gaps it found and closed.
++- [Control-plane multitenancy](multitenancy.md): the environment/team scoped-grant model, teams registry, and its live isolation proof (Prompt 27).
++- [External integration surface](external-integration.md): service accounts, webhooks, the Terraform provider skeleton, key expiry and offboarding (Prompt 28).
+ 
+ ## Cryptography and assurance
+ 
+@@ -39,6 +43,19 @@ guides by task. All documentation lives in `docs/`; only `README.md`,
+ - [Security model](security.md)
+ - [Scenario guide](scenarios.md)
+ 
++## Frontend and documentation quality
++
++- [Frontend design toolchain report](frontend/UI_TOOLCHAIN_REPORT.md) and
++  [DESIGN.md](frontend/config/DESIGN.md): the UI's own visual contract,
++  derived from the deployed application, not invented.
++- [Frontend quality gate](frontend/FRONTEND_QUALITY_GATE.md): the
++  repeatable gate the UI is validated against.
++- [Documentation toolchain report](writing/DOCS_TOOLCHAIN_REPORT.md) and
++  [STYLE.md](writing/config/STYLE.md): this documentation set's own
++  written-voice contract.
++- [Documentation quality gate](writing/DOCS_QUALITY_GATE.md): the
++  repeatable gate this documentation set is validated against.
++
+ ## Component guides
+ 
+ - [Compose overview](../compose/README.md)
+diff --git a/docs/maturity-model.md b/docs/maturity-model.md
+index 879adb1..5ff0450 100644
+--- a/docs/maturity-model.md
++++ b/docs/maturity-model.md
+@@ -51,6 +51,19 @@ When a level is capped, `levelCapReason` names the specific blocking control(s)
+ | `NEG-AUTHZ-01` | The hostile negative-authorization test suite last passed | Level 3 | `scenario_runs` (written by `scenarios/11_security_foundation/test_negative_auth.sh` on every run, within a 7-day freshness TTL) |
+ | `AUTO-01` | Rotation-from-automation is enforced by a Sentinel EGP | Level 4 | Live `vault LIST sys/policies/egp`; `N/A` if Sentinel isn't in the Vault license |
+ | `GOV-01` | Four-eyes governance (Control Group approval) is actively exercised | Level 5 | `approval_requests.status`/`.accessor` |
++| `KML-DESTR-01` | Active keys must not exceed their declared expiry date | Not level-gated — `mandatory=true`, dimension "Key Lifecycle Hygiene" | `desired_state` rows with `requirement = 'expiry_date'` (Prompt 28) |
++| `KML-OFFBOARD-01` | Decommissioned applications must have all keys destroyed within 30 days | Not level-gated — `mandatory=false`, dimension "Governance Adoption" | `applications.offboarding_initiated_at`/`.offboarded_at` (Prompt 28) |
++
++`KML-DESTR-01` and `KML-OFFBOARD-01` follow the exact same
++UNKNOWN-until-real-data discipline as every control above — neither
++reports `PASS` until at least one `expiry_date` desired-state row or one
++real offboarding has actually been exercised. Unlike the controls in the
++table above, **neither is in `MANDATORY_CONTROLS_PER_LEVEL`** — both are
++assessed and shown in the report (and `KML-DESTR-01`'s own `mandatory`
++column is `true`, meaning it must eventually be addressed), but neither
++one currently caps the gated 0–5 level the way `KEY-INV-01` through
++`GOV-01` do. See [external-integration.md](external-integration.md) for
++the workflows these two controls assess.
+ 
+ Every assessment is persisted as a new `control_assessments` row (an append-only evidence log, same discipline as `reconciliation_runs`) with `evidence_refs` pointing at what was actually read — a reconciliation run id, a Vault list method, a scenario run timestamp. Nothing is inferred from a database row simply existing.
+ 
+diff --git a/docs/orchestration.md b/docs/orchestration.md
+index 064b278..5c17129 100644
+--- a/docs/orchestration.md
++++ b/docs/orchestration.md
+@@ -17,6 +17,7 @@ intent naar Vault configuration"). Terraform stays the **bootstrap** authority.
+ | A **new** application's workload identity + policy + Transit key | | ✅ `POST /api/v1/applications/:id/provision` |
+ | Key rotate / rewrap | | ✅ `POST /api/v1/keys/:name/rotate` \| `/rewrap` |
+ | Key destroy (governance-gated) | | ✅ `POST /api/v1/keys/:name/destroy` → approval |
++| Application offboarding (governance-gated, Prompt 28) | | ✅ `POST /api/v1/applications/:id/offboard` → per-key approvals |
+ 
+ `terraform/vault-workloads/` is **not** removed — it still seeds the demonstration workloads. New resources go through the API.
+ 
+@@ -30,6 +31,7 @@ intent naar Vault configuration"). Terraform stays the **bootstrap** authority.
+ | `POST` | `/api/v1/keys/:name/rotate` | `transit/keys/:name/rotate`, recorded as a job. |
+ | `POST` | `/api/v1/keys/:name/rewrap` | `{ ciphertext }` → rewrapped ciphertext at the latest version. **The one crypto-data-plane call Arcanium makes** — ciphertext only, never plaintext. Operator/architect persona only. |
+ | `POST` | `/api/v1/keys/:name/destroy` | Records an `approval_requests` row (`action = revoke`), returns `202`. Does **not** delete the key — follow-up execution must be verified separately; the current approval-recording endpoint alone does not demonstrate deletion or native authorization. |
++| `POST` | `/api/v1/applications/:id/offboard` | Prompt 28 — begins a governed offboarding workflow, not a cascade delete. Submits a `destroy_request` (same path as `/keys/:name/destroy`) for every still-active key; already-inactive keys are tombstoned immediately. `applications.offboarded_at` is only set once every submitted request has actually been resolved — see [external-integration.md](external-integration.md). |
+ | `GET` | `/api/v1/jobs` `?status=` | Provisioning job history. |
+ | `GET` | `/api/v1/jobs/:id` | One job with its ordered steps. |
+ 
+diff --git a/docs/personas.md b/docs/personas.md
+index 0d58b54..54c2d6b 100644
+--- a/docs/personas.md
++++ b/docs/personas.md
+@@ -61,6 +61,32 @@ Mutation gates are now enforced centrally by `auth/authorize.js`, not
+ inline per-route (Prompt 18) — see [security.md](security.md) for the full
+ matrix and the two pre-existing gaps closing this actually found.
+ 
++## Scoped grants — a narrower identity, not a different one (Prompt 27)
++
++Four of the roles above (`ciso`, `architect`, `operator`, `auditor`) can
++also be granted narrowed to one environment or one team, via an extra
++LDAP/Keycloak group shape: `arcanium-<role>:env:<environment>` or
++`arcanium-<role>:team:<team>`. This is independent of, and stacks with,
++the tenant-scope axis above — a scoped grant narrows *what an estate-wide
++role could otherwise reach*, it does not grant a new role.
++
++An identity holding **only** scoped groups (no bare `arcanium-<role>`
++group at all) gets the persona value `"scoped"` — a deliberate sentinel
++this document's own role table has no entry for, so such an identity is
++never silently treated as estate-wide. See
++[multitenancy.md](multitenancy.md) for the full mechanism, the real
++design bug this sentinel was added to prevent, and the two extra demo
++accounts (`demo-operator-prod`, `demo-auditor-platform`) that exercise it.
++
++## Service accounts — a separate, non-human identity (Prompt 28)
++
++Machines authenticate differently: a service account carries its own
++`roles`/`tenant_scopes` set directly at creation, never derived from LDAP
++groups, and presents `Authorization: Bearer <token>` instead of a session
++cookie. It reaches the same `authorize()` this whole document describes,
++through a different front door. See
++[external-integration.md](external-integration.md).
++
+ ## Persona ≠ security boundary
+ 
+ Persona scoping in Arcanium is **defense in depth and UX**. A `pepsi-admin`
+diff --git a/docs/repository-layout.md b/docs/repository-layout.md
+index 25a596b..3a75e27 100644
+--- a/docs/repository-layout.md
++++ b/docs/repository-layout.md
+@@ -43,14 +43,18 @@ arcanium/
+ │   ├── vault/                 Seal provider and Raft cluster
+ │   ├── infra/                 PostgreSQL and Adminer
+ │   ├── hsm/                   PKCS#11 proxy and HSM Vault
++│   ├── identity/              Keycloak (OIDC broker) and OpenLDAP
+ │   ├── workloads/             Demonstration clients
+ │   ├── observability/         Optional Prometheus / Grafana / OTel
+ │   └── kms-sim/               Optional emulated cloud KMS
+ ├── terraform/                 Baseline and demonstration desired state
++│   └── arcanium-provider/     terraform-provider-arcanium skeleton (Go, unpublished)
+ ├── workloads/                 Transit, signing, PKI, supplier and KMIP clients
+ ├── scenarios/                 Operational demonstration scripts
+ ├── scripts/                   Bootstrap, builds and diagnostics
+ ├── docs/                      This documentation set
++│   ├── frontend/              Frontend design-toolchain/quality-gate reports + config/DESIGN.md
++│   └── writing/               Documentation style-toolchain/quality-gate reports + config/STYLE.md
+ ├── input/                     Design source material
+ ├── prompts/                   Implementation briefs and history
+ ├── vault-1/ … vault-3/        Main cluster configuration
+diff --git a/docs/scale.md b/docs/scale.md
+index 3cbda9a..b422711 100644
+--- a/docs/scale.md
++++ b/docs/scale.md
+@@ -93,8 +93,8 @@ violation but wasted/racy writes) for the rest.
+ ## PostgreSQL HA
+ 
+ **Not yet addressed.** `compose/infra/compose.yaml` runs a single
+-`postgres:16-alpine` container with one named volume. There is no
+-replication, no standby, no connection-pooler/failover layer. Deliverable
++`postgres:16-alpine` container with one named volume — no replication,
++no standby, no connection-pooler/failover layer. Deliverable
+ 7's Drill B (`scenarios/15_operability/test_postgres_recovery.sh`) proves
+ Postgres can be *recovered* after total loss (destroy → recreate →
+ restore → migrate → verify, with measured RTO/RPO) — that is disaster
+diff --git a/docs/scenarios.md b/docs/scenarios.md
+index 62f81ab..cf9e995 100644
+--- a/docs/scenarios.md
++++ b/docs/scenarios.md
+@@ -12,6 +12,14 @@ Scenarios exercise real operations in the local lab. Review their source and req
+ | `08_evidence` | Timed collection and report | `make evidence-collect` |
+ | `09_sentinel` | Policy enforcement and automation restrictions | `make scenario-automation-depth`; inspect individual scripts |
+ | `10_key_distribution` | Emulated cloud KMS distribution lifecycle | [KMS guide](../compose/kms-sim/README.md) |
++| `11_security_foundation` | Hostile negative-auth suite — 401/403/forged-session/OIDC-callback assertions | `make scenario-security-foundation` |
++| `12_reconciliation` | Hostile drift-detection proof — observe/drift/evidence/reconcile, survives a mid-sequence restart | `make scenario-reconciliation` |
++| `13_fitness` | Architecture invariant checks (no Vault import in `ui/`, `authorize()` coverage, tenant-scope coverage, OpenAPI route coverage) | `make scenario-fitness` |
++| `14_evidence_v2` | Hostile gated-maturity proof — a forced `FAIL` caps the level, a Vault outage yields `UNKNOWN` (never a fabricated `PASS`), both recover | `make scenario-evidence-v2` |
++| `15_operability` | PostgreSQL loss/recovery drill (destroys and recovers the real database container + volume) | `make scenario-recovery-drill-postgres` |
++| `16_multitenancy` | Scoped environment/team grant isolation, using real LDAP-backed sessions | `make scenario-scope-isolation`; see [multitenancy.md](multitenancy.md) |
++| `17_terraform_provider` | A real `terraform apply`/`destroy` against the live stack, via a service-account Bearer token | `make scenario-terraform-provider`; see [external-integration.md](external-integration.md) |
++| `pre_24_persistence` | Hostile restart/recreate/credential-loss persistence proof | `make scenario-persistence-restart` |
+ 
+ ## Demonstration order
+ 
+diff --git a/docs/security.md b/docs/security.md
+index 092a139..e9ea183 100644
+--- a/docs/security.md
++++ b/docs/security.md
+@@ -84,13 +84,28 @@ API inline-checks `req.identity.persona` against a literal string.
+ > The UI may hide functionality. The API must forbid it.
+ > Button hidden ≠ authorization. API 403 = authorization.
+ 
+-| Persona        | Read | Provision | Rotate | Rewrap | Destroy request | Approve | Tenant   |
+-| -------------- | ---: | --------: | -----: | -----: | ---------------: | ------: | -------- |
+-| CISO           |    ✓ |         ✗ |      ✗ |      ✗ |                 ✓ |       ✓ | estate   |
+-| Architect      |    ✓ |         ✓ |      ✓ |      ✗ |                 ✓ |       ✗ | estate   |
+-| Operator       |    ✓ |         ✓ |      ✓ |      ✓ |                 ✓ |       ✗ | estate   |
+-| Auditor        |    ✓ |         ✗ |      ✗ |      ✗ |                 ✗ |       ✗ | estate   |
+-| Supplier Admin |    ✓ |   limited |limited |      ✗ |           limited |       ✗ | own only |
++| Persona        | Read | Provision | Rotate | Rewrap | Destroy request | Approve | Reconcile | Tenant   |
++| -------------- | ---: | --------: | -----: | -----: | ---------------: | ------: | --------: | -------- |
++| CISO           |    ✓ |         ✗ |      ✗ |      ✗ |                 ✓ |       ✓ |         ✗ | estate   |
++| Architect      |    ✓ |         ✓ |      ✓ |      ✗ |                 ✓ |       ✗ |         ✓ | estate   |
++| Operator       |    ✓ |         ✓ |      ✓ |      ✓ |                 ✓ |       ✗ |         ✓ | estate   |
++| Auditor        |    ✓ |         ✗ |      ✗ |      ✗ |                 ✗ |       ✗ |         ✗ | estate   |
++| Supplier Admin |    ✓ |   limited |limited |      ✗ |           limited |       ✗ |         ✗ | own only |
++
++`Reconcile` (Prompt 20) shares its row with `Rotate` for every persona —
++correcting drift back to a declared policy is operationally equivalent to
++a rotate-class action.
++
++Since Prompt 27, `authorize()` also takes an optional `env`/`team`
++dimension: four of these roles (`ciso`, `architect`, `operator`,
++`auditor`) can additionally be granted *scoped* — narrowed to one
++environment or team rather than estate-wide — via LDAP/Keycloak groups
++shaped `arcanium-<role>:env:<x>` or `arcanium-<role>:team:<x>`. This
++table describes the estate-wide grant; see
++[multitenancy.md](multitenancy.md) for the scoped-grant model, and
++[external-integration.md](external-integration.md) for the separate
++service-account (Bearer token) identity Prompt 28 added alongside human
++OIDC sessions.
+ 
+ Wiring this in found and fixed two pre-existing gaps, not just formalised
+ existing behavior:
+@@ -182,9 +197,13 @@ Present on every response, both API (`middleware/securityHeaders.js`) and UI
+ 
+ This prompt does not finish because OIDC login works. It finishes when
+ [scenarios/11_security_foundation/test_negative_auth.sh](../scenarios/11_security_foundation/test_negative_auth.sh)
+-proves all 13 hostile assertions from `input/35` — anonymous access,
++proves its hostile assertions from `input/35` — anonymous access,
+ role-mismatched mutations, cross-tenant reads, forged/expired sessions, and
+-a rejected OIDC callback under a wrong state/issuer/audience. See the
++a rejected OIDC callback under a wrong state/issuer/audience. The suite has
++grown well past its original 13 as later prompts added their own
++authorization surface to prove against (29 assertions as of Prompt 28) —
++run it and read its own output for the current count rather than trusting
++a number in this document. See the
+ Prompt 18 execution log for the actual, current result of that run — this
+ document describes the design, the log records what was proven.
+ 
+diff --git a/skills-lock.json b/skills-lock.json
+index 8a78d5d..76bb8f6 100644
+--- a/skills-lock.json
++++ b/skills-lock.json
+@@ -6,6 +6,12 @@
+       "sourceType": "github",
+       "skillPath": "skills/taste-skill/SKILL.md",
+       "computedHash": "6d838b246d0e35d0b53f4f23f98ba7a1dd561937e64f7d0c7553b0928e376c3e"
++    },
++    "no-ai-slop": {
++      "source": "petergyang/no-ai-slop",
++      "sourceType": "github",
++      "skillPath": "skills/no-ai-slop/SKILL.md",
++      "computedHash": "77d287e3c8e09874e144ee35f6fb0ee1adcf609012c7c3273e9c8fe2054ce5af"
+     }
+   }
+ }

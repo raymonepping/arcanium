@@ -43,14 +43,18 @@ arcanium/
 │   ├── vault/                 Seal provider and Raft cluster
 │   ├── infra/                 PostgreSQL and Adminer
 │   ├── hsm/                   PKCS#11 proxy and HSM Vault
+│   ├── identity/              Keycloak (OIDC broker) and OpenLDAP
 │   ├── workloads/             Demonstration clients
 │   ├── observability/         Optional Prometheus / Grafana / OTel
 │   └── kms-sim/               Optional emulated cloud KMS
 ├── terraform/                 Baseline and demonstration desired state
+│   └── arcanium-provider/     terraform-provider-arcanium skeleton (Go, unpublished)
 ├── workloads/                 Transit, signing, PKI, supplier and KMIP clients
 ├── scenarios/                 Operational demonstration scripts
 ├── scripts/                   Bootstrap, builds and diagnostics
 ├── docs/                      This documentation set
+│   ├── frontend/              Frontend design-toolchain/quality-gate reports + config/DESIGN.md
+│   └── writing/               Documentation style-toolchain/quality-gate reports + config/STYLE.md
 ├── input/                     Design source material
 ├── prompts/                   Implementation briefs and history
 ├── vault-1/ … vault-3/        Main cluster configuration

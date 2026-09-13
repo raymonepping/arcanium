@@ -51,6 +51,19 @@ When a level is capped, `levelCapReason` names the specific blocking control(s) 
 | `NEG-AUTHZ-01` | The hostile negative-authorization test suite last passed | Level 3 | `scenario_runs` (written by `scenarios/11_security_foundation/test_negative_auth.sh` on every run, within a 7-day freshness TTL) |
 | `AUTO-01` | Rotation-from-automation is enforced by a Sentinel EGP | Level 4 | Live `vault LIST sys/policies/egp`; `N/A` if Sentinel isn't in the Vault license |
 | `GOV-01` | Four-eyes governance (Control Group approval) is actively exercised | Level 5 | `approval_requests.status`/`.accessor` |
+| `KML-DESTR-01` | Active keys must not exceed their declared expiry date | Not level-gated — `mandatory=true`, dimension "Key Lifecycle Hygiene" | `desired_state` rows with `requirement = 'expiry_date'` (Prompt 28) |
+| `KML-OFFBOARD-01` | Decommissioned applications must have all keys destroyed within 30 days | Not level-gated — `mandatory=false`, dimension "Governance Adoption" | `applications.offboarding_initiated_at`/`.offboarded_at` (Prompt 28) |
+
+`KML-DESTR-01` and `KML-OFFBOARD-01` follow the exact same
+UNKNOWN-until-real-data discipline as every control above — neither
+reports `PASS` until at least one `expiry_date` desired-state row or one
+real offboarding has actually been exercised. Unlike the controls in the
+table above, **neither is in `MANDATORY_CONTROLS_PER_LEVEL`** — both are
+assessed and shown in the report (and `KML-DESTR-01`'s own `mandatory`
+column is `true`, meaning it must eventually be addressed), but neither
+one currently caps the gated 0–5 level the way `KEY-INV-01` through
+`GOV-01` do. See [external-integration.md](external-integration.md) for
+the workflows these two controls assess.
 
 Every assessment is persisted as a new `control_assessments` row (an append-only evidence log, same discipline as `reconciliation_runs`) with `evidence_refs` pointing at what was actually read — a reconciliation run id, a Vault list method, a scenario run timestamp. Nothing is inferred from a database row simply existing.
 
