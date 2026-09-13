@@ -1,0 +1,687 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 580f48a..29724ac 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -62,6 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+   destroyed two real, still-in-use keys during this same hardening
+   pass. Shared OIDC-login helper (`scenarios/lib/oidc_login.sh`)
+   replacing three independently-patched inline copies.
++- Vault Agent adoption (Prompt 30): a real HashiCorp Vault Agent sidecar
++  (`arcanium-vault-agent`) now owns AppRole auto-auth and dynamic
++  database-credential rendering for the `arcanium-api` identity,
++  replacing the hand-rolled login/retry loops Prompt 29 had to patch.
++  `arcanium-api`/`arcanium-worker` read a token and a live credential
++  from Agent's rendered files (shared, read-only volume) instead of
++  authenticating themselves; every direct Vault call they still make on
++  their own behalf (Transit, PKI, Control Group) is unchanged. Proven
++  live: a real `vault-1` outage during Agent's own re-auth attempt
++  recovered fully automatically (Agent's own exponential backoff,
++  visible in its logs), the running `arcanium-api` process picked up
++  the new token and rotated its database pool via a file watcher, with
++  zero application-level retry code involved and the container never
++  restarted.
+ 
+ - Three-node Vault Raft cluster with a Transit seal provider (`vault-s`) and a
+   separate `+ent.hsm` instance (`vault-hsm`) backed by SoftHSM over a PKCS#11
+diff --git a/arcanium/api/src/config.js b/arcanium/api/src/config.js
+index 7ad9b95..a347283 100644
+--- a/arcanium/api/src/config.js
++++ b/arcanium/api/src/config.js
+@@ -20,8 +20,16 @@ const config = {
+   vault: {
+     addr: optional("VAULT_ADDR", "https://vault-1:8200").replace(/\/$/, ""),
+     cacert: required("VAULT_CACERT"),
+-    roleId: required("VAULT_ROLE_ID"),
+-    secretId: required("VAULT_SECRET_ID"),
++    // Prompt 30 — this process no longer performs its own AppRole login;
++    // arcanium-vault-agent owns that (auto-auth) and renders a token +
++    // dynamic DB credential to agentSecretsDir below. VAULT_ROLE_ID/
++    // VAULT_SECRET_ID are no longer read here — they're consumed directly
++    // by the vault-agent container's own entrypoint
++    // (compose/arcanium/vault-agent/entrypoint.sh), which still sources
++    // them from the exact same ARCANIUM_VAULT_ROLE_ID/
++    // ARCANIUM_VAULT_SECRET_ID .env values as before (no new credential
++    // issuance path — see that entrypoint's own header comment).
++    agentSecretsDir: optional("VAULT_AGENT_SECRETS_DIR", "/vault/secrets"),
+     // Prompt 15.6 — "sync" runs the provisioner in the request; "queue" enqueues
+     // a pending job for arcanium-worker to execute.
+     provisionMode: optional("PROVISION_MODE", "sync"),
+diff --git a/arcanium/api/src/routes/health.js b/arcanium/api/src/routes/health.js
+index c5dcba8..4f56b9f 100644
+--- a/arcanium/api/src/routes/health.js
++++ b/arcanium/api/src/routes/health.js
+@@ -31,20 +31,26 @@ healthRouter.get("/ready", async (_req, res) => {
+       .status(503)
+       .json({ status: "unavailable", reason: "vault not authenticated" });
+   }
+-  // Prompt 29 — catch a wedged rotation loop BEFORE the credential actually
+-  // expires, not only after ping() starts failing. lastDbRotationError set
+-  // while dbCredsExpiry is imminent means the retry loop is actively
+-  // struggling (found live: previously this had no retry at all and simply
+-  // stopped, so this signal never existed to check).
++  // Prompt 29 — catch a wedged rotation BEFORE the credential actually
++  // expires, not only after ping() starts failing. Prompt 30: under
++  // Vault-Agent-managed rotation, "expiry imminent" is sufficient on its
++  // own — arcanium-vault-agent's own auth/render retry state is not
++  // observable from this process (by design, see vault.js's own header),
++  // so requiring a paired lastDbRotationError here (Prompt 29's original
++  // condition) would never fire under this architecture even when
++  // genuinely stale. If Agent is doing its job the file refreshes well
++  // before expiry; imminent expiry alone already means it hasn't.
+   const expirySoon =
+     vaultState.dbCredsExpiry &&
+     new Date(vaultState.dbCredsExpiry).getTime() - Date.now() < 60_000;
+-  if (expirySoon && vaultState.lastDbRotationError) {
++  if (expirySoon) {
+     return res.status(503).json({
+       status: "unavailable",
+-      reason: "db credential rotation retrying, expires soon",
++      reason: "db credential expires soon with no fresher render observed",
+       dbCredsExpiry: vaultState.dbCredsExpiry,
+-      lastDbRotationError: vaultState.lastDbRotationError,
++      ...(vaultState.lastDbRotationError
++        ? { lastDbRotationError: vaultState.lastDbRotationError }
++        : {}),
+     });
+   }
+   try {
+@@ -83,6 +89,10 @@ healthRouter.get("/", async (_req, res) => {
+       reachable: true, // We can't easily probe without a token; authenticated implies reachable
+       authenticated: vaultState.authenticated,
+       tokenExpiry: vaultState.tokenExpiry,
++      // Prompt 30 — makes the Vault Agent architecture change visible in
++      // this response itself, not silently identical-looking JSON from a
++      // totally different underlying mechanism.
++      agentManaged: vaultState.agentManaged ?? false,
+       lastTokenRefreshAt: vaultState.lastTokenRefreshAt,
+       ...(vaultState.lastTokenRefreshError
+         ? { lastTokenRefreshError: vaultState.lastTokenRefreshError }
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index ed0bd12..4b74567 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -1,8 +1,21 @@
+ // vault.js — Vault API client.
+-// Handles AppRole login, token refresh, and dynamic DB credential rotation.
+-// Uses Node 22 native https module — no SDK dependency.
+-
+-import { readFileSync } from "node:fs";
++//
++// Prompt 30 — AppRole auto-auth and dynamic-DB-credential rotation are no
++// longer this file's problem. arcanium-vault-agent (compose/arcanium/
++// vault-agent/) owns both: it authenticates on its own schedule/retry
++// logic (HashiCorp's own, not ours) and renders a current token +
++// database/creds/arcanium-api-role credential to a shared volume. This
++// file just reads what Agent already wrote, and reacts when those files
++// change. Prompt 29 hand-rolled a retry-with-backoff fix for the exact
++// failure this replaces (a dead-end retry chain that silently killed
++// rotation) — this prompt removes the need for this project to own that
++// correctness problem at all.
++//
++// Every direct Vault API call this file still makes on the app's own
++// behalf (Transit, PKI, Control Group, vault-hsm) is UNCHANGED — Agent is
++// not a proxy for those, it only owns auth + the one credential above.
++
++import { readFileSync, watch } from "node:fs";
+ import { request as httpsRequest } from "node:https";
+ import config from "./config.js";
+ 
+@@ -85,158 +98,139 @@ export { vaultRequest };
+ 
+ // ── State ──────────────────────────────────────────────────────────────────
+ const state = {
+-  authenticated: false,
+   token: null,
+-  tokenExpiry: null,
+   dbCreds: null,
+   dbCredsExpiry: null,
+-  loginAttempts: 0,
+-  refreshTimer: null,
+-  dbRotateTimer: null,
+-  // Prompt 29 — found live: neither of these was ever set, because neither
+-  // scheduleTokenRefresh nor scheduleDbCredsRotation retried after a
+-  // failure (see below) — there was nothing to observe. A stack that has
+-  // been silently un-rotating for hours looks identical, from state alone,
+-  // to one that has never rotated at all without these.
++  // Prompt 30 — "authenticated" now means "we have successfully read a
++  // non-empty token from Agent's sink file at least once," not "this
++  // process itself completed an AppRole login." tokenExpiry/loginAttempts
++  // are no longer knowable from this file (Agent never writes lease
++  // metadata into the sink file, only the raw token) — left as documented,
++  // honest nulls rather than fabricated.
++  authenticated: false,
++  tokenExpiry: null,
++  loginAttempts: null,
++  // Last time each watched file was successfully read+parsed (renamed
++  // conceptually from Prompt 29's "last rotation succeeded" — same shape,
++  // same health.js consumer, now observing Agent's writes instead of our
++  // own rotation loop). *Error fields are for OUR read/parse failures
++  // (a malformed or transiently-unreadable file) — Agent's own internal
++  // auth/render retry state is not observable from here, by design; that
++  // is the whole point of moving this responsibility to Agent.
+   lastDbRotationAt: null,
+   lastDbRotationError: null,
+   lastTokenRefreshAt: null,
+   lastTokenRefreshError: null,
+ };
+ 
+-// Prompt 29 — bounded backoff for both retry loops below. Capped, not
+-// unbounded-immediate: a credential source down for a few minutes (a Vault
+-// blip, a network hiccup) should be retried promptly; one down for longer
+-// is a real outage and hammering it every 5s adds no value.
+-const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000];
+-function retryDelayMs(attempt) {
+-  return RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
++const TOKEN_PATH = `${config.vault.agentSecretsDir}/token`;
++const DB_CREDS_PATH = `${config.vault.agentSecretsDir}/db-creds.json`;
++
++function readTokenFile() {
++  const text = readFileSync(TOKEN_PATH, "utf8").trim();
++  if (!text) throw new Error(`${TOKEN_PATH} is empty`);
++  return text;
++}
++
++function readDbCredsFile() {
++  const text = readFileSync(DB_CREDS_PATH, "utf8").trim();
++  if (!text) throw new Error(`${DB_CREDS_PATH} is empty`);
++  const parsed = JSON.parse(text); // throws on a partial/mid-write read — caller retries
++  if (!parsed.username || !parsed.password) {
++    throw new Error(`${DB_CREDS_PATH} missing username/password`);
++  }
++  return parsed;
+ }
+ 
+-// ── AppRole login with exponential backoff ─────────────────────────────────
+-async function login() {
+-  const delays = [1000, 2000, 4000, 8000, 16000];
++// Bounded wait for Agent's first successful auth/render on container
++// startup — Agent may still be authenticating for the first time when
++// this process starts. This is a one-time startup gate, not an ongoing
++// background loop, so it cannot silently die the way Prompt 29's
++// schedulers could: init() either succeeds within the deadline or throws,
++// and index.js/worker.js already treat init() throwing as a fatal startup
++// error (unchanged from before this prompt).
++async function waitForFile(path, label, timeoutMs = 30_000) {
++  const deadline = Date.now() + timeoutMs;
+   let lastErr;
+-  for (let i = 0; i < delays.length; i++) {
+-    state.loginAttempts = i + 1;
++  while (Date.now() < deadline) {
+     try {
+-      const res = await vaultRequest("POST", "auth/approle/login", {
+-        role_id: config.vault.roleId,
+-        secret_id: config.vault.secretId,
+-      });
+-      const { client_token, lease_duration } = res.auth;
+-      state.token = client_token;
+-      state.tokenExpiry = new Date(Date.now() + lease_duration * 1000);
+-      state.authenticated = true;
+-      console.log(
+-        `[vault] authenticated (ttl=${lease_duration}s attempt=${i + 1})`,
+-      );
+-      scheduleTokenRefresh(lease_duration);
++      readFileSync(path, "utf8");
+       return;
+     } catch (err) {
+       lastErr = err;
+-      console.error(`[vault] login attempt ${i + 1} failed: ${err.message}`);
+-      if (i < delays.length - 1) await sleep(delays[i]);
++      await sleep(500);
+     }
+   }
+   throw new Error(
+-    `[vault] login exhausted after ${delays.length} attempts: ${lastErr.message}`,
++    `[vault] timed out waiting for ${label} (${path}) after ${timeoutMs}ms — is arcanium-vault-agent running and authenticated? last error: ${lastErr?.message}`,
+   );
+ }
+ 
+-// Prompt 29 — retryAttempt tracks a failure streak for THIS refresh cycle
+-// only; a successful login() call schedules the next normal-cadence
+-// refresh itself (via its own call to scheduleTokenRefresh inside login()),
+-// which resets the streak back to 0. Previously, a failed refresh set
+-// authenticated=false and simply stopped — found live as the same
+-// dead-end pattern as scheduleDbCredsRotation below, just never actually
+-// triggered for the token (the DB credential hit it first).
+-function scheduleTokenRefresh(ttlSeconds, retryAttempt = 0) {
+-  clearTimeout(state.refreshTimer);
+-  const delay =
+-    retryAttempt === 0
+-      ? Math.floor(ttlSeconds * 0.8) * 1000
+-      : retryDelayMs(retryAttempt);
+-  state.refreshTimer = setTimeout(async () => {
+-    console.log(`[vault] refreshing token... (attempt ${retryAttempt + 1})`);
+-    try {
+-      await login();
+-      state.lastTokenRefreshAt = new Date();
+-      state.lastTokenRefreshError = null;
+-    } catch (err) {
+-      state.lastTokenRefreshError = { at: new Date(), message: err.message };
+-      console.error(
+-        `[vault] token refresh failed (attempt ${retryAttempt + 1}): ${err.message} — retrying`,
+-      );
+-      state.authenticated = false;
+-      scheduleTokenRefresh(ttlSeconds, retryAttempt + 1);
+-    }
+-  }, delay);
+-  state.refreshTimer.unref();
+-}
+-
+-// ── Dynamic DB credentials ─────────────────────────────────────────────────
+-async function fetchDbCredentials() {
+-  const res = await vaultRequest(
+-    "GET",
+-    "database/creds/arcanium-api-role",
+-    null,
+-    state.token,
+-  );
+-  const { username, password } = res.data;
+-  const leaseDuration = res.lease_duration;
+-  state.dbCreds = { username, password };
+-  state.dbCredsExpiry = new Date(Date.now() + leaseDuration * 1000);
++// ── Public API ─────────────────────────────────────────────────────────────
++export async function init() {
++  await waitForFile(TOKEN_PATH, "Agent token sink");
++  await waitForFile(DB_CREDS_PATH, "Agent DB-credential render");
++
++  state.token = readTokenFile();
++  state.authenticated = true;
++  state.lastTokenRefreshAt = new Date();
++  console.log("[vault] token read from arcanium-vault-agent sink");
++
++  const creds = readDbCredsFile();
++  state.dbCreds = { username: creds.username, password: creds.password };
++  state.dbCredsExpiry = new Date(Date.now() + creds.lease_duration * 1000);
++  state.lastDbRotationAt = new Date();
+   console.log(
+-    `[vault] db credentials obtained (username=${username} ttl=${leaseDuration}s)`,
++    `[vault] db credentials read from arcanium-vault-agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
+   );
+-  scheduleDbCredsRotation(leaseDuration);
+-  return { username, password, lease_duration: leaseDuration };
+-}
+ 
+-// Prompt 29 — found live: a single failed rotation attempt (here, a Vault
+-// GET that hit the 5s armTimeout above) left this loop permanently dead —
+-// the only place that ever called scheduleDbCredsRotation again was the
+-// success path of fetchDbCredentials() itself, which is exactly what had
+-// just failed. The credential then expired on Postgres's own VALID UNTIL
+-// clock with no further attempt ever made, ~13 minutes before this was
+-// diagnosed. retryAttempt closes that: a failure reschedules itself
+-// directly, at bounded backoff, instead of relying on a success that
+-// didn't happen.
+-function scheduleDbCredsRotation(leaseDuration, retryAttempt = 0) {
+-  clearTimeout(state.dbRotateTimer);
+-  const delay =
+-    retryAttempt === 0
+-      ? Math.floor(leaseDuration * 0.75) * 1000
+-      : retryDelayMs(retryAttempt);
+-  state.dbRotateTimer = setTimeout(async () => {
+-    console.log(
+-      `[vault] rotating db credentials... (attempt ${retryAttempt + 1})`,
+-    );
++  // fs.watch's "rename" vs "change" event semantics differ across
++  // filesystems/bind-mount types — Agent renders atomically via a
++  // temp-file-then-rename, which some drivers surface as "rename," not
++  // "change." React to either; re-reading an unchanged file is a harmless
++  // no-op, and missing a real change is the failure mode actually worth
++  // avoiding here.
++  watch(TOKEN_PATH, () => {
+     try {
+-      // fetchDbCredentials() schedules the NEXT normal-cadence rotation
+-      // itself on success (retryAttempt resets to 0) — see its own body.
+-      const creds = await fetchDbCredentials();
+-      const { rotateCreds } = await import("./db.js");
+-      await rotateCreds(creds.username, creds.password);
+-      state.lastDbRotationAt = new Date();
+-      state.lastDbRotationError = null;
+-      console.log("[vault] db credentials rotated successfully");
++      const next = readTokenFile();
++      if (next !== state.token) {
++        state.token = next;
++        state.authenticated = true;
++        state.lastTokenRefreshAt = new Date();
++        state.lastTokenRefreshError = null;
++        console.log("[vault] token file changed — picked up new token");
++      }
+     } catch (err) {
+-      state.lastDbRotationError = { at: new Date(), message: err.message };
+-      console.error(
+-        `[vault] db creds rotation failed (attempt ${retryAttempt + 1}): ${err.message} — retrying`,
+-      );
+-      scheduleDbCredsRotation(leaseDuration, retryAttempt + 1);
++      // Transient: Agent may still be mid-write. Do not flip authenticated
++      // to false on a single failed read — the last good in-memory token
++      // is still valid until proven otherwise by an actual Vault 403.
++      state.lastTokenRefreshError = { at: new Date(), message: err.message };
++      console.error(`[vault] token file re-read failed: ${err.message}`);
+     }
+-  }, delay);
+-  state.dbRotateTimer.unref();
+-}
++  });
+ 
+-// ── Public API ─────────────────────────────────────────────────────────────
+-export async function init() {
+-  await login();
+-  await fetchDbCredentials();
++  watch(DB_CREDS_PATH, () => {
++    (async () => {
++      try {
++        const next = readDbCredsFile();
++        if (next.username === state.dbCreds?.username) return; // same render, no-op
++        const { rotateCreds } = await import("./db.js");
++        await rotateCreds(next.username, next.password);
++        state.dbCreds = { username: next.username, password: next.password };
++        state.dbCredsExpiry = new Date(
++          Date.now() + next.lease_duration * 1000,
++        );
++        state.lastDbRotationAt = new Date();
++        state.lastDbRotationError = null;
++        console.log(
++          `[vault] db-creds file changed — pool rotated (user=${next.username})`,
++        );
++      } catch (err) {
++        state.lastDbRotationError = { at: new Date(), message: err.message };
++        console.error(`[vault] db-creds file re-read/rotate failed: ${err.message}`);
++      }
++    })();
++  });
+ }
+ 
+ export function getDbCredentials() {
+@@ -249,13 +243,14 @@ export function getStatus() {
+     tokenExpiry: state.tokenExpiry,
+     dbCredsExpiry: state.dbCredsExpiry,
+     loginAttempts: state.loginAttempts,
+-    // Prompt 29 — the observable half of the retry-chain fix above: a
+-    // rotation that is retrying (not dead) is now distinguishable from one
+-    // that succeeded, and from one that never ran at all (both null).
+     lastDbRotationAt: state.lastDbRotationAt,
+     lastDbRotationError: state.lastDbRotationError,
+     lastTokenRefreshAt: state.lastTokenRefreshAt,
+     lastTokenRefreshError: state.lastTokenRefreshError,
++    // Prompt 30 — makes the architecture change visible in /health output
++    // itself, not silently identical-looking JSON from a totally different
++    // mechanism underneath.
++    agentManaged: true,
+   };
+ }
+ 
+diff --git a/compose/arcanium/compose.yaml b/compose/arcanium/compose.yaml
+index 758ccb4..5facc2e 100644
+--- a/compose/arcanium/compose.yaml
++++ b/compose/arcanium/compose.yaml
+@@ -44,8 +44,10 @@ services:
+     environment:
+       VAULT_ADDR: "https://vault-1:8200"
+       VAULT_CACERT: "/vault/tls/ca-chain.pem"
+-      VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
+-      VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
++      # Prompt 30 — VAULT_ROLE_ID/VAULT_SECRET_ID removed: this process no
++      # longer logs in itself. arcanium-vault-agent (below) does, and
++      # renders a token + DB credential into vault-agent-secrets, mounted
++      # read-only here.
+       # Prompt 14.2 — provisioner token for cross-namespace writes
+       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
+       # Prompt 18 — human auth via OIDC (default off)
+@@ -78,10 +80,14 @@ services:
+       PORT: "3001"
+     volumes:
+       - ../../vault-tls:/vault/tls:ro
++      - vault-agent-secrets:/vault/secrets:ro
+     networks:
+       - arcanium-control
+       - arcanium-vault-internal
+     restart: unless-stopped
++    depends_on:
++      arcanium-vault-agent:
++        condition: service_healthy
+     # Prompt 29 — /health/live always returns 200 (process-up only) and
+     # never noticed a live incident where the DB credential rotation loop
+     # died silently and every authenticated request failed for 13+ minutes
+@@ -118,8 +124,10 @@ services:
+     environment:
+       VAULT_ADDR: "https://vault-1:8200"
+       VAULT_CACERT: "/vault/tls/ca-chain.pem"
+-      VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
+-      VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
++      # Prompt 30 — same as arcanium-api: no longer logs in itself, reads
++      # the shared Agent-rendered token/DB credential (same identity,
++      # same shared volume — this is the same image/code, just a dev-mode
++      # invocation, so it needed the same fix or it would simply not start).
+       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
+       ARCANIUM_AUTH_ENABLED: "${ARCANIUM_AUTH_ENABLED:-false}"
+       ARCANIUM_DEMO_PERSONA_SWITCH: "${ARCANIUM_DEMO_PERSONA_SWITCH:-false}"
+@@ -142,9 +150,13 @@ services:
+       PORT: "3001"
+     volumes:
+       - ../../vault-tls:/vault/tls:ro
++      - vault-agent-secrets:/vault/secrets:ro
+     networks:
+       - arcanium-control
+       - arcanium-vault-internal
++    depends_on:
++      arcanium-vault-agent:
++        condition: service_healthy
+     # Prompt 29 — /health/live always returns 200 (process-up only) and
+     # never noticed a live incident where the DB credential rotation loop
+     # died silently and every authenticated request failed for 13+ minutes
+@@ -176,8 +188,9 @@ services:
+     environment:
+       VAULT_ADDR: "https://vault-1:8200"
+       VAULT_CACERT: "/vault/tls/ca-chain.pem"
+-      VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
+-      VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
++      # Prompt 30 — see arcanium-api's own comment above: this process no
++      # longer logs in itself either; it reads the same Agent-rendered
++      # token + DB credential from the shared, read-only secrets volume.
+       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
+       VAULT_HSM_ADDR: "${VAULT_HSM_ADDR:-https://vault-hsm:8200}"
+       POSTGRES_HOST: "postgres"
+@@ -194,6 +207,7 @@ services:
+     volumes:
+       - ../../vault-tls:/vault/tls:ro
+       - vault-1-audit:/vault/audit:ro
++      - vault-agent-secrets:/vault/secrets:ro
+     networks:
+       - arcanium-control
+       - arcanium-vault-internal
+@@ -207,6 +221,51 @@ services:
+     depends_on:
+       arcanium-api:
+         condition: service_healthy
++      arcanium-vault-agent:
++        condition: service_healthy
++
++  # Prompt 30 — owns AppRole auto-auth + dynamic DB-credential rendering
++  # for the arcanium-api identity, replacing vault.js's own hand-rolled
++  # login()/rotation retry loops (Prompt 29 hardened those; this prompt
++  # removes the need for this project to own that problem at all). Proven
++  # standalone (real token + real DB creds rendered and verified) before
++  # arcanium-api/arcanium-worker were ever pointed at it — see this
++  # prompt's own Design rules.
++  arcanium-vault-agent:
++    image: docker.io/hashicorp/vault-enterprise:2.1.0-ent
++    container_name: arcanium-vault-agent
++    hostname: arcanium-vault-agent
++    # Prompt 30 — NOT "100:1000" (the vault-1/2/3/vault-s convention):
++    # this agent's rendered token file needs to be read cross-container by
++    # arcanium-api/worker, which run as 1000:1000. The sink stanza's own
++    # `mode` config did not reliably grant group-read (see config.hcl's
++    # own comment) — matching the UID directly sidesteps that entirely,
++    # since the file's default owner-only 0600 then already covers it.
++    user: "1000:1000"
++    cap_drop: [ALL]
++    security_opt: ["no-new-privileges:true"]
++    read_only: true
++    tmpfs: [/tmp, /home/vault]
++    entrypoint: ["/vault/agent/entrypoint.sh"]
++    environment:
++      VAULT_ADDR: "https://vault-1:8200"
++      VAULT_CACERT: "/vault/tls/ca-chain.pem"
++      ARCANIUM_VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
++      ARCANIUM_VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
++    volumes:
++      - ../../vault-tls:/vault/tls:ro
++      - ./vault-agent/config.hcl:/vault/agent/config.hcl:ro
++      - ./vault-agent/entrypoint.sh:/vault/agent/entrypoint.sh:ro
++      - vault-agent-secrets:/vault/secrets
++    networks:
++      - arcanium-vault-internal
++    restart: unless-stopped
++    healthcheck:
++      test: ["CMD-SHELL", "test -s /vault/secrets/token && test -s /vault/secrets/db-creds.json"]
++      interval: 15s
++      timeout: 5s
++      start_period: 30s
++      retries: 3
+ 
+ networks:
+   arcanium-control:
+@@ -221,3 +280,7 @@ volumes:
+   vault-1-audit:
+     name: arcanium-vault_vault-1-audit
+     external: true
++  # Prompt 30 — owned by THIS compose project (not external): shared
++  # between arcanium-vault-agent (writer) and arcanium-api/arcanium-worker
++  # (read-only consumers, Deliverable 3).
++  vault-agent-secrets: {}
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index d20e72c..4a2a655 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -318,22 +318,14 @@ fi
+ echo "== Prompt 29 — Resilience Hardening =="
+ echo
+ 
+-# ── Prompt 29, Deliverable 1 — both vault.js retry loops must reschedule
+-# themselves on failure, not just log and stop. Found live: neither did,
+-# and a single transient Vault timeout permanently killed DB-credential
+-# rotation for the rest of the process's life. Static check: each
+-# function's own catch block must call itself again.
+-for fn in scheduleDbCredsRotation scheduleTokenRefresh; do
+-  BODY=$(awk "/^function $fn\(/,/^}/" arcanium/api/src/vault.js)
+-  # The declaration line itself matches "$fn(" once (as "function $fn(...");
+-  # a genuine self-reschedule inside the catch path is a second occurrence.
+-  HITS=$(echo "$BODY" | grep -c "$fn(")
+-  if [ "$HITS" -ge 2 ]; then
+-    ok "$fn's body calls itself again (no dead-end retry chain)"
+-  else
+-    bad "$fn's body never calls itself again — a single failure would permanently stop this loop"
+-  fi
+-done
++# ── Prompt 29, Deliverable 1 (superseded by Prompt 30, not regressed) —
++# both vault.js retry loops used to have to reschedule themselves on
++# failure, not just log and stop (found live: neither did, and a single
++# transient Vault timeout permanently killed DB-credential rotation).
++# Prompt 30 deleted both functions entirely — arcanium-vault-agent now
++# owns that retry problem — so this check is retired here and replaced by
++# Prompt 30's own "no scheduler at all" assertion below, not left in place
++# to fail forever against code that was deliberately removed.
+ 
+ # ── Deliverable 2 — container healthchecks must target /health/ready
+ # (DB-credential-aware), not /health/live (always 200, process-up only).
+@@ -419,6 +411,67 @@ echo "    keys on every CI run is exactly the kind of risk this prompt exists to
+ echo "    and the manual proof already showed both the skip path and the execute path"
+ echo "    behaving correctly against real, disposable keys)."
+ 
++echo "== Prompt 30 — Vault Agent Adoption =="
++echo
++
++# ── Deliverable 5 — vault.js must contain no setTimeout-based retry/
++# rotation scheduler for the token or DB credential anymore — Prompt 29's
++# hand-rolled schedulers are GONE, not just unused, replaced by
++# arcanium-vault-agent's own auth/render retry (HashiCorp's problem now).
++if grep -qE "scheduleTokenRefresh|scheduleDbCredsRotation" arcanium/api/src/vault.js; then
++  bad "vault.js still contains the old setTimeout-based retry scheduler (scheduleTokenRefresh/scheduleDbCredsRotation) — should be fully removed, not just unused"
++else
++  ok "vault.js contains no setTimeout-based retry/rotation scheduler for the token or DB credential"
++fi
++
++# ── arcanium-api/arcanium-worker/arcanium-api-dev no longer set
++# VAULT_ROLE_ID/VAULT_SECRET_ID directly, and mount the shared Agent
++# secrets volume read-only.
++COMPOSE_FILE="compose/arcanium/compose.yaml"
++# Anchored on the exact key (leading whitespace, no preceding word char) —
++# ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID (arcanium-vault-agent's
++# own env, a substring match away from these) are legitimate and expected.
++if grep -qE '^\s*VAULT_ROLE_ID:|^\s*VAULT_SECRET_ID:' "$COMPOSE_FILE"; then
++  bad "compose/arcanium/compose.yaml still sets VAULT_ROLE_ID/VAULT_SECRET_ID directly on a service — should read from arcanium-vault-agent's rendered files instead"
++else
++  ok "no arcanium service sets VAULT_ROLE_ID/VAULT_SECRET_ID directly — all consume vault-agent-secrets"
++fi
++if grep -q "vault-agent-secrets:/vault/secrets:ro" "$COMPOSE_FILE"; then
++  ok "arcanium-api/arcanium-worker mount vault-agent-secrets read-only"
++else
++  bad "vault-agent-secrets read-only mount not found in compose/arcanium/compose.yaml"
++fi
++
++# ── arcanium-vault-agent's entrypoint never echoes the secret_id value
++# itself (only its assignment into a file) — a credential-in-logs check,
++# the same discipline every other secret-issuing script in this repo
++# already follows.
++ENTRYPOINT="compose/arcanium/vault-agent/entrypoint.sh"
++if [ -f "$ENTRYPOINT" ]; then
++  LEAK=$(grep -E 'echo.*\$ARCANIUM_VAULT_SECRET_ID\b' "$ENTRYPOINT" || true)
++  if [ -z "$LEAK" ]; then
++    ok "arcanium-vault-agent's entrypoint never echoes the secret_id value"
++  else
++    bad "entrypoint.sh appears to echo the secret_id value: $LEAK"
++  fi
++else
++  unk "vault-agent entrypoint check — $ENTRYPOINT not found"
++fi
++
++# ── GET /health reports vault.agentManaged: true — confirms the new
++# architecture is actually active, not silently still the old code path.
++if curl -fsS --max-time 5 http://localhost:3001/health >/tmp/arc30-health.$$ 2>/dev/null; then
++  AGENT_MANAGED=$(jq -r '.vault.agentManaged // false' /tmp/arc30-health.$$ 2>/dev/null)
++  if [ "$AGENT_MANAGED" = "true" ]; then
++    ok "GET /health reports vault.agentManaged: true"
++  else
++    bad "GET /health does not report vault.agentManaged: true (got: $AGENT_MANAGED)"
++  fi
++  rm -f /tmp/arc30-health.$$
++else
++  unk "vault.agentManaged live check — arcanium-api not reachable"
++fi
++
+ echo
+ TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+diff --git a/state/CURRENT b/state/CURRENT
+index bdd993b..1a92816 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-29-resilience-hardening
++state/baselines/2026-09-13_pre-prompt-30-vault-agent-adoption
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index 5d4c75e..a37c261 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -208,6 +208,24 @@ capture_arcanium() {
+       echo '{"status":"UNKNOWN","detail":"maturity endpoint did not respond"}' >"$d/api-smoke.json"
+   else
+     echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' >"$d/health.json"
++  fi
++
++  # Prompt 30 — Vault Agent's own rendered-file freshness. Never
++  # fabricated: UNKNOWN unless the container is actually running and both
++  # files are actually readable. mtime, not file content (the token/DB
++  # password are never captured here).
++  if running arcanium-vault-agent; then
++    local token_mtime creds_mtime
++    token_mtime=$(podman exec arcanium-vault-agent stat -c '%Y' /vault/secrets/token 2>/dev/null || echo "")
++    creds_mtime=$(podman exec arcanium-vault-agent stat -c '%Y' /vault/secrets/db-creds.json 2>/dev/null || echo "")
++    jq -n \
++      --arg tm "${token_mtime:-null}" --arg cm "${creds_mtime:-null}" \
++      '{
++        token_file: { present: ($tm != "null" and $tm != ""), mtime_epoch: (if $tm == "null" or $tm == "" then null else ($tm | tonumber) end) },
++        db_creds_file: { present: ($cm != "null" and $cm != ""), mtime_epoch: (if $cm == "null" or $cm == "" then null else ($cm | tonumber) end) }
++      }' >"$d/vault-agent.json"
++  else
++    jq -n '{status:"UNKNOWN", detail:"arcanium-vault-agent not running"}' >"$d/vault-agent.json"
+     echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' >"$d/api-smoke.json"
+   fi
+ 

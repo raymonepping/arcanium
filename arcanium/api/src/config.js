@@ -20,8 +20,16 @@ const config = {
   vault: {
     addr: optional("VAULT_ADDR", "https://vault-1:8200").replace(/\/$/, ""),
     cacert: required("VAULT_CACERT"),
-    roleId: required("VAULT_ROLE_ID"),
-    secretId: required("VAULT_SECRET_ID"),
+    // Prompt 30 — this process no longer performs its own AppRole login;
+    // arcanium-vault-agent owns that (auto-auth) and renders a token +
+    // dynamic DB credential to agentSecretsDir below. VAULT_ROLE_ID/
+    // VAULT_SECRET_ID are no longer read here — they're consumed directly
+    // by the vault-agent container's own entrypoint
+    // (compose/arcanium/vault-agent/entrypoint.sh), which still sources
+    // them from the exact same ARCANIUM_VAULT_ROLE_ID/
+    // ARCANIUM_VAULT_SECRET_ID .env values as before (no new credential
+    // issuance path — see that entrypoint's own header comment).
+    agentSecretsDir: optional("VAULT_AGENT_SECRETS_DIR", "/vault/secrets"),
     // Prompt 15.6 — "sync" runs the provisioner in the request; "queue" enqueues
     // a pending job for arcanium-worker to execute.
     provisionMode: optional("PROVISION_MODE", "sync"),

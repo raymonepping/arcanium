@@ -318,22 +318,14 @@ fi
 echo "== Prompt 29 — Resilience Hardening =="
 echo
 
-# ── Prompt 29, Deliverable 1 — both vault.js retry loops must reschedule
-# themselves on failure, not just log and stop. Found live: neither did,
-# and a single transient Vault timeout permanently killed DB-credential
-# rotation for the rest of the process's life. Static check: each
-# function's own catch block must call itself again.
-for fn in scheduleDbCredsRotation scheduleTokenRefresh; do
-  BODY=$(awk "/^function $fn\(/,/^}/" arcanium/api/src/vault.js)
-  # The declaration line itself matches "$fn(" once (as "function $fn(...");
-  # a genuine self-reschedule inside the catch path is a second occurrence.
-  HITS=$(echo "$BODY" | grep -c "$fn(")
-  if [ "$HITS" -ge 2 ]; then
-    ok "$fn's body calls itself again (no dead-end retry chain)"
-  else
-    bad "$fn's body never calls itself again — a single failure would permanently stop this loop"
-  fi
-done
+# ── Prompt 29, Deliverable 1 (superseded by Prompt 30, not regressed) —
+# both vault.js retry loops used to have to reschedule themselves on
+# failure, not just log and stop (found live: neither did, and a single
+# transient Vault timeout permanently killed DB-credential rotation).
+# Prompt 30 deleted both functions entirely — arcanium-vault-agent now
+# owns that retry problem — so this check is retired here and replaced by
+# Prompt 30's own "no scheduler at all" assertion below, not left in place
+# to fail forever against code that was deliberately removed.
 
 # ── Deliverable 2 — container healthchecks must target /health/ready
 # (DB-credential-aware), not /health/live (always 200, process-up only).
@@ -418,6 +410,67 @@ echo "    (not added as an automated fitness test — a test that itself destroy
 echo "    keys on every CI run is exactly the kind of risk this prompt exists to reduce,"
 echo "    and the manual proof already showed both the skip path and the execute path"
 echo "    behaving correctly against real, disposable keys)."
+
+echo "== Prompt 30 — Vault Agent Adoption =="
+echo
+
+# ── Deliverable 5 — vault.js must contain no setTimeout-based retry/
+# rotation scheduler for the token or DB credential anymore — Prompt 29's
+# hand-rolled schedulers are GONE, not just unused, replaced by
+# arcanium-vault-agent's own auth/render retry (HashiCorp's problem now).
+if grep -qE "scheduleTokenRefresh|scheduleDbCredsRotation" arcanium/api/src/vault.js; then
+  bad "vault.js still contains the old setTimeout-based retry scheduler (scheduleTokenRefresh/scheduleDbCredsRotation) — should be fully removed, not just unused"
+else
+  ok "vault.js contains no setTimeout-based retry/rotation scheduler for the token or DB credential"
+fi
+
+# ── arcanium-api/arcanium-worker/arcanium-api-dev no longer set
+# VAULT_ROLE_ID/VAULT_SECRET_ID directly, and mount the shared Agent
+# secrets volume read-only.
+COMPOSE_FILE="compose/arcanium/compose.yaml"
+# Anchored on the exact key (leading whitespace, no preceding word char) —
+# ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID (arcanium-vault-agent's
+# own env, a substring match away from these) are legitimate and expected.
+if grep -qE '^\s*VAULT_ROLE_ID:|^\s*VAULT_SECRET_ID:' "$COMPOSE_FILE"; then
+  bad "compose/arcanium/compose.yaml still sets VAULT_ROLE_ID/VAULT_SECRET_ID directly on a service — should read from arcanium-vault-agent's rendered files instead"
+else
+  ok "no arcanium service sets VAULT_ROLE_ID/VAULT_SECRET_ID directly — all consume vault-agent-secrets"
+fi
+if grep -q "vault-agent-secrets:/vault/secrets:ro" "$COMPOSE_FILE"; then
+  ok "arcanium-api/arcanium-worker mount vault-agent-secrets read-only"
+else
+  bad "vault-agent-secrets read-only mount not found in compose/arcanium/compose.yaml"
+fi
+
+# ── arcanium-vault-agent's entrypoint never echoes the secret_id value
+# itself (only its assignment into a file) — a credential-in-logs check,
+# the same discipline every other secret-issuing script in this repo
+# already follows.
+ENTRYPOINT="compose/arcanium/vault-agent/entrypoint.sh"
+if [ -f "$ENTRYPOINT" ]; then
+  LEAK=$(grep -E 'echo.*\$ARCANIUM_VAULT_SECRET_ID\b' "$ENTRYPOINT" || true)
+  if [ -z "$LEAK" ]; then
+    ok "arcanium-vault-agent's entrypoint never echoes the secret_id value"
+  else
+    bad "entrypoint.sh appears to echo the secret_id value: $LEAK"
+  fi
+else
+  unk "vault-agent entrypoint check — $ENTRYPOINT not found"
+fi
+
+# ── GET /health reports vault.agentManaged: true — confirms the new
+# architecture is actually active, not silently still the old code path.
+if curl -fsS --max-time 5 http://localhost:3001/health >/tmp/arc30-health.$$ 2>/dev/null; then
+  AGENT_MANAGED=$(jq -r '.vault.agentManaged // false' /tmp/arc30-health.$$ 2>/dev/null)
+  if [ "$AGENT_MANAGED" = "true" ]; then
+    ok "GET /health reports vault.agentManaged: true"
+  else
+    bad "GET /health does not report vault.agentManaged: true (got: $AGENT_MANAGED)"
+  fi
+  rm -f /tmp/arc30-health.$$
+else
+  unk "vault.agentManaged live check — arcanium-api not reachable"
+fi
 
 echo
 TOTAL=$((PASS + FAIL + UNKNOWN))

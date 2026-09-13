@@ -1,8 +1,21 @@
 // vault.js — Vault API client.
-// Handles AppRole login, token refresh, and dynamic DB credential rotation.
-// Uses Node 22 native https module — no SDK dependency.
+//
+// Prompt 30 — AppRole auto-auth and dynamic-DB-credential rotation are no
+// longer this file's problem. arcanium-vault-agent (compose/arcanium/
+// vault-agent/) owns both: it authenticates on its own schedule/retry
+// logic (HashiCorp's own, not ours) and renders a current token +
+// database/creds/arcanium-api-role credential to a shared volume. This
+// file just reads what Agent already wrote, and reacts when those files
+// change. Prompt 29 hand-rolled a retry-with-backoff fix for the exact
+// failure this replaces (a dead-end retry chain that silently killed
+// rotation) — this prompt removes the need for this project to own that
+// correctness problem at all.
+//
+// Every direct Vault API call this file still makes on the app's own
+// behalf (Transit, PKI, Control Group, vault-hsm) is UNCHANGED — Agent is
+// not a proxy for those, it only owns auth + the one credential above.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, watch } from "node:fs";
 import { request as httpsRequest } from "node:https";
 import config from "./config.js";
 
@@ -85,158 +98,139 @@ export { vaultRequest };
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
-  authenticated: false,
   token: null,
-  tokenExpiry: null,
   dbCreds: null,
   dbCredsExpiry: null,
-  loginAttempts: 0,
-  refreshTimer: null,
-  dbRotateTimer: null,
-  // Prompt 29 — found live: neither of these was ever set, because neither
-  // scheduleTokenRefresh nor scheduleDbCredsRotation retried after a
-  // failure (see below) — there was nothing to observe. A stack that has
-  // been silently un-rotating for hours looks identical, from state alone,
-  // to one that has never rotated at all without these.
+  // Prompt 30 — "authenticated" now means "we have successfully read a
+  // non-empty token from Agent's sink file at least once," not "this
+  // process itself completed an AppRole login." tokenExpiry/loginAttempts
+  // are no longer knowable from this file (Agent never writes lease
+  // metadata into the sink file, only the raw token) — left as documented,
+  // honest nulls rather than fabricated.
+  authenticated: false,
+  tokenExpiry: null,
+  loginAttempts: null,
+  // Last time each watched file was successfully read+parsed (renamed
+  // conceptually from Prompt 29's "last rotation succeeded" — same shape,
+  // same health.js consumer, now observing Agent's writes instead of our
+  // own rotation loop). *Error fields are for OUR read/parse failures
+  // (a malformed or transiently-unreadable file) — Agent's own internal
+  // auth/render retry state is not observable from here, by design; that
+  // is the whole point of moving this responsibility to Agent.
   lastDbRotationAt: null,
   lastDbRotationError: null,
   lastTokenRefreshAt: null,
   lastTokenRefreshError: null,
 };
 
-// Prompt 29 — bounded backoff for both retry loops below. Capped, not
-// unbounded-immediate: a credential source down for a few minutes (a Vault
-// blip, a network hiccup) should be retried promptly; one down for longer
-// is a real outage and hammering it every 5s adds no value.
-const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000];
-function retryDelayMs(attempt) {
-  return RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
+const TOKEN_PATH = `${config.vault.agentSecretsDir}/token`;
+const DB_CREDS_PATH = `${config.vault.agentSecretsDir}/db-creds.json`;
+
+function readTokenFile() {
+  const text = readFileSync(TOKEN_PATH, "utf8").trim();
+  if (!text) throw new Error(`${TOKEN_PATH} is empty`);
+  return text;
 }
 
-// ── AppRole login with exponential backoff ─────────────────────────────────
-async function login() {
-  const delays = [1000, 2000, 4000, 8000, 16000];
+function readDbCredsFile() {
+  const text = readFileSync(DB_CREDS_PATH, "utf8").trim();
+  if (!text) throw new Error(`${DB_CREDS_PATH} is empty`);
+  const parsed = JSON.parse(text); // throws on a partial/mid-write read — caller retries
+  if (!parsed.username || !parsed.password) {
+    throw new Error(`${DB_CREDS_PATH} missing username/password`);
+  }
+  return parsed;
+}
+
+// Bounded wait for Agent's first successful auth/render on container
+// startup — Agent may still be authenticating for the first time when
+// this process starts. This is a one-time startup gate, not an ongoing
+// background loop, so it cannot silently die the way Prompt 29's
+// schedulers could: init() either succeeds within the deadline or throws,
+// and index.js/worker.js already treat init() throwing as a fatal startup
+// error (unchanged from before this prompt).
+async function waitForFile(path, label, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
   let lastErr;
-  for (let i = 0; i < delays.length; i++) {
-    state.loginAttempts = i + 1;
+  while (Date.now() < deadline) {
     try {
-      const res = await vaultRequest("POST", "auth/approle/login", {
-        role_id: config.vault.roleId,
-        secret_id: config.vault.secretId,
-      });
-      const { client_token, lease_duration } = res.auth;
-      state.token = client_token;
-      state.tokenExpiry = new Date(Date.now() + lease_duration * 1000);
-      state.authenticated = true;
-      console.log(
-        `[vault] authenticated (ttl=${lease_duration}s attempt=${i + 1})`,
-      );
-      scheduleTokenRefresh(lease_duration);
+      readFileSync(path, "utf8");
       return;
     } catch (err) {
       lastErr = err;
-      console.error(`[vault] login attempt ${i + 1} failed: ${err.message}`);
-      if (i < delays.length - 1) await sleep(delays[i]);
+      await sleep(500);
     }
   }
   throw new Error(
-    `[vault] login exhausted after ${delays.length} attempts: ${lastErr.message}`,
+    `[vault] timed out waiting for ${label} (${path}) after ${timeoutMs}ms — is arcanium-vault-agent running and authenticated? last error: ${lastErr?.message}`,
   );
-}
-
-// Prompt 29 — retryAttempt tracks a failure streak for THIS refresh cycle
-// only; a successful login() call schedules the next normal-cadence
-// refresh itself (via its own call to scheduleTokenRefresh inside login()),
-// which resets the streak back to 0. Previously, a failed refresh set
-// authenticated=false and simply stopped — found live as the same
-// dead-end pattern as scheduleDbCredsRotation below, just never actually
-// triggered for the token (the DB credential hit it first).
-function scheduleTokenRefresh(ttlSeconds, retryAttempt = 0) {
-  clearTimeout(state.refreshTimer);
-  const delay =
-    retryAttempt === 0
-      ? Math.floor(ttlSeconds * 0.8) * 1000
-      : retryDelayMs(retryAttempt);
-  state.refreshTimer = setTimeout(async () => {
-    console.log(`[vault] refreshing token... (attempt ${retryAttempt + 1})`);
-    try {
-      await login();
-      state.lastTokenRefreshAt = new Date();
-      state.lastTokenRefreshError = null;
-    } catch (err) {
-      state.lastTokenRefreshError = { at: new Date(), message: err.message };
-      console.error(
-        `[vault] token refresh failed (attempt ${retryAttempt + 1}): ${err.message} — retrying`,
-      );
-      state.authenticated = false;
-      scheduleTokenRefresh(ttlSeconds, retryAttempt + 1);
-    }
-  }, delay);
-  state.refreshTimer.unref();
-}
-
-// ── Dynamic DB credentials ─────────────────────────────────────────────────
-async function fetchDbCredentials() {
-  const res = await vaultRequest(
-    "GET",
-    "database/creds/arcanium-api-role",
-    null,
-    state.token,
-  );
-  const { username, password } = res.data;
-  const leaseDuration = res.lease_duration;
-  state.dbCreds = { username, password };
-  state.dbCredsExpiry = new Date(Date.now() + leaseDuration * 1000);
-  console.log(
-    `[vault] db credentials obtained (username=${username} ttl=${leaseDuration}s)`,
-  );
-  scheduleDbCredsRotation(leaseDuration);
-  return { username, password, lease_duration: leaseDuration };
-}
-
-// Prompt 29 — found live: a single failed rotation attempt (here, a Vault
-// GET that hit the 5s armTimeout above) left this loop permanently dead —
-// the only place that ever called scheduleDbCredsRotation again was the
-// success path of fetchDbCredentials() itself, which is exactly what had
-// just failed. The credential then expired on Postgres's own VALID UNTIL
-// clock with no further attempt ever made, ~13 minutes before this was
-// diagnosed. retryAttempt closes that: a failure reschedules itself
-// directly, at bounded backoff, instead of relying on a success that
-// didn't happen.
-function scheduleDbCredsRotation(leaseDuration, retryAttempt = 0) {
-  clearTimeout(state.dbRotateTimer);
-  const delay =
-    retryAttempt === 0
-      ? Math.floor(leaseDuration * 0.75) * 1000
-      : retryDelayMs(retryAttempt);
-  state.dbRotateTimer = setTimeout(async () => {
-    console.log(
-      `[vault] rotating db credentials... (attempt ${retryAttempt + 1})`,
-    );
-    try {
-      // fetchDbCredentials() schedules the NEXT normal-cadence rotation
-      // itself on success (retryAttempt resets to 0) — see its own body.
-      const creds = await fetchDbCredentials();
-      const { rotateCreds } = await import("./db.js");
-      await rotateCreds(creds.username, creds.password);
-      state.lastDbRotationAt = new Date();
-      state.lastDbRotationError = null;
-      console.log("[vault] db credentials rotated successfully");
-    } catch (err) {
-      state.lastDbRotationError = { at: new Date(), message: err.message };
-      console.error(
-        `[vault] db creds rotation failed (attempt ${retryAttempt + 1}): ${err.message} — retrying`,
-      );
-      scheduleDbCredsRotation(leaseDuration, retryAttempt + 1);
-    }
-  }, delay);
-  state.dbRotateTimer.unref();
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
 export async function init() {
-  await login();
-  await fetchDbCredentials();
+  await waitForFile(TOKEN_PATH, "Agent token sink");
+  await waitForFile(DB_CREDS_PATH, "Agent DB-credential render");
+
+  state.token = readTokenFile();
+  state.authenticated = true;
+  state.lastTokenRefreshAt = new Date();
+  console.log("[vault] token read from arcanium-vault-agent sink");
+
+  const creds = readDbCredsFile();
+  state.dbCreds = { username: creds.username, password: creds.password };
+  state.dbCredsExpiry = new Date(Date.now() + creds.lease_duration * 1000);
+  state.lastDbRotationAt = new Date();
+  console.log(
+    `[vault] db credentials read from arcanium-vault-agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
+  );
+
+  // fs.watch's "rename" vs "change" event semantics differ across
+  // filesystems/bind-mount types — Agent renders atomically via a
+  // temp-file-then-rename, which some drivers surface as "rename," not
+  // "change." React to either; re-reading an unchanged file is a harmless
+  // no-op, and missing a real change is the failure mode actually worth
+  // avoiding here.
+  watch(TOKEN_PATH, () => {
+    try {
+      const next = readTokenFile();
+      if (next !== state.token) {
+        state.token = next;
+        state.authenticated = true;
+        state.lastTokenRefreshAt = new Date();
+        state.lastTokenRefreshError = null;
+        console.log("[vault] token file changed — picked up new token");
+      }
+    } catch (err) {
+      // Transient: Agent may still be mid-write. Do not flip authenticated
+      // to false on a single failed read — the last good in-memory token
+      // is still valid until proven otherwise by an actual Vault 403.
+      state.lastTokenRefreshError = { at: new Date(), message: err.message };
+      console.error(`[vault] token file re-read failed: ${err.message}`);
+    }
+  });
+
+  watch(DB_CREDS_PATH, () => {
+    (async () => {
+      try {
+        const next = readDbCredsFile();
+        if (next.username === state.dbCreds?.username) return; // same render, no-op
+        const { rotateCreds } = await import("./db.js");
+        await rotateCreds(next.username, next.password);
+        state.dbCreds = { username: next.username, password: next.password };
+        state.dbCredsExpiry = new Date(Date.now() + next.lease_duration * 1000);
+        state.lastDbRotationAt = new Date();
+        state.lastDbRotationError = null;
+        console.log(
+          `[vault] db-creds file changed — pool rotated (user=${next.username})`,
+        );
+      } catch (err) {
+        state.lastDbRotationError = { at: new Date(), message: err.message };
+        console.error(
+          `[vault] db-creds file re-read/rotate failed: ${err.message}`,
+        );
+      }
+    })();
+  });
 }
 
 export function getDbCredentials() {
@@ -249,13 +243,14 @@ export function getStatus() {
     tokenExpiry: state.tokenExpiry,
     dbCredsExpiry: state.dbCredsExpiry,
     loginAttempts: state.loginAttempts,
-    // Prompt 29 — the observable half of the retry-chain fix above: a
-    // rotation that is retrying (not dead) is now distinguishable from one
-    // that succeeded, and from one that never ran at all (both null).
     lastDbRotationAt: state.lastDbRotationAt,
     lastDbRotationError: state.lastDbRotationError,
     lastTokenRefreshAt: state.lastTokenRefreshAt,
     lastTokenRefreshError: state.lastTokenRefreshError,
+    // Prompt 30 — makes the architecture change visible in /health output
+    // itself, not silently identical-looking JSON from a totally different
+    // mechanism underneath.
+    agentManaged: true,
   };
 }
 

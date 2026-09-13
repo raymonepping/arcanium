@@ -1,0 +1,10 @@
+ M CHANGELOG.md
+ M arcanium/api/src/config.js
+ M arcanium/api/src/routes/health.js
+ M arcanium/api/src/vault.js
+ M compose/arcanium/compose.yaml
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M state/CURRENT
+ M state/scripts/capture-state.sh
+?? compose/arcanium/vault-agent/
+?? state/baselines/2026-09-13_pre-prompt-30-vault-agent-adoption/

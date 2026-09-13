@@ -1,0 +1,4 @@
+{
+  "postgres": "running",
+  "note": "no query executed against the database — container status only"
+}

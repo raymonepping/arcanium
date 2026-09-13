@@ -62,6 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   destroyed two real, still-in-use keys during this same hardening
   pass. Shared OIDC-login helper (`scenarios/lib/oidc_login.sh`)
   replacing three independently-patched inline copies.
+- Vault Agent adoption (Prompt 30): a real HashiCorp Vault Agent sidecar
+  (`arcanium-vault-agent`) now owns AppRole auto-auth and dynamic
+  database-credential rendering for the `arcanium-api` identity,
+  replacing the hand-rolled login/retry loops Prompt 29 had to patch.
+  `arcanium-api`/`arcanium-worker` read a token and a live credential
+  from Agent's rendered files (shared, read-only volume) instead of
+  authenticating themselves; every direct Vault call they still make on
+  their own behalf (Transit, PKI, Control Group) is unchanged. Proven
+  live: a real `vault-1` outage during Agent's own re-auth attempt
+  recovered fully automatically (Agent's own exponential backoff,
+  visible in its logs), the running `arcanium-api` process picked up
+  the new token and rotated its database pool via a file watcher, with
+  zero application-level retry code involved and the container never
+  restarted.
 
 - Three-node Vault Raft cluster with a Transit seal provider (`vault-s`) and a
   separate `+ent.hsm` instance (`vault-hsm`) backed by SoftHSM over a PKCS#11

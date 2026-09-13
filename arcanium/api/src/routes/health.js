@@ -31,20 +31,26 @@ healthRouter.get("/ready", async (_req, res) => {
       .status(503)
       .json({ status: "unavailable", reason: "vault not authenticated" });
   }
-  // Prompt 29 — catch a wedged rotation loop BEFORE the credential actually
-  // expires, not only after ping() starts failing. lastDbRotationError set
-  // while dbCredsExpiry is imminent means the retry loop is actively
-  // struggling (found live: previously this had no retry at all and simply
-  // stopped, so this signal never existed to check).
+  // Prompt 29 — catch a wedged rotation BEFORE the credential actually
+  // expires, not only after ping() starts failing. Prompt 30: under
+  // Vault-Agent-managed rotation, "expiry imminent" is sufficient on its
+  // own — arcanium-vault-agent's own auth/render retry state is not
+  // observable from this process (by design, see vault.js's own header),
+  // so requiring a paired lastDbRotationError here (Prompt 29's original
+  // condition) would never fire under this architecture even when
+  // genuinely stale. If Agent is doing its job the file refreshes well
+  // before expiry; imminent expiry alone already means it hasn't.
   const expirySoon =
     vaultState.dbCredsExpiry &&
     new Date(vaultState.dbCredsExpiry).getTime() - Date.now() < 60_000;
-  if (expirySoon && vaultState.lastDbRotationError) {
+  if (expirySoon) {
     return res.status(503).json({
       status: "unavailable",
-      reason: "db credential rotation retrying, expires soon",
+      reason: "db credential expires soon with no fresher render observed",
       dbCredsExpiry: vaultState.dbCredsExpiry,
-      lastDbRotationError: vaultState.lastDbRotationError,
+      ...(vaultState.lastDbRotationError
+        ? { lastDbRotationError: vaultState.lastDbRotationError }
+        : {}),
     });
   }
   try {
@@ -83,6 +89,10 @@ healthRouter.get("/", async (_req, res) => {
       reachable: true, // We can't easily probe without a token; authenticated implies reachable
       authenticated: vaultState.authenticated,
       tokenExpiry: vaultState.tokenExpiry,
+      // Prompt 30 — makes the Vault Agent architecture change visible in
+      // this response itself, not silently identical-looking JSON from a
+      // totally different underlying mechanism.
+      agentManaged: vaultState.agentManaged ?? false,
       lastTokenRefreshAt: vaultState.lastTokenRefreshAt,
       ...(vaultState.lastTokenRefreshError
         ? { lastTokenRefreshError: vaultState.lastTokenRefreshError }

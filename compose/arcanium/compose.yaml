@@ -44,8 +44,10 @@ services:
     environment:
       VAULT_ADDR: "https://vault-1:8200"
       VAULT_CACERT: "/vault/tls/ca-chain.pem"
-      VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
-      VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
+      # Prompt 30 — VAULT_ROLE_ID/VAULT_SECRET_ID removed: this process no
+      # longer logs in itself. arcanium-vault-agent (below) does, and
+      # renders a token + DB credential into vault-agent-secrets, mounted
+      # read-only here.
       # Prompt 14.2 — provisioner token for cross-namespace writes
       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
       # Prompt 18 — human auth via OIDC (default off)
@@ -78,10 +80,14 @@ services:
       PORT: "3001"
     volumes:
       - ../../vault-tls:/vault/tls:ro
+      - vault-agent-secrets:/vault/secrets:ro
     networks:
       - arcanium-control
       - arcanium-vault-internal
     restart: unless-stopped
+    depends_on:
+      arcanium-vault-agent:
+        condition: service_healthy
     # Prompt 29 — /health/live always returns 200 (process-up only) and
     # never noticed a live incident where the DB credential rotation loop
     # died silently and every authenticated request failed for 13+ minutes
@@ -118,8 +124,10 @@ services:
     environment:
       VAULT_ADDR: "https://vault-1:8200"
       VAULT_CACERT: "/vault/tls/ca-chain.pem"
-      VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
-      VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
+      # Prompt 30 — same as arcanium-api: no longer logs in itself, reads
+      # the shared Agent-rendered token/DB credential (same identity,
+      # same shared volume — this is the same image/code, just a dev-mode
+      # invocation, so it needed the same fix or it would simply not start).
       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
       ARCANIUM_AUTH_ENABLED: "${ARCANIUM_AUTH_ENABLED:-false}"
       ARCANIUM_DEMO_PERSONA_SWITCH: "${ARCANIUM_DEMO_PERSONA_SWITCH:-false}"
@@ -142,9 +150,13 @@ services:
       PORT: "3001"
     volumes:
       - ../../vault-tls:/vault/tls:ro
+      - vault-agent-secrets:/vault/secrets:ro
     networks:
       - arcanium-control
       - arcanium-vault-internal
+    depends_on:
+      arcanium-vault-agent:
+        condition: service_healthy
     # Prompt 29 — /health/live always returns 200 (process-up only) and
     # never noticed a live incident where the DB credential rotation loop
     # died silently and every authenticated request failed for 13+ minutes
@@ -176,8 +188,9 @@ services:
     environment:
       VAULT_ADDR: "https://vault-1:8200"
       VAULT_CACERT: "/vault/tls/ca-chain.pem"
-      VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
-      VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
+      # Prompt 30 — see arcanium-api's own comment above: this process no
+      # longer logs in itself either; it reads the same Agent-rendered
+      # token + DB credential from the shared, read-only secrets volume.
       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
       VAULT_HSM_ADDR: "${VAULT_HSM_ADDR:-https://vault-hsm:8200}"
       POSTGRES_HOST: "postgres"
@@ -194,6 +207,7 @@ services:
     volumes:
       - ../../vault-tls:/vault/tls:ro
       - vault-1-audit:/vault/audit:ro
+      - vault-agent-secrets:/vault/secrets:ro
     networks:
       - arcanium-control
       - arcanium-vault-internal
@@ -207,6 +221,51 @@ services:
     depends_on:
       arcanium-api:
         condition: service_healthy
+      arcanium-vault-agent:
+        condition: service_healthy
+
+  # Prompt 30 — owns AppRole auto-auth + dynamic DB-credential rendering
+  # for the arcanium-api identity, replacing vault.js's own hand-rolled
+  # login()/rotation retry loops (Prompt 29 hardened those; this prompt
+  # removes the need for this project to own that problem at all). Proven
+  # standalone (real token + real DB creds rendered and verified) before
+  # arcanium-api/arcanium-worker were ever pointed at it — see this
+  # prompt's own Design rules.
+  arcanium-vault-agent:
+    image: docker.io/hashicorp/vault-enterprise:2.1.0-ent
+    container_name: arcanium-vault-agent
+    hostname: arcanium-vault-agent
+    # Prompt 30 — NOT "100:1000" (the vault-1/2/3/vault-s convention):
+    # this agent's rendered token file needs to be read cross-container by
+    # arcanium-api/worker, which run as 1000:1000. The sink stanza's own
+    # `mode` config did not reliably grant group-read (see config.hcl's
+    # own comment) — matching the UID directly sidesteps that entirely,
+    # since the file's default owner-only 0600 then already covers it.
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp, /home/vault]
+    entrypoint: ["/vault/agent/entrypoint.sh"]
+    environment:
+      VAULT_ADDR: "https://vault-1:8200"
+      VAULT_CACERT: "/vault/tls/ca-chain.pem"
+      ARCANIUM_VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
+      ARCANIUM_VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
+    volumes:
+      - ../../vault-tls:/vault/tls:ro
+      - ./vault-agent/config.hcl:/vault/agent/config.hcl:ro
+      - ./vault-agent/entrypoint.sh:/vault/agent/entrypoint.sh:ro
+      - vault-agent-secrets:/vault/secrets
+    networks:
+      - arcanium-vault-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /vault/secrets/token && test -s /vault/secrets/db-creds.json"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
 networks:
   arcanium-control:
@@ -221,3 +280,7 @@ volumes:
   vault-1-audit:
     name: arcanium-vault_vault-1-audit
     external: true
+  # Prompt 30 — owned by THIS compose project (not external): shared
+  # between arcanium-vault-agent (writer) and arcanium-api/arcanium-worker
+  # (read-only consumers, Deliverable 3).
+  vault-agent-secrets: {}

@@ -208,6 +208,24 @@ capture_arcanium() {
       echo '{"status":"UNKNOWN","detail":"maturity endpoint did not respond"}' >"$d/api-smoke.json"
   else
     echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' >"$d/health.json"
+  fi
+
+  # Prompt 30 — Vault Agent's own rendered-file freshness. Never
+  # fabricated: UNKNOWN unless the container is actually running and both
+  # files are actually readable. mtime, not file content (the token/DB
+  # password are never captured here).
+  if running arcanium-vault-agent; then
+    local token_mtime creds_mtime
+    token_mtime=$(podman exec arcanium-vault-agent stat -c '%Y' /vault/secrets/token 2>/dev/null || echo "")
+    creds_mtime=$(podman exec arcanium-vault-agent stat -c '%Y' /vault/secrets/db-creds.json 2>/dev/null || echo "")
+    jq -n \
+      --arg tm "${token_mtime:-null}" --arg cm "${creds_mtime:-null}" \
+      '{
+        token_file: { present: ($tm != "null" and $tm != ""), mtime_epoch: (if $tm == "null" or $tm == "" then null else ($tm | tonumber) end) },
+        db_creds_file: { present: ($cm != "null" and $cm != ""), mtime_epoch: (if $cm == "null" or $cm == "" then null else ($cm | tonumber) end) }
+      }' >"$d/vault-agent.json"
+  else
+    jq -n '{status:"UNKNOWN", detail:"arcanium-vault-agent not running"}' >"$d/vault-agent.json"
     echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' >"$d/api-smoke.json"
   fi
 

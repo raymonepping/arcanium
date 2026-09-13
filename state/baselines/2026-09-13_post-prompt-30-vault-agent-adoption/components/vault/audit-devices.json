@@ -1,0 +1,21 @@
+{
+  "file2/": {
+    "type": "file",
+    "description": "",
+    "options": {
+      "file_path": "/vault/audit/vault-audit-r.log",
+      "mode": "0644"
+    },
+    "local": false,
+    "path": "file2/"
+  },
+  "primary/": {
+    "type": "file",
+    "description": "",
+    "options": {
+      "file_path": "/vault/audit/vault-audit.log"
+    },
+    "local": false,
+    "path": "primary/"
+  }
+}
