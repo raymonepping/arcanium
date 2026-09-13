@@ -13,7 +13,7 @@
 # someone unseals it.
 #
 # Loosely modeled on vault_reference/vault-s/scripts/vault_unseal.sh
-# (referenced from prompts/03_vault_terraform_baseline.md), adapted to
+# (referenced from prompts/base_project/03_01_vault_terraform_baseline.md), adapted to
 # this repo's own scripts/vault-common.sh helpers and jq-based JSON
 # handling rather than reimplementing status/auth logic here.
 set -euo pipefail

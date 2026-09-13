@@ -1,6 +1,6 @@
 # QUALITY.md — Arcanium documentation quality-gate policy
 
-Durable, cross-run policy for `00_docs_quality_gate.md`. Read this file
+Durable, cross-run policy for `prompts/process/00_05_docs_quality_gate.md`. Read this file
 before Section 3 of every future run; update it only when the corpus's
 actual requirements change, never to make a failing run pass. Written
 against `docs/writing/config/STYLE.md` as captured on 2026-09-13, same

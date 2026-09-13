@@ -650,7 +650,7 @@ export function rollupByControl(assessments) {
   return rollup;
 }
 
-// The exact algorithm from prompts/21_evidence_model_v2.md Deliverable 3 —
+// The exact algorithm from prompts/security/21_01_evidence_model_v2.md Deliverable 3 —
 // a single mandatory control at FAIL or UNKNOWN caps the level, regardless
 // of how high everything else scores (input/32's "Governance = 0 but still
 // Level 4" failure mode, countered).

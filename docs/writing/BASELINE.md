@@ -1,7 +1,7 @@
 # Writing Baseline — Arcanium documentation
 
 Captured before any tool-guided content edit, per
-`00_docs_style_toolchain.md`.
+`prompts/process/00_04_docs_style_toolchain.md`.
 
 ## Inventory
 

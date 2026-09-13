@@ -74,7 +74,7 @@ Kept consistent across the corpus (found already correct; preserve):
 - Code, file paths, environment variable names, route paths, and literal
   identifiers are always backtick-formatted inline — a bare, unformatted
   mention of a real identifier is treated as a defect (see Gate 6 in
-  `00_docs_quality_gate.md`).
+  `prompts/process/00_05_docs_quality_gate.md`).
 - A prompt/phase is referenced by name where it explains **why**
   something exists — `(Prompt 27)`, `(Phase 20)` — not decoratively on
   every heading.

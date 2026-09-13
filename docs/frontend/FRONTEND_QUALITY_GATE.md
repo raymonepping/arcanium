@@ -1,9 +1,9 @@
 # Frontend Quality Gate
 
-Executed per `prompts/00_frontend_quality_gate.md`, against the real,
+Executed per `prompts/process/00_03_frontend_quality_gate.md`, against the real,
 running `arcanium-ui` container, per the policy recorded in
 `docs/frontend/config/QUALITY.md`. Depends on
-`00_frontend_design_toolchain.md` having already run (it has — see
+`prompts/process/00_02_frontend_design_toolchain.md` having already run (it has — see
 `docs/frontend/UI_TOOLCHAIN_REPORT.md`).
 
 ## Summary

@@ -128,7 +128,7 @@ ensure_client() {
   # own port directly (that would break the same-origin BFF model every
   # other part of Arcanium relies on).
   local redirect="${ARCANIUM_API_CALLBACK_URL:-${ARCANIUM_BASE_URL:-http://localhost:3000}/gateway/api/v1/auth/callback}"
-  # 00_frontend_quality_gate.md, Gate 4 — found live via a real "click Sign
+  # prompts/process/00_03_frontend_quality_gate.md, Gate 4 — found live via a real "click Sign
   # out in the browser" pass: RP-initiated logout (auth/oidc.js's
   # buildLogoutUrl(), used by default.vue's signOut()) sends
   # post_logout_redirect_uri=$ARCANIUM_BASE_URL to Keycloak's end-session

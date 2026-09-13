@@ -112,7 +112,7 @@ const MATRIX = {
     // Prompt 20 — 'reconcile' is the same row as 'rotate' for every persona:
     // correcting drift back to the desired rotation policy is operationally
     // equivalent to a rotate-class action (see authorize.js's own header
-    // comment and prompts/20_desired_state_reconciliation.md Deliverable 4).
+    // comment and prompts/security/20_01_desired_state_reconciliation.md Deliverable 4).
     reconcile: false,
   },
   architect: {

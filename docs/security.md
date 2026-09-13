@@ -49,7 +49,7 @@ Only an opaque, `HttpOnly` Arcanium session cookie. Verified by inspecting
 actual network responses during testing (see
 [scenarios/11_security_foundation/test_negative_auth.sh](../scenarios/11_security_foundation/test_negative_auth.sh)
 and the Prompt 18 execution log in
-[prompts/18_security_foundation.md](../prompts/18_security_foundation.md)),
+[prompts/security/18_01_security_foundation.md](../prompts/security/18_01_security_foundation.md)),
 not assumed from code review alone.
 
 ## Dual-hostname OIDC (why it's not `host.docker.internal`)

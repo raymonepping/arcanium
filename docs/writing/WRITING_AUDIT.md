@@ -91,7 +91,7 @@ tell in user-facing prose, `P2` inconsistency, `P3` optional refinement,
   rhythm"), not blanket-applied.
 - **Evidence and decision, each instance:**
   1. `docs/frontend/UI_AUDIT.md:151` — inside a **direct quotation** of
-     `00_frontend_design_toolchain.md`'s own text ("simply because
+     `prompts/process/00_02_frontend_design_toolchain.md`'s own text ("simply because
      another one is preferred"). Editing it would misquote the source.
      **No change.**
   2. `docs/identity-configuration.md:41` — "Group names simply flow

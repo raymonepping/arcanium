@@ -1,7 +1,7 @@
 # UI Toolchain Report — Arcanium
 
 Executed against `arcanium/ui` (Nuxt 4 / Vue 3), the running, deployed
-`arcanium-ui` container, per `prompts/00_frontend_design_toolchain.md`.
+`arcanium-ui` container, per `prompts/process/00_02_frontend_design_toolchain.md`.
 
 ## Tooling installed
 
@@ -190,7 +190,7 @@ Build:       PASS   (unchanged, 2.72 MB / 691 kB gzip — same as baseline)
 
 ## Outstanding work
 
-> `00_frontend_quality_gate.md`'s own run (`FRONTEND_QUALITY_GATE.md`)
+> `prompts/process/00_03_frontend_quality_gate.md`'s own run (`FRONTEND_QUALITY_GATE.md`)
 > surfaced two further items after this report was first written: a real
 > logout defect (found and fixed during that pass) and a systemic
 > `--arc-text-dim` contrast gap (Required, not yet fixed — see

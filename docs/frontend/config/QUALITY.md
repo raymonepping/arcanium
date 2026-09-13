@@ -1,6 +1,6 @@
 # QUALITY.md — Arcanium frontend quality-gate policy
 
-Durable, cross-run policy for `00_frontend_quality_gate.md`. Read this
+Durable, cross-run policy for `prompts/process/00_03_frontend_quality_gate.md`. Read this
 file before Section 3 of every future run; update it only when the
 project's actual requirements change, never to make a failing run pass.
 Written against `docs/frontend/config/DESIGN.md` as captured on

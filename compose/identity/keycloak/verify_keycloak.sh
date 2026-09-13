@@ -5,7 +5,7 @@
 #
 # Runs on the host, via `podman exec` into the already-running keycloak
 # container — matches the "kcadm-via-exec" pattern named in
-# prompts/18_security_foundation.md (adapted from
+# prompts/security/18_01_security_foundation.md (adapted from
 # workshop/zero_trust/scripts/verify_keycloak.sh).
 set -uo pipefail
 

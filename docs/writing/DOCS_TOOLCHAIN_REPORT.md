@@ -1,6 +1,6 @@
 # Documentation Toolchain Report — Arcanium
 
-Executed per `prompts/00_docs_style_toolchain.md`, against the real,
+Executed per `prompts/process/00_04_docs_style_toolchain.md`, against the real,
 existing documentation corpus (`README.md` + everything under `docs/`).
 
 ## Tooling installed
@@ -113,7 +113,7 @@ confirmed by diff, not by assertion.
 remaining Vale/no-ai-slop finding was reviewed and deliberately left
 alone with a recorded reason, not silently skipped.
 
-**Recommended:** none beyond what `00_docs_quality_gate.md` (the
+**Recommended:** none beyond what `prompts/process/00_05_docs_quality_gate.md` (the
 companion prompt) will independently re-verify.
 
 **Optional:** a future pass could selectively rewrite the highest-value

@@ -149,7 +149,7 @@ async function main() {
   // default; condition 1 is what turns it on locally when the operator sets the
   // flag. Both must hold — neither alone is sufficient.
   // The Scalar UI bundle loads from cdn.jsdelivr.net in the developer's browser
-  // at runtime (not a local bundle — see prompts/23_api_explorer.md Option A).
+  // at runtime (not a local bundle — see prompts/base_project/23_01_api_explorer.md Option A).
   if (config.apiExplorerEnabled && config.nodeEnv !== "production") {
     const { readFileSync } = await import("node:fs");
     const { resolve, dirname } = await import("node:path");

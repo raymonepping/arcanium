@@ -4,7 +4,7 @@ Derived from `UI_AUDIT.md`. Waves 1–2 are addressed in this pass; Waves 3–4
 are recorded but not started (see Definition of Done — this prompt does not
 require exhausting every wave).
 
-> Updated after `00_frontend_quality_gate.md`'s own execution
+> Updated after `prompts/process/00_03_frontend_quality_gate.md`'s own execution
 > (`docs/frontend/FRONTEND_QUALITY_GATE.md`) surfaced two further findings:
 > Finding A (logout, BLOCKER, fixed during that pass — see Wave 1.5 below)
 > and Finding B (`--arc-text-dim` misuse app-wide, HIGH, added to Wave 3 as

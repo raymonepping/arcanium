@@ -1,9 +1,9 @@
 # Documentation Quality Gate
 
-Executed per `prompts/00_docs_quality_gate.md`, against the real
+Executed per `prompts/process/00_05_docs_quality_gate.md`, against the real
 corpus (`README.md` + 42 files under `docs/`), against the policy
 recorded in `docs/writing/config/QUALITY.md`. Depends on
-`00_docs_style_toolchain.md` having already run — it has, this same
+`prompts/process/00_04_docs_style_toolchain.md` having already run — it has, this same
 session (`docs/writing/DOCS_TOOLCHAIN_REPORT.md`).
 
 ## Summary
