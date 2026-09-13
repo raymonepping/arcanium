@@ -173,9 +173,31 @@ const stages = computed(() => {
   if (!k) return []
   return [
     { k: 'Generate', on: true, note: `Created in Vault Transit` },
-    { k: 'Distribute', on: true, note: 'Reachable via AppRole-scoped policy' },
+    // Prompt 33 — previously hardcoded on: true for every key with a
+    // never-checked generic claim. Now derived from a real
+    // crypto_profiles join (distributionOf() in keys.js); null (not
+    // false) for a platform key like document-signing-key, which is
+    // consumed directly by a workload's own Terraform-provisioned policy
+    // and was never modeled through applications/crypto_profiles at all.
+    {
+      k: 'Distribute',
+      on: !!k.distribution,
+      note: k.distribution
+        ? `Provisioned to ${k.distribution.application} (${k.distribution.environment})`
+        : "Not linked to a registered application's crypto profile",
+    },
     { k: 'Store', on: true, note: k.hsm_backed ? 'Private key held in SoftHSM (PKCS#11)' : k.exportable ? 'Exportable custody' : 'Held in Vault, non-exportable' },
-    { k: 'Use', on: false, note: 'Operation evidence not yet ingested' },
+    // Prompt 33 — previously hardcoded on: false, always, for every key.
+    // Now derived from the real ingested Vault audit log (usageOf() in
+    // keys.js, backed by the `evidence` table) — the honest not-yet-
+    // observed wording is unchanged for a key that genuinely has none.
+    {
+      k: 'Use',
+      on: !!k.usage,
+      note: k.usage
+        ? `${k.usage.count} operation${k.usage.count === 1 ? '' : 's'} observed — most recent: ${k.usage.last_operation}`
+        : 'Operation evidence not yet ingested',
+    },
     { k: 'Rotate', on: (k.auto_rotate_period ?? 0) > 0 || (k.latest_version ?? 1) > 1, note: (k.auto_rotate_period ?? 0) > 0 ? 'Auto-rotation policy active' : (k.latest_version ?? 1) > 1 ? `${k.latest_version} versions` : 'No rotation yet' },
     { k: 'Destroy', on: false, note: k.deletion_allowed ? 'Deletion permitted' : 'Deletion protected' },
   ]

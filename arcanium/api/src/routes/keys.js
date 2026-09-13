@@ -42,6 +42,57 @@ async function ownerOfKey(name) {
   return rows[0] ?? null; // null = key exists in Vault but isn't tracked by any crypto_profile
 }
 
+// Prompt 33 — the key detail page's "Distribute" lifecycle stage used to
+// hardcode on: true for every key with a generic, never-checked claim
+// ("Reachable via AppRole-scoped policy"). This is the same real join
+// ownerOfKey() already uses for tenant-resolution, just also naming the
+// application so the UI can show what was actually found instead of a
+// fabricated blanket claim. null (not false) when no crypto_profiles row
+// references this key — true for a platform key like
+// document-signing-key or arcanium-webhook-signing, which are consumed
+// directly by a workload's own Terraform-provisioned policy, never
+// modeled through applications/crypto_profiles at all; see Prompt 33 Non-
+// goals.
+async function distributionOf(name) {
+  const { rows } = await query(
+    `SELECT a.name AS application, a.environment, s.vault_namespace AS namespace
+       FROM crypto_profiles cp
+       JOIN applications a ON a.id = cp.application_id
+       LEFT JOIN suppliers s ON s.id = a.supplier_id
+      WHERE cp.vault_path LIKE '%/' || $1
+      LIMIT 1`,
+    [name],
+  );
+  return rows[0] ?? null;
+}
+
+// Prompt 33 — the "Use" lifecycle stage used to hardcode on: false for
+// every key ("Operation evidence not yet ingested") — honest wording, but
+// wrong in fact: Prompt 15.3's audit-log tailer has been ingesting real
+// transit encrypt/decrypt/sign/verify/hmac/rotate operations into
+// `evidence` the whole time. null (not a zero-count object) when this
+// key genuinely has no evidence rows yet, so the UI can keep its existing
+// honest not-yet-observed wording for that case.
+async function usageOf(name) {
+  const { rows } = await query(
+    `SELECT count(*)::int AS count, max(ts) AS last_at,
+            (SELECT operation FROM evidence
+              WHERE resource_type = 'key' AND resource_id = $1
+              ORDER BY ts DESC LIMIT 1) AS last_operation
+       FROM evidence
+      WHERE resource_type = 'key' AND resource_id = $1`,
+    [name],
+  );
+  const row = rows[0];
+  return row && row.count > 0
+    ? {
+        count: row.count,
+        last_operation: row.last_operation,
+        last_at: row.last_at,
+      }
+    : null;
+}
+
 const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
 
 // Derive a human custody label without inferring from the key name.
@@ -210,7 +261,15 @@ export async function resolveKeyMeta(name) {
 keysRouter.get("/:name", async (req, res, next) => {
   try {
     const meta = await resolveKeyMeta(req.params.name);
-    res.json(meta);
+    // Prompt 33 — enrichment for the UI's lifecycle strip only, so it's
+    // layered on here rather than inside resolveKeyMeta() itself (also
+    // called by the public-key download route and aggregation/intent.js,
+    // neither of which needs these two extra DB round-trips).
+    const [distribution, usage] = await Promise.all([
+      distributionOf(req.params.name),
+      usageOf(req.params.name),
+    ]);
+    res.json({ ...meta, distribution, usage });
   } catch (err) {
     next(err);
   }

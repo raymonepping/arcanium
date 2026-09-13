@@ -3217,6 +3217,19 @@ export interface components {
             managed_key_name?: string | null;
             /** @description True only for an asymmetric key's (rsa-*\/ecdsa-*\/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key. */
             has_public_key?: boolean;
+            /** @description Prompt 33 — GET /keys/{name} only (not the list route). Non-null only when a crypto_profiles row actually references this key; null for a platform key (e.g. document-signing-key) not modeled through applications/crypto_profiles, not a fabricated claim either way. */
+            distribution?: {
+                application?: string;
+                environment?: string;
+                namespace?: string | null;
+            } | null;
+            /** @description Prompt 33 — GET /keys/{name} only. Non-null only when the ingested Vault audit log (`evidence` table) has at least one real operation recorded against this exact key. */
+            usage?: {
+                count?: number;
+                last_operation?: string;
+                /** Format: date-time */
+                last_at?: string;
+            } | null;
         };
         ProvisioningJob: {
             /** Format: uuid */

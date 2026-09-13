@@ -598,6 +598,51 @@ else
   unk "Prompt 32 supplier key/public-key checks — identity stack/API not reachable"
 fi
 
+echo "== Prompt 33 — Real Evidence Behind the Key Lifecycle Strip =="
+echo
+
+JAR=$(mktemp)
+if ! ($STACK_UP && oidc_login "demo-architect" "$JAR" "Arcanium-arch-2026"); then
+  rm -f "$JAR"
+  JAR=""
+fi
+
+if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
+  # payments-api-key has both a real crypto_profiles row and real
+  # ingested evidence — distribution/usage must reflect that, not the
+  # old hardcoded true/false pair.
+  PAY_BODY=$(curl -s -b "$JAR" "$API/api/v1/keys/payments-api-key")
+  PAY_APP=$(echo "$PAY_BODY" | jq -r '.distribution.application // empty' 2>/dev/null)
+  PAY_COUNT=$(echo "$PAY_BODY" | jq -r '.usage.count // empty' 2>/dev/null)
+  if [ "$PAY_APP" = "payments-api" ]; then
+    ok "GET /keys/payments-api-key: distribution names the real owning application (payments-api)"
+  else
+    bad "GET /keys/payments-api-key: distribution did not name payments-api (got: $PAY_APP)"
+  fi
+  if [ -n "$PAY_COUNT" ] && [ "$PAY_COUNT" -gt 0 ] 2>/dev/null; then
+    ok "GET /keys/payments-api-key: usage.count > 0 from real ingested evidence ($PAY_COUNT)"
+  else
+    bad "GET /keys/payments-api-key: usage.count was not a positive number (got: $PAY_COUNT)"
+  fi
+
+  # document-signing-key has no crypto_profiles row — distribution must
+  # be null, not a fabricated true, and never a fabricated false either;
+  # it may or may not have evidence rows depending on whether the
+  # document-signing workload has been exercised, so usage is not
+  # asserted either way here.
+  DOC_BODY=$(curl -s -b "$JAR" "$API/api/v1/keys/document-signing-key")
+  DOC_DIST=$(echo "$DOC_BODY" | jq -r '.distribution' 2>/dev/null)
+  if [ "$DOC_DIST" = "null" ]; then
+    ok "GET /keys/document-signing-key: distribution is null (no crypto_profiles row), not fabricated"
+  else
+    bad "GET /keys/document-signing-key: distribution was not null for a key with no crypto_profiles row (got: $DOC_DIST)"
+  fi
+
+  rm -f "$JAR"
+else
+  unk "Prompt 33 key lifecycle evidence checks — identity stack/API not reachable"
+fi
+
 echo
 TOTAL=$((PASS + FAIL + UNKNOWN))
 echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="

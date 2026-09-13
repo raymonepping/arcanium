@@ -1,0 +1,304 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e7b46bf..c4c89a6 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Added
+ 
++- Real evidence behind the key detail page's lifecycle strip (Prompt
++  33): `Distribute` and `Use` previously hardcoded `on: true`/`on: false`
++  for every key, unconditionally — a fabricated claim in one direction,
++  a stale one in the other. `Distribute` is now derived from a real
++  `crypto_profiles` join (null, not false, for a platform key like
++  `document-signing-key` that isn't modeled through the
++  applications/crypto_profiles table at all); `Use` from the `evidence`
++  table's already-ingested Vault audit log rows (11k+ real operations,
++  previously never queried by this page). Found by the user while
++  reviewing a screenshot; fixed same-day, ahead of the previously
++  planned sequencing.
+ - Supplier-scoped public key material download (Prompt 32): the same
+   public-key download offered for root-namespace keys now also works for
+   a supplier tenant's own Transit keys (`pepsi-signing-key`,
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/openapi/arcanium.yaml b/arcanium/api/openapi/arcanium.yaml
+index 000ae0a..4441d12 100644
+--- a/arcanium/api/openapi/arcanium.yaml
++++ b/arcanium/api/openapi/arcanium.yaml
+@@ -205,6 +205,20 @@ components:
+         has_public_key:
+           type: boolean
+           description: "True only for an asymmetric key's (rsa-*/ecdsa-*/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key."
++        distribution:
++          type: ["object", "null"]
++          description: "Prompt 33 — GET /keys/{name} only (not the list route). Non-null only when a crypto_profiles row actually references this key; null for a platform key (e.g. document-signing-key) not modeled through applications/crypto_profiles, not a fabricated claim either way."
++          properties:
++            application: { type: string }
++            environment: { type: string }
++            namespace: { type: ["string", "null"] }
++        usage:
++          type: ["object", "null"]
++          description: "Prompt 33 — GET /keys/{name} only. Non-null only when the ingested Vault audit log (`evidence` table) has at least one real operation recorded against this exact key."
++          properties:
++            count: { type: integer }
++            last_operation: { type: string }
++            last_at: { type: string, format: date-time }
+ 
+     # ── Provisioning jobs ─────────────────────────────────────────────────
+     # Prompt 22, Deliverable 3 — status legally transitions per
+diff --git a/arcanium/api/src/routes/keys.js b/arcanium/api/src/routes/keys.js
+index f4840e2..d2fcd2c 100644
+--- a/arcanium/api/src/routes/keys.js
++++ b/arcanium/api/src/routes/keys.js
+@@ -42,6 +42,53 @@ async function ownerOfKey(name) {
+   return rows[0] ?? null; // null = key exists in Vault but isn't tracked by any crypto_profile
+ }
+ 
++// Prompt 33 — the key detail page's "Distribute" lifecycle stage used to
++// hardcode on: true for every key with a generic, never-checked claim
++// ("Reachable via AppRole-scoped policy"). This is the same real join
++// ownerOfKey() already uses for tenant-resolution, just also naming the
++// application so the UI can show what was actually found instead of a
++// fabricated blanket claim. null (not false) when no crypto_profiles row
++// references this key — true for a platform key like
++// document-signing-key or arcanium-webhook-signing, which are consumed
++// directly by a workload's own Terraform-provisioned policy, never
++// modeled through applications/crypto_profiles at all; see Prompt 33 Non-
++// goals.
++async function distributionOf(name) {
++  const { rows } = await query(
++    `SELECT a.name AS application, a.environment, s.vault_namespace AS namespace
++       FROM crypto_profiles cp
++       JOIN applications a ON a.id = cp.application_id
++       LEFT JOIN suppliers s ON s.id = a.supplier_id
++      WHERE cp.vault_path LIKE '%/' || $1
++      LIMIT 1`,
++    [name],
++  );
++  return rows[0] ?? null;
++}
++
++// Prompt 33 — the "Use" lifecycle stage used to hardcode on: false for
++// every key ("Operation evidence not yet ingested") — honest wording, but
++// wrong in fact: Prompt 15.3's audit-log tailer has been ingesting real
++// transit encrypt/decrypt/sign/verify/hmac/rotate operations into
++// `evidence` the whole time. null (not a zero-count object) when this
++// key genuinely has no evidence rows yet, so the UI can keep its existing
++// honest not-yet-observed wording for that case.
++async function usageOf(name) {
++  const { rows } = await query(
++    `SELECT count(*)::int AS count, max(ts) AS last_at,
++            (SELECT operation FROM evidence
++              WHERE resource_type = 'key' AND resource_id = $1
++              ORDER BY ts DESC LIMIT 1) AS last_operation
++       FROM evidence
++      WHERE resource_type = 'key' AND resource_id = $1`,
++    [name],
++  );
++  const row = rows[0];
++  return row && row.count > 0
++    ? { count: row.count, last_operation: row.last_operation, last_at: row.last_at }
++    : null;
++}
++
+ const KEY_NAME_RE = /^[a-z0-9_-]{1,128}$/i;
+ 
+ // Derive a human custody label without inferring from the key name.
+@@ -210,7 +257,15 @@ export async function resolveKeyMeta(name) {
+ keysRouter.get("/:name", async (req, res, next) => {
+   try {
+     const meta = await resolveKeyMeta(req.params.name);
+-    res.json(meta);
++    // Prompt 33 — enrichment for the UI's lifecycle strip only, so it's
++    // layered on here rather than inside resolveKeyMeta() itself (also
++    // called by the public-key download route and aggregation/intent.js,
++    // neither of which needs these two extra DB round-trips).
++    const [distribution, usage] = await Promise.all([
++      distributionOf(req.params.name),
++      usageOf(req.params.name),
++    ]);
++    res.json({ ...meta, distribution, usage });
+   } catch (err) {
+     next(err);
+   }
+diff --git a/arcanium/ui/app/pages/keys/[id].vue b/arcanium/ui/app/pages/keys/[id].vue
+index fb748cc..92e1730 100644
+--- a/arcanium/ui/app/pages/keys/[id].vue
++++ b/arcanium/ui/app/pages/keys/[id].vue
+@@ -173,9 +173,31 @@ const stages = computed(() => {
+   if (!k) return []
+   return [
+     { k: 'Generate', on: true, note: `Created in Vault Transit` },
+-    { k: 'Distribute', on: true, note: 'Reachable via AppRole-scoped policy' },
++    // Prompt 33 — previously hardcoded on: true for every key with a
++    // never-checked generic claim. Now derived from a real
++    // crypto_profiles join (distributionOf() in keys.js); null (not
++    // false) for a platform key like document-signing-key, which is
++    // consumed directly by a workload's own Terraform-provisioned policy
++    // and was never modeled through applications/crypto_profiles at all.
++    {
++      k: 'Distribute',
++      on: !!k.distribution,
++      note: k.distribution
++        ? `Provisioned to ${k.distribution.application} (${k.distribution.environment})`
++        : "Not linked to a registered application's crypto profile",
++    },
+     { k: 'Store', on: true, note: k.hsm_backed ? 'Private key held in SoftHSM (PKCS#11)' : k.exportable ? 'Exportable custody' : 'Held in Vault, non-exportable' },
+-    { k: 'Use', on: false, note: 'Operation evidence not yet ingested' },
++    // Prompt 33 — previously hardcoded on: false, always, for every key.
++    // Now derived from the real ingested Vault audit log (usageOf() in
++    // keys.js, backed by the `evidence` table) — the honest not-yet-
++    // observed wording is unchanged for a key that genuinely has none.
++    {
++      k: 'Use',
++      on: !!k.usage,
++      note: k.usage
++        ? `${k.usage.count} operation${k.usage.count === 1 ? '' : 's'} observed — most recent: ${k.usage.last_operation}`
++        : 'Operation evidence not yet ingested',
++    },
+     { k: 'Rotate', on: (k.auto_rotate_period ?? 0) > 0 || (k.latest_version ?? 1) > 1, note: (k.auto_rotate_period ?? 0) > 0 ? 'Auto-rotation policy active' : (k.latest_version ?? 1) > 1 ? `${k.latest_version} versions` : 'No rotation yet' },
+     { k: 'Destroy', on: false, note: k.deletion_allowed ? 'Deletion permitted' : 'Deletion protected' },
+   ]
+diff --git a/arcanium/ui/app/types/api.generated.ts b/arcanium/ui/app/types/api.generated.ts
+index b73f67e..fd34053 100644
+--- a/arcanium/ui/app/types/api.generated.ts
++++ b/arcanium/ui/app/types/api.generated.ts
+@@ -3217,6 +3217,19 @@ export interface components {
+             managed_key_name?: string | null;
+             /** @description True only for an asymmetric key's (rsa-*\/ecdsa-*\/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key. */
+             has_public_key?: boolean;
++            /** @description Prompt 33 — GET /keys/{name} only (not the list route). Non-null only when a crypto_profiles row actually references this key; null for a platform key (e.g. document-signing-key) not modeled through applications/crypto_profiles, not a fabricated claim either way. */
++            distribution?: {
++                application?: string;
++                environment?: string;
++                namespace?: string | null;
++            } | null;
++            /** @description Prompt 33 — GET /keys/{name} only. Non-null only when the ingested Vault audit log (`evidence` table) has at least one real operation recorded against this exact key. */
++            usage?: {
++                count?: number;
++                last_operation?: string;
++                /** Format: date-time */
++                last_at?: string;
++            } | null;
+         };
+         ProvisioningJob: {
+             /** Format: uuid */
+diff --git a/arcanium/ui/app/types/arcanium.ts b/arcanium/ui/app/types/arcanium.ts
+index c55571e..11bd90b 100644
+--- a/arcanium/ui/app/types/arcanium.ts
++++ b/arcanium/ui/app/types/arcanium.ts
+@@ -48,6 +48,13 @@ export interface TransitKey {
+   /** True only for an asymmetric key's latest version — never a symmetric
+    *  key, which has no public half. See GET /keys/{name}/public-key. */
+   has_public_key?: boolean
++  /** Prompt 33 — GET /keys/{name} only (not the list route). Non-null only
++   *  when a crypto_profiles row actually references this key. */
++  distribution?: { application: string; environment: string; namespace: string | null } | null
++  /** Prompt 33 — GET /keys/{name} only. Non-null only when the ingested
++   *  Vault audit log (`evidence` table) has at least one real operation
++   *  recorded against this exact key. */
++  usage?: { count: number; last_operation: string; last_at: string } | null
+ }
+ 
+ export type ApprovalStatus = 'pending' | 'approved' | 'rejected'
+diff --git a/openapi/arcanium.yaml b/openapi/arcanium.yaml
+index 000ae0a..4441d12 100644
+--- a/openapi/arcanium.yaml
++++ b/openapi/arcanium.yaml
+@@ -205,6 +205,20 @@ components:
+         has_public_key:
+           type: boolean
+           description: "True only for an asymmetric key's (rsa-*/ecdsa-*/ed25519) latest version — never for a symmetric key, which has no public half. See GET /keys/{name}/public-key."
++        distribution:
++          type: ["object", "null"]
++          description: "Prompt 33 — GET /keys/{name} only (not the list route). Non-null only when a crypto_profiles row actually references this key; null for a platform key (e.g. document-signing-key) not modeled through applications/crypto_profiles, not a fabricated claim either way."
++          properties:
++            application: { type: string }
++            environment: { type: string }
++            namespace: { type: ["string", "null"] }
++        usage:
++          type: ["object", "null"]
++          description: "Prompt 33 — GET /keys/{name} only. Non-null only when the ingested Vault audit log (`evidence` table) has at least one real operation recorded against this exact key."
++          properties:
++            count: { type: integer }
++            last_operation: { type: string }
++            last_at: { type: string, format: date-time }
+ 
+     # ── Provisioning jobs ─────────────────────────────────────────────────
+     # Prompt 22, Deliverable 3 — status legally transitions per
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index 0a99a0d..118f4a9 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -598,6 +598,51 @@ else
+   unk "Prompt 32 supplier key/public-key checks — identity stack/API not reachable"
+ fi
+ 
++echo "== Prompt 33 — Real Evidence Behind the Key Lifecycle Strip =="
++echo
++
++JAR=$(mktemp)
++if ! ($STACK_UP && oidc_login "demo-architect" "$JAR" "Arcanium-arch-2026"); then
++  rm -f "$JAR"
++  JAR=""
++fi
++
++if [ -n "$JAR" ] && command -v jq >/dev/null 2>&1; then
++  # payments-api-key has both a real crypto_profiles row and real
++  # ingested evidence — distribution/usage must reflect that, not the
++  # old hardcoded true/false pair.
++  PAY_BODY=$(curl -s -b "$JAR" "$API/api/v1/keys/payments-api-key")
++  PAY_APP=$(echo "$PAY_BODY" | jq -r '.distribution.application // empty' 2>/dev/null)
++  PAY_COUNT=$(echo "$PAY_BODY" | jq -r '.usage.count // empty' 2>/dev/null)
++  if [ "$PAY_APP" = "payments-api" ]; then
++    ok "GET /keys/payments-api-key: distribution names the real owning application (payments-api)"
++  else
++    bad "GET /keys/payments-api-key: distribution did not name payments-api (got: $PAY_APP)"
++  fi
++  if [ -n "$PAY_COUNT" ] && [ "$PAY_COUNT" -gt 0 ] 2>/dev/null; then
++    ok "GET /keys/payments-api-key: usage.count > 0 from real ingested evidence ($PAY_COUNT)"
++  else
++    bad "GET /keys/payments-api-key: usage.count was not a positive number (got: $PAY_COUNT)"
++  fi
++
++  # document-signing-key has no crypto_profiles row — distribution must
++  # be null, not a fabricated true, and never a fabricated false either;
++  # it may or may not have evidence rows depending on whether the
++  # document-signing workload has been exercised, so usage is not
++  # asserted either way here.
++  DOC_BODY=$(curl -s -b "$JAR" "$API/api/v1/keys/document-signing-key")
++  DOC_DIST=$(echo "$DOC_BODY" | jq -r '.distribution' 2>/dev/null)
++  if [ "$DOC_DIST" = "null" ]; then
++    ok "GET /keys/document-signing-key: distribution is null (no crypto_profiles row), not fabricated"
++  else
++    bad "GET /keys/document-signing-key: distribution was not null for a key with no crypto_profiles row (got: $DOC_DIST)"
++  fi
++
++  rm -f "$JAR"
++else
++  unk "Prompt 33 key lifecycle evidence checks — identity stack/API not reachable"
++fi
++
+ echo
+ TOTAL=$((PASS + FAIL + UNKNOWN))
+ echo "== Result: $PASS passed, $FAIL failed, $UNKNOWN unknown (of $TOTAL) =="
+diff --git a/state/CURRENT b/state/CURRENT
+index 5998d34..207f96a 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-13_post-prompt-32-supplier-key-public-material
++state/baselines/2026-09-13_pre-prompt-33-key-lifecycle-evidence

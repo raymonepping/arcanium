@@ -48,6 +48,13 @@ export interface TransitKey {
   /** True only for an asymmetric key's latest version — never a symmetric
    *  key, which has no public half. See GET /keys/{name}/public-key. */
   has_public_key?: boolean
+  /** Prompt 33 — GET /keys/{name} only (not the list route). Non-null only
+   *  when a crypto_profiles row actually references this key. */
+  distribution?: { application: string; environment: string; namespace: string | null } | null
+  /** Prompt 33 — GET /keys/{name} only. Non-null only when the ingested
+   *  Vault audit log (`evidence` table) has at least one real operation
+   *  recorded against this exact key. */
+  usage?: { count: number; last_operation: string; last_at: string } | null
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected'

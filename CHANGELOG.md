@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Real evidence behind the key detail page's lifecycle strip (Prompt
+  33): `Distribute` and `Use` previously hardcoded `on: true`/`on: false`
+  for every key, unconditionally — a fabricated claim in one direction,
+  a stale one in the other. `Distribute` is now derived from a real
+  `crypto_profiles` join (null, not false, for a platform key like
+  `document-signing-key` that isn't modeled through the
+  applications/crypto_profiles table at all); `Use` from the `evidence`
+  table's already-ingested Vault audit log rows (11k+ real operations,
+  previously never queried by this page). Found by the user while
+  reviewing a screenshot; fixed same-day, ahead of the previously
+  planned sequencing.
 - Supplier-scoped public key material download (Prompt 32): the same
   public-key download offered for root-namespace keys now also works for
   a supplier tenant's own Transit keys (`pepsi-signing-key`,
