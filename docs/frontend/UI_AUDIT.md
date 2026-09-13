@@ -99,28 +99,42 @@ subjective stylistic preference.
   but the mounted title/content is momentarily `Dashboard · Arcanium`
   before Vue's mismatch-recovery re-patches the DOM to the actual
   (login) route.
-- **Root cause (as far as evidence allows without a deep framework-level
-  investigation):** `auth.global.ts` performs the auth check and
-  server-side `navigateTo()` redirect independently on server and client
-  (`import.meta.server` branch vs. the client `$fetch` branch below it).
-  For a genuinely unauthenticated first visit, the most likely explanation
-  is a race between the SSR-rendered payload (built for the originally
-  requested route before the server-side redirect resolves) and the
-  client's own hydration attaching to that payload before its own
-  client-side auth check/redirect has run.
+- **Root cause — confirmed, not the original theory:** `prompts/
+  base_project/35_01_ssr_hydration_mismatch.md` re-investigated with
+  temporary debug logging rather than trusting this section's original
+  "most likely a race" theory. The actual mechanism: on a cold (first-
+  request-after-start) request, `useRequestFetch()`'s internal dispatch
+  of `/gateway/api/v1/auth/me` re-enters Nuxt's own SSR render/route-
+  middleware pipeline for that exact URL instead of the intended h3
+  route handler — running `auth.global.ts` a second, nested time. That
+  nested run correctly redirects, but a server-side `navigateTo()`
+  inside a recursive self-fetch materializes as a small HTML stub body,
+  which becomes the *outer* `requestFetch()` call's "successful"
+  resolved value — fooling the outer middleware into falling through
+  without redirecting. The real page then renders and ships as a
+  genuine `200` (confirmed via a live network trace); only the client
+  branch's own, correctly-routed `$fetch` catches the 401 a moment
+  later and redirects.
 - **Impact:** A very brief (sub-100ms) flash of dashboard *chrome* only
   (navigation, empty shell) — never real protected data, since the actual
   API calls the dashboard would need also return 401 in this state. The
   page self-corrects to the login form. No security exposure identified;
   a real console error and a real, if minor, first-paint correctness bug.
-- **Decision: NOT fixed this pass.** `auth.global.ts`'s own code comments
-  document a past production incident (sustained SSR 401 loop causing CPU
-  pegging and OOM crashes) from a previous change to this exact file. Per
-  the "smallest justified fix" / "do not perform broad refactoring"
-  principle and this file's demonstrated fragility, this is recorded as
-  **Required** future work for a dedicated, focused pass with its own
-  full regression cycle — not bundled into this general design-toolchain
-  pass. See `UI_IMPROVEMENT_PLAN.md`.
+- **Decision: FIXED (Prompt 35).** One-line fix: exempt `/gateway/`
+  (this app's only internal API-proxy prefix, never a page a user
+  navigates to) from the middleware entirely, the same way `/login`
+  already is — closing the re-entrant path categorically without
+  touching the redirect logic. Verified across two independent cold
+  container restarts (curl racing the container's own startup: the
+  first successful connection now returns a clean `302` every time,
+  never the previous `200`) and a real Playwright browser session
+  immediately post-restart (lands directly on `/login?next=/`, no
+  hydration-mismatch warning). Given this file's own documented past
+  incident (sustained SSR 401 loop → CPU pegging → OOM), `podman stats`
+  and container logs were watched for 90s under the container's own
+  repeated healthcheck hits post-fix: 2.49% CPU, 48.5MB memory, zero
+  error/OOM/killed log lines — no repeat of that incident. Full
+  regression (fitness/negative-auth/verify-stack) green.
 
 ## Finding 5 — `side-tab` accent borders on Vault cluster node cards
 

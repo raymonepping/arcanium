@@ -50,14 +50,22 @@ inconsistencies. No changes made under this wave.
   their documented hex values, not a stale cascade; screenshot sweep
   across the most-touched routes at desktop and mobile widths showed no
   layout shift (color-only change, as expected).
-- **Hydration-mismatch fix on first unauthenticated load**
-  (`UI_AUDIT.md` Finding 4). Requires a dedicated pass: reproduce with
-  Vue/Nuxt SSR debug logging enabled, understand exactly why the SSR
-  payload and the client's first paint disagree on route, and fix without
-  repeating the CPU/OOM regression this same file caused previously. Do
-  not bundle with unrelated work; give it its own full regression cycle
-  (fitness, negative-auth, smoke) given the auth-critical nature of the
-  file.
+- **Hydration-mismatch fix on first unauthenticated load — DONE**
+  (`prompts/base_project/35_01_ssr_hydration_mismatch.md`, `UI_AUDIT.md`
+  Finding 4). Reproduced with temporary SSR debug logging: on a cold
+  first request, `useRequestFetch()`'s internal dispatch of `/gateway/
+  api/v1/auth/me` re-enters Nuxt's own SSR route-middleware pipeline for
+  that URL, and the nested run's own redirect stub gets misread as the
+  outer call's "success," letting the real page fall through and render
+  before the client branch catches the 401 a moment later. Fixed with
+  one line: exempt `/gateway/` (never a navigable page) from the
+  middleware, the same way `/login` already is. Verified across two
+  independent cold restarts (first real request now always a clean
+  `302`, never the previous `200`) and a live Playwright session
+  immediately post-restart (no hydration-mismatch warning). Given this
+  file's own past CPU/OOM incident, watched `podman stats`/logs for 90s
+  post-fix under the container's real healthcheck load: stable, no
+  repeat. Full regression green.
 - **`width`-based transitions** (`UI_AUDIT.md` Finding 7) — convert the
   sidebar-collapse and progress-fill transitions to `transform`/no-layout-
   thrash equivalents, if/when either component is touched for other

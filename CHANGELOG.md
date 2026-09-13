@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SSR hydration mismatch on first unauthenticated page load (Prompt 35,
+  `UI_AUDIT.md` Finding 4): a brief flash of Dashboard chrome (never real
+  protected data) before self-correcting to the login form, on a cold
+  first request only. Root-caused via temporary debug logging (not the
+  original "race" theory): `useRequestFetch()`'s internal dispatch of
+  `/gateway/api/v1/auth/me` re-entered Nuxt's own SSR route-middleware
+  pipeline for that URL on a cold request, and the nested run's own
+  redirect materialized as an HTML stub body that fooled the outer call
+  into treating it as a non-error response — letting the real page fall
+  through and render before the client branch caught the 401 a moment
+  later. Fixed with one line: exempt `/gateway/` (never a navigable
+  page) from the auth middleware, the same way `/login` already is.
+  Verified across two independent cold container restarts (first real
+  request now a clean 302, never the previous 200) and a live Playwright
+  session immediately post-restart (no hydration-mismatch warning).
+  Given this file's own documented past incident (a sustained SSR 401
+  loop causing CPU pegging and OOM crashes), watched container CPU/
+  memory/logs for 90s post-fix under real healthcheck load — stable, no
+  repeat. Full regression green.
 - App-wide `--arc-text-dim` contrast violation (Prompt 34,
   `FRONTEND_QUALITY_GATE.md` Finding B): 45 real instances across 17
   files (a superset of the originally reported 28/20+ — re-auditing

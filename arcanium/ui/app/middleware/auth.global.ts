@@ -18,6 +18,34 @@
 // correctness bug (SSR could never see a genuine session before this).
 export default defineNuxtRouteMiddleware(async (to) => {
   if (to.path === '/login') return
+  // Prompt 35 — found live with temporary debug logging on the server
+  // branch: on a cold first request, useRequestFetch()'s internal dispatch
+  // of '/gateway/api/v1/auth/me' does not always reach the h3 gateway
+  // route directly — it can re-enter Nuxt's OWN SSR render pipeline for
+  // that exact URL, which runs THIS SAME global middleware a second time
+  // (a real, logged, nested invocation with to.fullPath the gateway URL
+  // itself). That nested run correctly redirects internally, but its
+  // redirect materializes as a small HTML stub body, which becomes the
+  // *outer* requestFetch() call's "successful" (non-error) result —
+  // `me` resolves to that HTML string instead of throwing a 401, so
+  // `me?.enabled === false` is false and the OUTER middleware falls
+  // through without redirecting. The real page then renders and ships
+  // to the browser as a genuine 200 (confirmed via a live network
+  // trace), and only the CLIENT branch's own $fetch — a real, correctly-
+  // routed same-origin request, not an internal re-entrant one — catches
+  // the 401 a moment later and redirects, producing the observed
+  // "flash of the authenticated page, then hydration-mismatch, then
+  // correct" symptom on first load.
+  //
+  // '/gateway/**' is an internal API-proxy prefix only — no page is ever
+  // navigated to it — so this middleware never legitimately needs to run
+  // for it. Exempting it here (same pattern as the existing '/login'
+  // exemption) closes the recursive-reentry path entirely, regardless of
+  // the exact Nitro-internal timing that causes it: a cheap prefix check,
+  // no new network calls, no change to the redirect logic itself — the
+  // "smallest justified fix" this file's own documented incident history
+  // calls for.
+  if (to.path.startsWith('/gateway/')) return
   if (import.meta.server) {
     const requestFetch = useRequestFetch()
     try {

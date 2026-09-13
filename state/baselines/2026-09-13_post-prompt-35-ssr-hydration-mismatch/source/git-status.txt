@@ -1,0 +1,8 @@
+ M CHANGELOG.md
+ M Makefile
+ M arcanium/ui/app/middleware/auth.global.ts
+ M docs/frontend/UI_AUDIT.md
+ M docs/frontend/UI_IMPROVEMENT_PLAN.md
+ M state/CURRENT
+?? scripts/clean-slate.sh
+?? state/baselines/2026-09-13_pre-prompt-35-ssr-hydration-mismatch/
