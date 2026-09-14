@@ -16,6 +16,7 @@
 // not a proxy for those, it only owns auth + the one credential above.
 
 import { readFileSync, watch } from "node:fs";
+import { basename } from "node:path";
 import { request as httpsRequest } from "node:https";
 import config from "./config.js";
 
@@ -186,53 +187,76 @@ export async function init() {
     `[vault] db credentials read from arcanium-vault-agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
   );
 
-  // fs.watch's "rename" vs "change" event semantics differ across
-  // filesystems/bind-mount types — Agent renders atomically via a
-  // temp-file-then-rename, which some drivers surface as "rename," not
-  // "change." React to either; re-reading an unchanged file is a harmless
-  // no-op, and missing a real change is the failure mode actually worth
-  // avoiding here.
-  watch(TOKEN_PATH, () => {
-    try {
-      const next = readTokenFile();
-      if (next !== state.token) {
-        state.token = next;
-        state.authenticated = true;
-        state.lastTokenRefreshAt = new Date();
-        state.lastTokenRefreshError = null;
-        console.log("[vault] token file changed — picked up new token");
-      }
-    } catch (err) {
-      // Transient: Agent may still be mid-write. Do not flip authenticated
-      // to false on a single failed read — the last good in-memory token
-      // is still valid until proven otherwise by an actual Vault 403.
-      state.lastTokenRefreshError = { at: new Date(), message: err.message };
-      console.error(`[vault] token file re-read failed: ${err.message}`);
-    }
-  });
-
-  watch(DB_CREDS_PATH, () => {
-    (async () => {
+  // Prompt 43 — found live: this used to be watch(TOKEN_PATH, ...) and
+  // watch(DB_CREDS_PATH, ...), one fs.watch() per FILE. That fires
+  // exactly once, ever, across Agent's atomic write-temp-then-rename
+  // update pattern: a watch bound to a specific file is bound to that
+  // file's underlying inode, and once the rename swaps in a new inode
+  // at the same path, nothing re-arms the watch — Node does not
+  // silently resubscribe, and no error is raised either. Confirmed live
+  // (arcanium-vault-agent's own logs vs. arcanium-api's own logs, after
+  // ~9h uptime): Agent rendered 4 fresh db-creds.json files; arcanium-api
+  // picked up exactly the FIRST one and never fired again — eventually
+  // the credential it kept using genuinely expired, and every database
+  // query, including session sign-in, started failing with a real
+  // Postgres auth error. Reproduced in isolation before this fix (a
+  // standalone script: 4 renames, watch(FILE_PATH) → 0 events observed)
+  // and confirmed the fix below survives the same test (4 renames → every
+  // one observed).
+  //
+  // The fix: watch the CONTAINING DIRECTORY instead of either file. A
+  // directory's own inode is not replaced by a rename of one of its
+  // entries, so the watch keeps firing indefinitely; dispatch by
+  // filename to the same per-file handling either watcher used to do.
+  // A directory watch's filename argument is not guaranteed by every
+  // platform (Node's own docs) — treat a missing filename as "check
+  // both," never as "check neither."
+  watch(config.vault.agentSecretsDir, (_eventType, filename) => {
+    const name = filename ? basename(String(filename)) : null;
+    if (name === null || name === basename(TOKEN_PATH)) {
       try {
-        const next = readDbCredsFile();
-        if (next.username === state.dbCreds?.username) return; // same render, no-op
-        const { rotateCreds } = await import("./db.js");
-        await rotateCreds(next.username, next.password);
-        state.dbCreds = { username: next.username, password: next.password };
-        state.dbCredsExpiry = new Date(Date.now() + next.lease_duration * 1000);
-        state.dbCredsLeaseId = next.lease_id ?? null;
-        state.lastDbRotationAt = new Date();
-        state.lastDbRotationError = null;
-        console.log(
-          `[vault] db-creds file changed — pool rotated (user=${next.username})`,
-        );
+        const next = readTokenFile();
+        if (next !== state.token) {
+          state.token = next;
+          state.authenticated = true;
+          state.lastTokenRefreshAt = new Date();
+          state.lastTokenRefreshError = null;
+          console.log("[vault] token file changed — picked up new token");
+        }
       } catch (err) {
-        state.lastDbRotationError = { at: new Date(), message: err.message };
-        console.error(
-          `[vault] db-creds file re-read/rotate failed: ${err.message}`,
-        );
+        // Transient: Agent may still be mid-write. Do not flip
+        // authenticated to false on a single failed read — the last good
+        // in-memory token is still valid until proven otherwise by an
+        // actual Vault 403.
+        state.lastTokenRefreshError = { at: new Date(), message: err.message };
+        console.error(`[vault] token file re-read failed: ${err.message}`);
       }
-    })();
+    }
+    if (name === null || name === basename(DB_CREDS_PATH)) {
+      (async () => {
+        try {
+          const next = readDbCredsFile();
+          if (next.username === state.dbCreds?.username) return; // same render, no-op
+          const { rotateCreds } = await import("./db.js");
+          await rotateCreds(next.username, next.password);
+          state.dbCreds = { username: next.username, password: next.password };
+          state.dbCredsExpiry = new Date(
+            Date.now() + next.lease_duration * 1000,
+          );
+          state.dbCredsLeaseId = next.lease_id ?? null;
+          state.lastDbRotationAt = new Date();
+          state.lastDbRotationError = null;
+          console.log(
+            `[vault] db-creds file changed — pool rotated (user=${next.username})`,
+          );
+        } catch (err) {
+          state.lastDbRotationError = { at: new Date(), message: err.message };
+          console.error(
+            `[vault] db-creds file re-read/rotate failed: ${err.message}`,
+          );
+        }
+      })();
+    }
   });
 }
 

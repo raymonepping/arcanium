@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Credential rotation silently stopped after the first pickup, ever
+  (Prompt 43) — a real, live production-availability bug, found the hard
+  way: a day after the previous session, sign-in started failing with a
+  genuine Postgres `password authentication failed` error. `vault.js`
+  used `fs.watch()` on the individual `token` and `db-creds.json` files;
+  Vault Agent writes both atomically (write a temp file, then rename it
+  over the target) — exactly the pattern that permanently kills a
+  single-file `fs.watch()`, since the watch is bound to that file's
+  original inode and nothing re-arms it once a rename replaces that
+  inode, with no error raised either. Confirmed live: Agent's own logs
+  showed 4 successful credential renders overnight; arcanium-api's logs
+  showed exactly 1 pickup, ever — the very first one, then silence.
+  Reproduced the exact mechanism in an isolated script before touching
+  any code (`watch(FILE_PATH)`: 4 renames, 0 events observed) and
+  confirmed the fix survives the identical test (`watch(DIRECTORY)`,
+  filename-dispatched: all 4 observed). Verified live against the real
+  running Vault Agent too, not just the isolated repro: forced three
+  rapid credential rotations in a row (`podman restart
+  arcanium-vault-agent` × 3) and confirmed arcanium-api picked up every
+  single one, immediately, each time — the exact scenario that used to
+  silently break after the first. Immediate live mitigation (a container
+  restart) was applied the moment the bug was found, before the
+  permanent fix was written. Full regression green: fitness suite
+  (39/0/0), negative-auth (31/0), verify-stack (53/1/0).
+
 - Four findings from a fresh, independently-run review with no prior
   project context (Prompt 42), all confirmed live before and after:
   - **False "unhealthy" readiness.** `arcanium-api` had been sitting
