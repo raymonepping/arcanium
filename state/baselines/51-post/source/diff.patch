@@ -1,0 +1,84 @@
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/ui/app/pages/suppliers/index.vue b/arcanium/ui/app/pages/suppliers/index.vue
+index 205b95a..566e087 100644
+--- a/arcanium/ui/app/pages/suppliers/index.vue
++++ b/arcanium/ui/app/pages/suppliers/index.vue
+@@ -1,6 +1,6 @@
+ <script setup lang="ts">
+ import type { Supplier, Application } from '~/types/arcanium'
+-import { apiErrorStatus } from '~/utils/apiError'
++import { apiErrorStatus, apiErrorMessage } from '~/utils/apiError'
+ definePageMeta({ layout: 'default' })
+ useHead({ title: 'Suppliers' })
+ const api = useArcaniumApi()
+@@ -62,8 +62,19 @@ async function save() {
+     mode.value = null
+     await load()
+   } catch (e: unknown) {
++    // Prompt 51 — found live, three separate round-trips before the real
++    // cause (an expired session, a 401) was ever visible: this used to
++    // collapse EVERY non-409/400 failure — auth expired, permission
++    // denied, a real backend outage — into the same "check API
++    // availability" text, which pointed straight at infrastructure no
++    // matter which of those it actually was. apiErrorMessage() already
++    // reads the gateway's own accurate, status-specific text
++    // (server/routes/gateway/[...path].ts sets "Authentication required"
++    // for 401, "Permission denied" for 403, etc.) — the 409/400 cases below stay
++    // as their own more specific wording, better than the gateway's
++    // generic versions; everything else now shows the real reason.
+     const code = apiErrorStatus(e)
+-    saveError.value = code === 409 ? mode.value === 'delete' ? 'This supplier is linked to applications or approval history. Reassign applications; suppliers with retained governance history cannot be deleted.' : 'That supplier name or namespace already exists.' : code === 400 ? 'Check the name, namespace and SLA tier.' : 'Unable to save this change. Check API availability and try again.'
++    saveError.value = code === 409 ? mode.value === 'delete' ? 'This supplier is linked to applications or approval history. Reassign applications; suppliers with retained governance history cannot be deleted.' : 'That supplier name or namespace already exists.' : code === 400 ? 'Check the name, namespace and SLA tier.' : apiErrorMessage(e, 'Unable to save this change. Check API availability and try again.')
+   } finally { saving.value = false }
+ }
+ </script>
+diff --git a/arcanium/ui/app/pages/teams.vue b/arcanium/ui/app/pages/teams.vue
+index be0e603..1908290 100644
+--- a/arcanium/ui/app/pages/teams.vue
++++ b/arcanium/ui/app/pages/teams.vue
+@@ -3,7 +3,7 @@
+ // configuration (CRUD, gated by estate-wide `provision` server-side), not
+ // a user-facing feature — matches suppliers/index.vue's own CRUD pattern.
+ import type { Team, Supplier } from '~/types/arcanium'
+-import { apiErrorStatus } from '~/utils/apiError'
++import { apiErrorStatus, apiErrorMessage } from '~/utils/apiError'
+ definePageMeta({ layout: 'default' })
+ useHead({ title: 'Teams' })
+ const api = useArcaniumApi()
+@@ -79,10 +79,15 @@ async function save() {
+     mode.value = null
+     await load()
+   } catch (e: unknown) {
++    // Prompt 51 — same fix as suppliers/index.vue: everything besides
++    // 409/400 now shows apiErrorMessage()'s real, status-specific text
++    // (session expired, permission denied, ...) instead of a generic
++    // "check API availability" that pointed at infrastructure regardless
++    // of the actual cause.
+     const code = apiErrorStatus(e)
+     saveError.value = code === 409 ? 'That team name already exists.'
+       : code === 400 ? 'Check the team name (letters, numbers, underscores, hyphens).'
+-      : 'Unable to save this change. Check API availability and try again.'
++      : apiErrorMessage(e, 'Unable to save this change. Check API availability and try again.')
+   } finally { saving.value = false }
+ }
+ </script>
+diff --git a/state/CURRENT b/state/CURRENT
+index a8739ff..9ac0235 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/50-post
++state/baselines/51-pre

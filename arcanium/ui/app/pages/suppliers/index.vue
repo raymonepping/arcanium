@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Supplier, Application } from '~/types/arcanium'
-import { apiErrorStatus } from '~/utils/apiError'
+import { apiErrorStatus, apiErrorMessage } from '~/utils/apiError'
 definePageMeta({ layout: 'default' })
 useHead({ title: 'Suppliers' })
 const api = useArcaniumApi()
@@ -62,8 +62,19 @@ async function save() {
     mode.value = null
     await load()
   } catch (e: unknown) {
+    // Prompt 51 — found live, three separate round-trips before the real
+    // cause (an expired session, a 401) was ever visible: this used to
+    // collapse EVERY non-409/400 failure — auth expired, permission
+    // denied, a real backend outage — into the same "check API
+    // availability" text, which pointed straight at infrastructure no
+    // matter which of those it actually was. apiErrorMessage() already
+    // reads the gateway's own accurate, status-specific text
+    // (server/routes/gateway/[...path].ts sets "Authentication required"
+    // for 401, "Permission denied" for 403, etc.) — the 409/400 cases below stay
+    // as their own more specific wording, better than the gateway's
+    // generic versions; everything else now shows the real reason.
     const code = apiErrorStatus(e)
-    saveError.value = code === 409 ? mode.value === 'delete' ? 'This supplier is linked to applications or approval history. Reassign applications; suppliers with retained governance history cannot be deleted.' : 'That supplier name or namespace already exists.' : code === 400 ? 'Check the name, namespace and SLA tier.' : 'Unable to save this change. Check API availability and try again.'
+    saveError.value = code === 409 ? mode.value === 'delete' ? 'This supplier is linked to applications or approval history. Reassign applications; suppliers with retained governance history cannot be deleted.' : 'That supplier name or namespace already exists.' : code === 400 ? 'Check the name, namespace and SLA tier.' : apiErrorMessage(e, 'Unable to save this change. Check API availability and try again.')
   } finally { saving.value = false }
 }
 </script>

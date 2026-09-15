@@ -78,6 +78,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Suppliers/Teams create-or-edit dialogs (Prompt 51) collapsed every
+  failure besides a 409/400 into "Unable to save this change. Check API
+  availability and try again." — actively misleading for the two most
+  common real causes (an expired session, a scoped persona lacking
+  `provision`), both pointing at the user's own auth state, never
+  infrastructure. User, after three separate round-trips where that
+  exact text turned out to mean three different things: "yes please" to
+  fixing it. `utils/apiError.ts`'s `apiErrorMessage()` already reads the
+  gateway's own accurate, status-specific text and is already the
+  established pattern in five other pages — suppliers/teams simply never
+  called it. Verified live: a genuinely scoped persona's blocked create
+  now shows "Permission denied" instead of the old generic text; the
+  409/400 cases keep their existing, more specific wording unchanged.
 - `scenarios/05_approval/approve.sh` had the same pre-Prompt-18 gap as
   `external-supplier` (Prompt 50, found immediately after fixing that
   one): its two Arcanium API calls carried no credential, so the very

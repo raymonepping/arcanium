@@ -3,7 +3,7 @@
 // configuration (CRUD, gated by estate-wide `provision` server-side), not
 // a user-facing feature — matches suppliers/index.vue's own CRUD pattern.
 import type { Team, Supplier } from '~/types/arcanium'
-import { apiErrorStatus } from '~/utils/apiError'
+import { apiErrorStatus, apiErrorMessage } from '~/utils/apiError'
 definePageMeta({ layout: 'default' })
 useHead({ title: 'Teams' })
 const api = useArcaniumApi()
@@ -79,10 +79,15 @@ async function save() {
     mode.value = null
     await load()
   } catch (e: unknown) {
+    // Prompt 51 — same fix as suppliers/index.vue: everything besides
+    // 409/400 now shows apiErrorMessage()'s real, status-specific text
+    // (session expired, permission denied, ...) instead of a generic
+    // "check API availability" that pointed at infrastructure regardless
+    // of the actual cause.
     const code = apiErrorStatus(e)
     saveError.value = code === 409 ? 'That team name already exists.'
       : code === 400 ? 'Check the team name (letters, numbers, underscores, hyphens).'
-      : 'Unable to save this change. Check API availability and try again.'
+      : apiErrorMessage(e, 'Unable to save this change. Check API availability and try again.')
   } finally { saving.value = false }
 }
 </script>
