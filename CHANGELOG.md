@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Periodic credential/token reconciliation, a backstop on top of Prompt
+  43's directory watch (Prompt 44). User, after that fix: "this won't
+  happen again or do we need to place more guardrails?" — the watch is
+  real and proven, but `fs.watch()` itself isn't unconditionally
+  guaranteed by Node across every platform/condition. A 5-minute timer
+  now unconditionally re-reads both the token and DB-credential files
+  (shared logic with the watch, not a second implementation) and
+  live-verifies the Vault token itself (`auth/token/lookup-self`) —
+  populating its real remaining TTL for the first time ever, and
+  actually reconsidering `authenticated` on a genuine `403` instead of
+  it being a permanent one-way ratchet. Verified live end-to-end: waited
+  for a real scheduled tick (no code sped up) to confirm normal
+  operation; revoked arcanium-api's live Vault token directly and waited
+  for the next tick to confirm detection, with real evidence recorded,
+  not a guess; then forced a fresh Agent re-authentication and confirmed
+  the existing directory watch recovered it within seconds, proving the
+  two mechanisms work together — the watch as the fast path, the timer
+  as the guaranteed-eventually backstop.
+
 ### Fixed
 
 - Credential rotation silently stopped after the first pickup, ever

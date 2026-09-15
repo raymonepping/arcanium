@@ -103,15 +103,20 @@ const state = {
   dbCreds: null,
   dbCredsExpiry: null,
   dbCredsLeaseId: null,
-  // Prompt 30 — "authenticated" now means "we have successfully read a
-  // non-empty token from Agent's sink file at least once," not "this
-  // process itself completed an AppRole login." tokenExpiry/loginAttempts
-  // are no longer knowable from this file (Agent never writes lease
-  // metadata into the sink file, only the raw token) — left as documented,
-  // honest nulls rather than fabricated.
+  // Prompt 30 — "authenticated" originally meant only "we have
+  // successfully read a non-empty token from Agent's sink file at least
+  // once" — a ratchet that only ever went true, never reconsidered.
+  // Prompt 44 — verifyTokenLive() now actually reconsiders it: a real
+  // 403 on a live auth/token/lookup-self call flips this back to false,
+  // never a transient/unreachable error (same "don't fabricate a
+  // negative from a side-check failure" rule the DB lease check
+  // already follows). loginAttempts stays unknowable from this file, as
+  // documented.
   authenticated: false,
   tokenExpiry: null,
   loginAttempts: null,
+  lastTokenVerifiedAt: null,
+  lastTokenVerifyError: null,
   // Last time each watched file was successfully read+parsed (renamed
   // conceptually from Prompt 29's "last rotation succeeded" — same shape,
   // same health.js consumer, now observing Agent's writes instead of our
@@ -168,6 +173,96 @@ async function waitForFile(path, label, timeoutMs = 30_000) {
   );
 }
 
+// Prompt 44 — extracted from the directory-watch callback so there is
+// exactly one implementation of "read the token file and update state if
+// it changed," callable both from the watch (the fast path) and from the
+// periodic reconciliation timer below (the backstop, independent of
+// whether any watch event ever fires).
+function reconcileTokenFile() {
+  try {
+    const next = readTokenFile();
+    if (next !== state.token) {
+      state.token = next;
+      state.authenticated = true;
+      state.lastTokenRefreshAt = new Date();
+      state.lastTokenRefreshError = null;
+      console.log("[vault] token file changed — picked up new token");
+    }
+  } catch (err) {
+    // Transient: Agent may still be mid-write. Do not flip authenticated
+    // to false on a single failed read — the last good in-memory token
+    // is still valid until proven otherwise by an actual Vault 403 (see
+    // verifyTokenLive(), which is the thing that actually gets to make
+    // that call, with real evidence).
+    state.lastTokenRefreshError = { at: new Date(), message: err.message };
+    console.error(`[vault] token file re-read failed: ${err.message}`);
+  }
+}
+
+// Prompt 44 — same extraction as reconcileTokenFile() above, same reason.
+async function reconcileDbCredsFile() {
+  try {
+    const next = readDbCredsFile();
+    if (next.username === state.dbCreds?.username) return; // same render, no-op
+    const { rotateCreds } = await import("./db.js");
+    await rotateCreds(next.username, next.password);
+    state.dbCreds = { username: next.username, password: next.password };
+    state.dbCredsExpiry = new Date(Date.now() + next.lease_duration * 1000);
+    state.dbCredsLeaseId = next.lease_id ?? null;
+    state.lastDbRotationAt = new Date();
+    state.lastDbRotationError = null;
+    console.log(
+      `[vault] db-creds file changed — pool rotated (user=${next.username})`,
+    );
+  } catch (err) {
+    state.lastDbRotationError = { at: new Date(), message: err.message };
+    console.error(
+      `[vault] db-creds file re-read/rotate failed: ${err.message}`,
+    );
+  }
+}
+
+// Prompt 44 — the token side's equivalent of checkDbLeaseTtl() (Prompt
+// 42): a cheap, side-effect-free live read (auth/token/lookup-self) that
+// asks Vault directly whether the token this process is holding is
+// actually still good, instead of only ever finding out indirectly, the
+// next time some unrelated Vault call happens to fail with a 403. Also
+// answers a question Prompt 30's own comment said was unanswerable from
+// this file alone — the token's real remaining TTL.
+async function verifyTokenLive() {
+  if (!state.token) return;
+  try {
+    const res = await vaultRequest(
+      "GET",
+      "auth/token/lookup-self",
+      null,
+      state.token,
+    );
+    state.tokenExpiry =
+      typeof res?.data?.ttl === "number"
+        ? new Date(Date.now() + res.data.ttl * 1000)
+        : null;
+    state.authenticated = true;
+    state.lastTokenVerifiedAt = new Date();
+    state.lastTokenVerifyError = null;
+  } catch (err) {
+    state.lastTokenVerifiedAt = new Date();
+    state.lastTokenVerifyError = { at: new Date(), message: err.message };
+    if (err.vaultStatus === 403) {
+      // Real evidence, not a guess: Vault itself says this token is no
+      // longer valid. This is the one place `authenticated` is ever
+      // reconsidered after being set true — never on a transient/
+      // unreachable error, only on Vault's own definitive rejection.
+      state.authenticated = false;
+      console.error(
+        `[vault] live token verification failed with a real 403 — token is no longer valid`,
+      );
+    } else {
+      console.error(`[vault] live token verification failed: ${err.message}`);
+    }
+  }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 export async function init() {
   await waitForFile(TOKEN_PATH, "Agent token sink");
@@ -213,51 +308,27 @@ export async function init() {
   // both," never as "check neither."
   watch(config.vault.agentSecretsDir, (_eventType, filename) => {
     const name = filename ? basename(String(filename)) : null;
-    if (name === null || name === basename(TOKEN_PATH)) {
-      try {
-        const next = readTokenFile();
-        if (next !== state.token) {
-          state.token = next;
-          state.authenticated = true;
-          state.lastTokenRefreshAt = new Date();
-          state.lastTokenRefreshError = null;
-          console.log("[vault] token file changed — picked up new token");
-        }
-      } catch (err) {
-        // Transient: Agent may still be mid-write. Do not flip
-        // authenticated to false on a single failed read — the last good
-        // in-memory token is still valid until proven otherwise by an
-        // actual Vault 403.
-        state.lastTokenRefreshError = { at: new Date(), message: err.message };
-        console.error(`[vault] token file re-read failed: ${err.message}`);
-      }
-    }
+    if (name === null || name === basename(TOKEN_PATH)) reconcileTokenFile();
     if (name === null || name === basename(DB_CREDS_PATH)) {
-      (async () => {
-        try {
-          const next = readDbCredsFile();
-          if (next.username === state.dbCreds?.username) return; // same render, no-op
-          const { rotateCreds } = await import("./db.js");
-          await rotateCreds(next.username, next.password);
-          state.dbCreds = { username: next.username, password: next.password };
-          state.dbCredsExpiry = new Date(
-            Date.now() + next.lease_duration * 1000,
-          );
-          state.dbCredsLeaseId = next.lease_id ?? null;
-          state.lastDbRotationAt = new Date();
-          state.lastDbRotationError = null;
-          console.log(
-            `[vault] db-creds file changed — pool rotated (user=${next.username})`,
-          );
-        } catch (err) {
-          state.lastDbRotationError = { at: new Date(), message: err.message };
-          console.error(
-            `[vault] db-creds file re-read/rotate failed: ${err.message}`,
-          );
-        }
-      })();
+      reconcileDbCredsFile();
     }
   });
+
+  // Prompt 44 — user, after Prompt 43's fix: "this won't happen again or
+  // do we need to place more guardrails?" The directory watch above is
+  // the fast path, but fs.watch() itself is documented by Node as not
+  // 100% consistent across every platform/condition — this is the
+  // backstop: unconditionally re-read both files and live-verify the
+  // token on a fixed schedule, independent of whether any watch event
+  // ever fires again, for any reason. 5 minutes — frequent enough to
+  // catch a real problem well within a demo session, infrequent enough
+  // not to matter for load (one cheap Vault read per tick).
+  const RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+  setInterval(() => {
+    reconcileTokenFile();
+    reconcileDbCredsFile();
+    verifyTokenLive();
+  }, RECONCILE_INTERVAL_MS).unref();
 }
 
 export function getDbCredentials() {
@@ -323,7 +394,13 @@ export async function checkDbLeaseTtl() {
 export function getStatus() {
   return {
     authenticated: state.authenticated,
+    // Prompt 44 — previously always null ("not knowable from this file,"
+    // per Prompt 30's own comment). verifyTokenLive() now populates this
+    // from a real auth/token/lookup-self read, on the same 5-minute
+    // schedule that reconsiders `authenticated` itself.
     tokenExpiry: state.tokenExpiry,
+    lastTokenVerifiedAt: state.lastTokenVerifiedAt,
+    lastTokenVerifyError: state.lastTokenVerifyError,
     // Locally-computed estimate only (fileWriteTime + lease_duration at
     // last render) — does NOT reflect Agent's own background lease
     // renewals of the same credential, so it can understate real

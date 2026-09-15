@@ -114,6 +114,14 @@ healthRouter.get("/", async (_req, res) => {
       ...(vaultState.lastTokenRefreshError
         ? { lastTokenRefreshError: vaultState.lastTokenRefreshError }
         : {}),
+      // Prompt 44 — the live-verified counterpart to lastTokenRefreshAt
+      // above: when this was last actually confirmed against Vault
+      // itself (auth/token/lookup-self), not just last read from the
+      // sink file.
+      lastTokenVerifiedAt: vaultState.lastTokenVerifiedAt,
+      ...(vaultState.lastTokenVerifyError
+        ? { lastTokenVerifyError: vaultState.lastTokenVerifyError }
+        : {}),
       ...(vaultState.authenticated ? {} : { error: "not authenticated" }),
     },
     database: {
