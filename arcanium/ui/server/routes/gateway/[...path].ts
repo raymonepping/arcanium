@@ -12,6 +12,9 @@ export default defineEventHandler(async (event) => {
       // Prompt 20 — reconciliation sweep + governed actions.
       || /^api\/v1\/reconciliation\/run$/.test(path)
       || /^api\/v1\/reconciliation\/[a-zA-Z0-9_-]+\/(reconcile|accept-exception)$/.test(path)
+      // Prompt 52 — creating a new desired-state row (rotation or expiry
+      // policy), not just editing an existing one (the PATCH entry below).
+      || /^api\/v1\/reconciliation\/desired-state$/.test(path)
       // Prompt 28 — issuing a new service-account token.
       || /^api\/v1\/service-accounts\/[a-f0-9-]+\/tokens$/.test(path)
     ))

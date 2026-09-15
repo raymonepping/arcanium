@@ -104,6 +104,24 @@ export function useArcaniumApi() {
       $post<any>(`/api/v1/reconciliation/${encodeURIComponent(runId)}/accept-exception`, { reason, expires_at: expiresAt }),
     setDesiredState: (desiredStateId: string, days: number, reason?: string) =>
       $patch<any>(`/api/v1/reconciliation/desired-state/${encodeURIComponent(desiredStateId)}`, { desired_value: { days }, reason }),
+    // Prompt 52 — creating a NEW desired-state row (setDesiredState above
+    // only ever edits an existing one). desiredValue's shape must match
+    // requirement: {days: number} for rotation_period, {not_after:
+    // "YYYY-MM-DD"} for expiry_date — enforced server-side.
+    createDesiredState: (
+      applicationId: string,
+      keyName: string,
+      requirement: 'rotation_period' | 'expiry_date',
+      desiredValue: { days: number } | { not_after: string },
+      reason?: string,
+    ) =>
+      $post<any>('/api/v1/reconciliation/desired-state', {
+        application_id: applicationId,
+        key_name: keyName,
+        requirement,
+        desired_value: desiredValue,
+        reason,
+      }),
 
     // ── Health ─────────────────────────────────────────────
     health: () => $get<ApiHealth>('/health'),

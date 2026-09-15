@@ -50,6 +50,7 @@
       <!-- Governance -->
       <div class="section-header" style="margin-top: 24px;">
         <h3 class="section-title">Governance</h3>
+        <button v-if="intent.custody.length" class="secondary-button policy-btn" @click="openPolicyDialog">+ Set policy</button>
       </div>
       <p class="governance-note">
         Destruction requires approval: <strong>{{ intent.governance.destruction_requires_approval ? 'yes' : 'no' }}</strong>
@@ -143,6 +144,41 @@
           </tr>
         </tbody>
       </table>
+
+      <ManagementDialog
+        :open="policyDialogOpen"
+        title="Set policy"
+        description="Declare a desired rotation period or expiry date for one of this application's keys."
+        @update:open="value => { if (!value && !policySaving) policyDialogOpen = false }"
+      >
+        <form @submit.prevent="savePolicy">
+          <label class="form-field">Key
+            <select v-model="policyForm.keyName" required>
+              <option v-for="c in intent.custody" :key="c.profile_id" :value="c.key_name">{{ c.key_name }}</option>
+            </select>
+          </label>
+          <label class="form-field">Requirement
+            <select v-model="policyForm.requirement">
+              <option value="rotation_period">Rotation period</option>
+              <option value="expiry_date">Expiry date</option>
+            </select>
+          </label>
+          <label v-if="policyForm.requirement === 'rotation_period'" class="form-field">Rotation period (days)
+            <input v-model.number="policyForm.days" type="number" min="1" required />
+          </label>
+          <label v-else class="form-field">Not after
+            <input v-model="policyForm.notAfter" type="date" required />
+          </label>
+          <label class="form-field">Reason <small>(optional)</small>
+            <input v-model.trim="policyForm.reason" placeholder="e.g. quarterly rotation policy" />
+          </label>
+          <p v-if="policyError" class="inline-notice error" role="alert">{{ policyError }}</p>
+          <div class="form-actions">
+            <button type="button" class="secondary-button" :disabled="policySaving" @click="policyDialogOpen = false">Cancel</button>
+            <button class="primary-button" :disabled="policySaving">{{ policySaving ? 'Saving…' : 'Save policy' }}</button>
+          </div>
+        </form>
+      </ManagementDialog>
     </div>
   </div>
 </template>
@@ -158,11 +194,43 @@ definePageMeta({ layout: 'default' })
 
 const route = useRoute()
 const id = route.params.id as string
-const { applicationIntent } = useArcaniumApi()
+const { applicationIntent, createDesiredState } = useArcaniumApi()
 
 const loading = ref(true)
 const error = ref('')
 const intent = ref<ApplicationIntent | null>(null)
+
+// Prompt 52 — "+ Set policy": createDesiredState() is the missing UI path
+// this dialog closes (previously API-only — setDesiredState() above only
+// ever edits an existing row).
+const policyDialogOpen = ref(false)
+const policySaving = ref(false)
+const policyError = ref('')
+const policyForm = ref({ keyName: '', requirement: 'rotation_period' as 'rotation_period' | 'expiry_date', days: 90, notAfter: '', reason: '' })
+
+function openPolicyDialog() {
+  policyForm.value = { keyName: intent.value?.custody[0]?.key_name ?? '', requirement: 'rotation_period', days: 90, notAfter: '', reason: '' }
+  policyError.value = ''
+  policyDialogOpen.value = true
+}
+
+async function savePolicy() {
+  if (policySaving.value) return
+  policySaving.value = true
+  policyError.value = ''
+  try {
+    const desiredValue = policyForm.value.requirement === 'rotation_period'
+      ? { days: policyForm.value.days }
+      : { not_after: policyForm.value.notAfter }
+    await createDesiredState(id, policyForm.value.keyName, policyForm.value.requirement, desiredValue, policyForm.value.reason || undefined)
+    policyDialogOpen.value = false
+    intent.value = await applicationIntent(id)
+  } catch (e: unknown) {
+    policyError.value = apiErrorMessage(e, 'Could not save this policy.')
+  } finally {
+    policySaving.value = false
+  }
+}
 
 useHead({ title: 'Intent' })
 
@@ -213,6 +281,7 @@ onMounted(async () => {
 .story-summary { font-size: 12px; color: var(--arc-text-secondary); }
 
 .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.policy-btn { margin-left: auto; padding: 5px 12px; font-size: 12px; }
 .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-primary); margin: 0; }
 .count-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 100px; background: rgba(0,119,182,0.1); color: var(--arc-action-bright); }
 .empty-panel { background: var(--arc-bg-card); border: 1px solid var(--arc-border-subtle); border-radius: 10px; padding: 20px; text-align: center; font-size: 13px; color: var(--arc-text-muted); margin-bottom: 16px; }

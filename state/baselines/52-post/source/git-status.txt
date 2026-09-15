@@ -1,0 +1,7 @@
+ M Makefile
+ M arcanium/ui/app/composables/useArcaniumApi.ts
+ M arcanium/ui/app/pages/applications/[id]/intent.vue
+ M arcanium/ui/server/routes/gateway/[...path].ts
+ M state/CURRENT
+?? scripts/clean-slate.sh
+?? state/baselines/52-pre/

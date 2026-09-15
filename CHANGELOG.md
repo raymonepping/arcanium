@@ -33,6 +33,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- "+ Set policy" on the application intent view (Prompt 52): a real UI
+  path to declare a rotation-period or expiry-date desired-state policy
+  on any of an application's keys — previously API-only
+  (`POST /api/v1/reconciliation/desired-state` existed and worked, but
+  no form ever called it; the UI could only edit an *existing* row's
+  rotation days, never create a new one of either kind). Found live
+  chasing the maturity model to level 5: clearing `KML-DESTR-01`
+  required a genuine `expiry_date` row, and there was no way to create
+  one without curl. User: "We need to resolve that UI then as well.
+  Yes, prompt it, execute it after that, record the state and do a
+  commit." Reuses the existing `ManagementDialog` shell (same as
+  Suppliers/Teams) and the application's own already-fetched custody
+  list for the key dropdown — no new read endpoint needed. The
+  gateway's write allowlist didn't cover this POST route either; added
+  alongside the existing `PATCH .../desired-state/:id` entry it already
+  had. Verified live: real dropdown-populated key list, the value field
+  correctly swaps between a days number and a not-after date, and the
+  new policy appears in the Governance table immediately on save.
 - Periodic credential/token reconciliation, a backstop on top of Prompt
   43's directory watch (Prompt 44). User, after that fix: "this won't
   happen again or do we need to place more guardrails?" — the watch is
