@@ -45,9 +45,9 @@ services:
       VAULT_ADDR: "https://vault-1:8200"
       VAULT_CACERT: "/vault/tls/ca-chain.pem"
       # Prompt 30 — VAULT_ROLE_ID/VAULT_SECRET_ID removed: this process no
-      # longer logs in itself. arcanium-vault-agent (below) does, and
-      # renders a token + DB credential into vault-agent-secrets, mounted
-      # read-only here.
+      # longer logs in itself. arcanium-vault-agent (compose/vault/
+      # compose.yaml — moved there Prompt 45) does, and renders a token +
+      # DB credential into vault-agent-secrets, mounted read-only here.
       # Prompt 14.2 — provisioner token for cross-namespace writes
       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
       # Prompt 18 — human auth via OIDC (default off)
@@ -85,9 +85,14 @@ services:
       - arcanium-control
       - arcanium-vault-internal
     restart: unless-stopped
-    depends_on:
-      arcanium-vault-agent:
-        condition: service_healthy
+    # Prompt 45 — the compose-level `depends_on: arcanium-vault-agent`
+    # that used to be here is gone: Compose has no cross-project
+    # depends_on, and arcanium-vault-agent now lives in compose/vault/
+    # compose.yaml. scripts/rehydrate-stack.sh's own explicit step waits
+    # for arcanium-vault-agent to report healthy before this service is
+    # started, replacing that guarantee at the orchestration-script level.
+    # vault.js's own waitForFile() (30s, with retry) is the last-resort
+    # safety net for anyone starting this container standalone.
     # Prompt 29 — /health/live always returns 200 (process-up only) and
     # never noticed a live incident where the DB credential rotation loop
     # died silently and every authenticated request failed for 13+ minutes
@@ -154,9 +159,11 @@ services:
     networks:
       - arcanium-control
       - arcanium-vault-internal
-    depends_on:
-      arcanium-vault-agent:
-        condition: service_healthy
+    # Prompt 45 — same as arcanium-api: the depends_on on
+    # arcanium-vault-agent that used to be here moved to
+    # scripts/rehydrate-stack.sh's own explicit wait step (Compose has no
+    # cross-project depends_on, and vault-agent lives in compose/vault/
+    # compose.yaml now).
     # Prompt 29 — /health/live always returns 200 (process-up only) and
     # never noticed a live incident where the DB credential rotation loop
     # died silently and every authenticated request failed for 13+ minutes
@@ -218,54 +225,13 @@ services:
       timeout: 3s
       retries: 3
       start_period: 20s
+    # Prompt 45 — the arcanium-vault-agent entry that used to be here
+    # moved to scripts/rehydrate-stack.sh's own explicit wait step (same
+    # reasoning as arcanium-api/arcanium-api-dev above). The arcanium-api
+    # dependency stays — that one's still in this same compose project.
     depends_on:
       arcanium-api:
         condition: service_healthy
-      arcanium-vault-agent:
-        condition: service_healthy
-
-  # Prompt 30 — owns AppRole auto-auth + dynamic DB-credential rendering
-  # for the arcanium-api identity, replacing vault.js's own hand-rolled
-  # login()/rotation retry loops (Prompt 29 hardened those; this prompt
-  # removes the need for this project to own that problem at all). Proven
-  # standalone (real token + real DB creds rendered and verified) before
-  # arcanium-api/arcanium-worker were ever pointed at it — see this
-  # prompt's own Design rules.
-  arcanium-vault-agent:
-    image: docker.io/hashicorp/vault-enterprise:2.1.0-ent
-    container_name: arcanium-vault-agent
-    hostname: arcanium-vault-agent
-    # Prompt 30 — NOT "100:1000" (the vault-1/2/3/vault-s convention):
-    # this agent's rendered token file needs to be read cross-container by
-    # arcanium-api/worker, which run as 1000:1000. The sink stanza's own
-    # `mode` config did not reliably grant group-read (see config.hcl's
-    # own comment) — matching the UID directly sidesteps that entirely,
-    # since the file's default owner-only 0600 then already covers it.
-    user: "1000:1000"
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    read_only: true
-    tmpfs: [/tmp, /home/vault]
-    entrypoint: ["/vault/agent/entrypoint.sh"]
-    environment:
-      VAULT_ADDR: "https://vault-1:8200"
-      VAULT_CACERT: "/vault/tls/ca-chain.pem"
-      ARCANIUM_VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
-      ARCANIUM_VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
-    volumes:
-      - ../../vault-tls:/vault/tls:ro
-      - ./vault-agent/config.hcl:/vault/agent/config.hcl:ro
-      - ./vault-agent/entrypoint.sh:/vault/agent/entrypoint.sh:ro
-      - vault-agent-secrets:/vault/secrets
-    networks:
-      - arcanium-vault-internal
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "test -s /vault/secrets/token && test -s /vault/secrets/db-creds.json"]
-      interval: 15s
-      timeout: 5s
-      start_period: 30s
-      retries: 3
 
 networks:
   arcanium-control:
@@ -280,7 +246,16 @@ volumes:
   vault-1-audit:
     name: arcanium-vault_vault-1-audit
     external: true
-  # Prompt 30 — owned by THIS compose project (not external): shared
-  # between arcanium-vault-agent (writer) and arcanium-api/arcanium-worker
-  # (read-only consumers, Deliverable 3).
-  vault-agent-secrets: {}
+  # Prompt 30 — shared between arcanium-vault-agent (writer) and
+  # arcanium-api/arcanium-worker (read-only consumers, Deliverable 3).
+  # Prompt 45 — arcanium-vault-agent itself moved to compose/vault/
+  # compose.yaml (this is Vault auto-auth, not an arcanium-application
+  # concern — see that file's own comment); this volume moved with it and
+  # is owned there now, referenced here as external. Naming matches the
+  # existing vault-1-audit reference above (scripts/compose.sh's
+  # --project-name "arcanium-$stack" convention: a plain volume named
+  # vault-agent-secrets in the vault project becomes
+  # arcanium-vault_vault-agent-secrets).
+  vault-agent-secrets:
+    name: arcanium-vault_vault-agent-secrets
+    external: true

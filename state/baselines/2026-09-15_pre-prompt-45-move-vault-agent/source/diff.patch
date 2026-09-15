@@ -1,0 +1,14 @@
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers

@@ -1,0 +1,355 @@
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/src/config.js b/arcanium/api/src/config.js
+index a347283..8299a09 100644
+--- a/arcanium/api/src/config.js
++++ b/arcanium/api/src/config.js
+@@ -25,7 +25,7 @@ const config = {
+     // dynamic DB credential to agentSecretsDir below. VAULT_ROLE_ID/
+     // VAULT_SECRET_ID are no longer read here — they're consumed directly
+     // by the vault-agent container's own entrypoint
+-    // (compose/arcanium/vault-agent/entrypoint.sh), which still sources
++    // (compose/vault/vault-agent/entrypoint.sh — Prompt 45), which still sources
+     // them from the exact same ARCANIUM_VAULT_ROLE_ID/
+     // ARCANIUM_VAULT_SECRET_ID .env values as before (no new credential
+     // issuance path — see that entrypoint's own header comment).
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index ba3c0d3..e46de61 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -1,8 +1,9 @@
+ // vault.js — Vault API client.
+ //
+ // Prompt 30 — AppRole auto-auth and dynamic-DB-credential rotation are no
+-// longer this file's problem. arcanium-vault-agent (compose/arcanium/
+-// vault-agent/) owns both: it authenticates on its own schedule/retry
++// longer this file's problem. arcanium-vault-agent (compose/vault/
++// vault-agent/ — moved there from compose/arcanium/ in Prompt 45) owns
++// both: it authenticates on its own schedule/retry
+ // logic (HashiCorp's own, not ours) and renders a current token +
+ // database/creds/arcanium-api-role credential to a shared volume. This
+ // file just reads what Agent already wrote, and reacts when those files
+@@ -347,7 +348,7 @@ export function getDbCredentials() {
+ // FailingStreak in the hundreds, while every actual database query kept
+ // succeeding the entire time.
+ //
+-// The template already renders `lease_id` (compose/arcanium/vault-agent/
++// The template already renders `lease_id` (compose/vault/vault-agent/
+ // config.hcl) — previously unused. This asks Vault directly, via
+ // `sys/leases/lookup`, for the lease's real remaining TTL — the one
+ // number that actually reflects Agent's background renewals, since
+diff --git a/compose/arcanium/compose.yaml b/compose/arcanium/compose.yaml
+index 5facc2e..a833ea8 100644
+--- a/compose/arcanium/compose.yaml
++++ b/compose/arcanium/compose.yaml
+@@ -45,9 +45,9 @@ services:
+       VAULT_ADDR: "https://vault-1:8200"
+       VAULT_CACERT: "/vault/tls/ca-chain.pem"
+       # Prompt 30 — VAULT_ROLE_ID/VAULT_SECRET_ID removed: this process no
+-      # longer logs in itself. arcanium-vault-agent (below) does, and
+-      # renders a token + DB credential into vault-agent-secrets, mounted
+-      # read-only here.
++      # longer logs in itself. arcanium-vault-agent (compose/vault/
++      # compose.yaml — moved there Prompt 45) does, and renders a token +
++      # DB credential into vault-agent-secrets, mounted read-only here.
+       # Prompt 14.2 — provisioner token for cross-namespace writes
+       VAULT_PROVISIONER_TOKEN: "${VAULT_PROVISIONER_TOKEN:-}"
+       # Prompt 18 — human auth via OIDC (default off)
+@@ -85,9 +85,14 @@ services:
+       - arcanium-control
+       - arcanium-vault-internal
+     restart: unless-stopped
+-    depends_on:
+-      arcanium-vault-agent:
+-        condition: service_healthy
++    # Prompt 45 — the compose-level `depends_on: arcanium-vault-agent`
++    # that used to be here is gone: Compose has no cross-project
++    # depends_on, and arcanium-vault-agent now lives in compose/vault/
++    # compose.yaml. scripts/rehydrate-stack.sh's own explicit step waits
++    # for arcanium-vault-agent to report healthy before this service is
++    # started, replacing that guarantee at the orchestration-script level.
++    # vault.js's own waitForFile() (30s, with retry) is the last-resort
++    # safety net for anyone starting this container standalone.
+     # Prompt 29 — /health/live always returns 200 (process-up only) and
+     # never noticed a live incident where the DB credential rotation loop
+     # died silently and every authenticated request failed for 13+ minutes
+@@ -154,9 +159,11 @@ services:
+     networks:
+       - arcanium-control
+       - arcanium-vault-internal
+-    depends_on:
+-      arcanium-vault-agent:
+-        condition: service_healthy
++    # Prompt 45 — same as arcanium-api: the depends_on on
++    # arcanium-vault-agent that used to be here moved to
++    # scripts/rehydrate-stack.sh's own explicit wait step (Compose has no
++    # cross-project depends_on, and vault-agent lives in compose/vault/
++    # compose.yaml now).
+     # Prompt 29 — /health/live always returns 200 (process-up only) and
+     # never noticed a live incident where the DB credential rotation loop
+     # died silently and every authenticated request failed for 13+ minutes
+@@ -218,54 +225,13 @@ services:
+       timeout: 3s
+       retries: 3
+       start_period: 20s
++    # Prompt 45 — the arcanium-vault-agent entry that used to be here
++    # moved to scripts/rehydrate-stack.sh's own explicit wait step (same
++    # reasoning as arcanium-api/arcanium-api-dev above). The arcanium-api
++    # dependency stays — that one's still in this same compose project.
+     depends_on:
+       arcanium-api:
+         condition: service_healthy
+-      arcanium-vault-agent:
+-        condition: service_healthy
+-
+-  # Prompt 30 — owns AppRole auto-auth + dynamic DB-credential rendering
+-  # for the arcanium-api identity, replacing vault.js's own hand-rolled
+-  # login()/rotation retry loops (Prompt 29 hardened those; this prompt
+-  # removes the need for this project to own that problem at all). Proven
+-  # standalone (real token + real DB creds rendered and verified) before
+-  # arcanium-api/arcanium-worker were ever pointed at it — see this
+-  # prompt's own Design rules.
+-  arcanium-vault-agent:
+-    image: docker.io/hashicorp/vault-enterprise:2.1.0-ent
+-    container_name: arcanium-vault-agent
+-    hostname: arcanium-vault-agent
+-    # Prompt 30 — NOT "100:1000" (the vault-1/2/3/vault-s convention):
+-    # this agent's rendered token file needs to be read cross-container by
+-    # arcanium-api/worker, which run as 1000:1000. The sink stanza's own
+-    # `mode` config did not reliably grant group-read (see config.hcl's
+-    # own comment) — matching the UID directly sidesteps that entirely,
+-    # since the file's default owner-only 0600 then already covers it.
+-    user: "1000:1000"
+-    cap_drop: [ALL]
+-    security_opt: ["no-new-privileges:true"]
+-    read_only: true
+-    tmpfs: [/tmp, /home/vault]
+-    entrypoint: ["/vault/agent/entrypoint.sh"]
+-    environment:
+-      VAULT_ADDR: "https://vault-1:8200"
+-      VAULT_CACERT: "/vault/tls/ca-chain.pem"
+-      ARCANIUM_VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
+-      ARCANIUM_VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
+-    volumes:
+-      - ../../vault-tls:/vault/tls:ro
+-      - ./vault-agent/config.hcl:/vault/agent/config.hcl:ro
+-      - ./vault-agent/entrypoint.sh:/vault/agent/entrypoint.sh:ro
+-      - vault-agent-secrets:/vault/secrets
+-    networks:
+-      - arcanium-vault-internal
+-    restart: unless-stopped
+-    healthcheck:
+-      test: ["CMD-SHELL", "test -s /vault/secrets/token && test -s /vault/secrets/db-creds.json"]
+-      interval: 15s
+-      timeout: 5s
+-      start_period: 30s
+-      retries: 3
+ 
+ networks:
+   arcanium-control:
+@@ -280,7 +246,16 @@ volumes:
+   vault-1-audit:
+     name: arcanium-vault_vault-1-audit
+     external: true
+-  # Prompt 30 — owned by THIS compose project (not external): shared
+-  # between arcanium-vault-agent (writer) and arcanium-api/arcanium-worker
+-  # (read-only consumers, Deliverable 3).
+-  vault-agent-secrets: {}
++  # Prompt 30 — shared between arcanium-vault-agent (writer) and
++  # arcanium-api/arcanium-worker (read-only consumers, Deliverable 3).
++  # Prompt 45 — arcanium-vault-agent itself moved to compose/vault/
++  # compose.yaml (this is Vault auto-auth, not an arcanium-application
++  # concern — see that file's own comment); this volume moved with it and
++  # is owned there now, referenced here as external. Naming matches the
++  # existing vault-1-audit reference above (scripts/compose.sh's
++  # --project-name "arcanium-$stack" convention: a plain volume named
++  # vault-agent-secrets in the vault project becomes
++  # arcanium-vault_vault-agent-secrets).
++  vault-agent-secrets:
++    name: arcanium-vault_vault-agent-secrets
++    external: true
+diff --git a/compose/vault/compose.yaml b/compose/vault/compose.yaml
+index 5573a0e..c5752bc 100644
+--- a/compose/vault/compose.yaml
++++ b/compose/vault/compose.yaml
+@@ -86,6 +86,57 @@ services:
+       vault-s:
+         condition: service_healthy
+ 
++  # Prompt 30 — owns AppRole auto-auth + dynamic DB-credential rendering
++  # for the arcanium-api identity, replacing vault.js's own hand-rolled
++  # login()/rotation retry loops. Proven standalone (real token + real DB
++  # creds rendered and verified) before arcanium-api/arcanium-worker were
++  # ever pointed at it — see Prompt 30's own Design rules.
++  # Prompt 45 — moved here from compose/arcanium/compose.yaml: this is
++  # Vault auto-auth, not an arcanium-application concern. arcanium-api/
++  # arcanium-worker/arcanium-api-dev (compose/arcanium/compose.yaml) still
++  # consume its output via the vault-agent-secrets volume below, now
++  # referenced there as external — see that file's own comment. Startup
++  # timing is unchanged from before the move: scripts/rehydrate-stack.sh
++  # still starts this at the exact same point in the sequence (still
++  # ahead of workload-credentials.sh issuing a fresh ARCANIUM_VAULT_
++  # ROLE_ID/SECRET_ID — this container bakes those into its environment
++  # at start time, it does not re-read .env live, so starting it earlier
++  # against a stale/empty pair would be a real regression, not cosmetic).
++  arcanium-vault-agent:
++    image: docker.io/hashicorp/vault-enterprise:2.1.0-ent
++    container_name: arcanium-vault-agent
++    hostname: arcanium-vault-agent
++    # Prompt 30 — NOT "100:1000" (the vault-1/2/3/vault-s convention):
++    # this agent's rendered token file needs to be read cross-container by
++    # arcanium-api/worker, which run as 1000:1000. The sink stanza's own
++    # `mode` config did not reliably grant group-read (see config.hcl's
++    # own comment) — matching the UID directly sidesteps that entirely,
++    # since the file's default owner-only 0600 then already covers it.
++    user: "1000:1000"
++    cap_drop: [ALL]
++    security_opt: ["no-new-privileges:true"]
++    read_only: true
++    tmpfs: [/tmp, /home/vault]
++    entrypoint: ["/vault/agent/entrypoint.sh"]
++    environment:
++      VAULT_ADDR: "https://vault-1:8200"
++      VAULT_CACERT: "/vault/tls/ca-chain.pem"
++      ARCANIUM_VAULT_ROLE_ID: "${ARCANIUM_VAULT_ROLE_ID}"
++      ARCANIUM_VAULT_SECRET_ID: "${ARCANIUM_VAULT_SECRET_ID}"
++    volumes:
++      - ../../vault-tls:/vault/tls:ro
++      - ./vault-agent/config.hcl:/vault/agent/config.hcl:ro
++      - ./vault-agent/entrypoint.sh:/vault/agent/entrypoint.sh:ro
++      - vault-agent-secrets:/vault/secrets
++    networks: [default]
++    restart: unless-stopped
++    healthcheck:
++      test: ["CMD-SHELL", "test -s /vault/secrets/token && test -s /vault/secrets/db-creds.json"]
++      interval: 15s
++      timeout: 5s
++      start_period: 30s
++      retries: 3
++
+ networks:
+   default:
+     name: arcanium-vault-internal
+@@ -100,3 +151,8 @@ volumes:
+   vault-2-audit: {}
+   vault-3-data: {}
+   vault-3-audit: {}
++  # Prompt 45 — moved here from compose/arcanium/compose.yaml (owned by
++  # THIS compose project now). arcanium-api/worker/api-dev reference this
++  # exact volume as external — see that file's own comment for the naming
++  # convention (matches vault-1-audit's existing external reference).
++  vault-agent-secrets: {}
+diff --git a/compose/arcanium/vault-agent/config.hcl b/compose/vault/vault-agent/config.hcl
+similarity index 89%
+rename from compose/arcanium/vault-agent/config.hcl
+rename to compose/vault/vault-agent/config.hcl
+index 3327748..233d82b 100644
+--- a/compose/arcanium/vault-agent/config.hcl
++++ b/compose/vault/vault-agent/config.hcl
+@@ -1,4 +1,7 @@
+-# compose/arcanium/vault-agent/config.hcl — Prompt 30, Deliverable 1.
++# compose/vault/vault-agent/config.hcl — Prompt 30, Deliverable 1.
++# Prompt 45 — moved here from compose/arcanium/vault-agent/: this file is
++# Vault auto-auth config, not arcanium-application config; consolidating
++# everything Vault-related under one compose stack.
+ #
+ # Owns exactly two things for the arcanium-api identity: (1) AppRole
+ # auto-auth + token renewal (replaces vault.js's own login()/
+diff --git a/compose/arcanium/vault-agent/entrypoint.sh b/compose/vault/vault-agent/entrypoint.sh
+similarity index 85%
+rename from compose/arcanium/vault-agent/entrypoint.sh
+rename to compose/vault/vault-agent/entrypoint.sh
+index 7d8b520..126a9ec 100755
+--- a/compose/arcanium/vault-agent/entrypoint.sh
++++ b/compose/vault/vault-agent/entrypoint.sh
+@@ -1,5 +1,7 @@
+ #!/bin/sh
+-# compose/arcanium/vault-agent/entrypoint.sh — Prompt 30, Deliverable 1.
++# compose/vault/vault-agent/entrypoint.sh — Prompt 30, Deliverable 1.
++# Prompt 45 — moved here from compose/arcanium/vault-agent/: consolidating
++# everything Vault-related under one compose stack.
+ #
+ # Vault Agent's AppRole auto-auth method needs role_id/secret_id as FILES,
+ # not env vars — but this project's existing credential-issuance path
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index 99dc31e..de277d2 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -495,7 +495,8 @@ fi
+ # itself (only its assignment into a file) — a credential-in-logs check,
+ # the same discipline every other secret-issuing script in this repo
+ # already follows.
+-ENTRYPOINT="compose/arcanium/vault-agent/entrypoint.sh"
++# Prompt 45 — path updated: arcanium-vault-agent moved to compose/vault/.
++ENTRYPOINT="compose/vault/vault-agent/entrypoint.sh"
+ if [ -f "$ENTRYPOINT" ]; then
+   LEAK=$(grep -E 'echo.*\$ARCANIUM_VAULT_SECRET_ID\b' "$ENTRYPOINT" || true)
+   if [ -z "$LEAK" ]; then
+diff --git a/scripts/rehydrate-stack.sh b/scripts/rehydrate-stack.sh
+index 2893989..76d358e 100755
+--- a/scripts/rehydrate-stack.sh
++++ b/scripts/rehydrate-stack.sh
+@@ -119,6 +119,44 @@ optional "HSM: Managed Key + document-signing-key (needs SoftHSM slot resolved a
+ run "identity: OpenLDAP + Keycloak" make identity-up
+ run "identity: LDAP fixture + Keycloak realm/client/federation (idempotent — ensure_* reconciles, never recreates)" make identity-bootstrap
+ run "Terraform: workloads + kmip + suppliers (seeded demo tenants)" bash -c "make tf-workloads && make tf-kmip && make tf-suppliers"
++# Prompt 45 — arcanium-vault-agent moved from compose/arcanium/compose.yaml
++# to compose/vault/compose.yaml (consolidating everything Vault-related in
++# one place). It used to start implicitly here, as arcanium-api/worker's
++# own compose-level `depends_on: arcanium-vault-agent` — Compose has no
++# cross-project depends_on, so that guarantee is now this explicit step,
++# positioned at exactly the same point in the sequence as before. That
++# position matters: ARCANIUM_VAULT_ROLE_ID/SECRET_ID are only freshly
++# issued by workload-credentials.sh, the step right after this one —
++# vault-agent starts here using whatever is ALREADY in .env from a prior
++# run (this works today because AppRole secret_id here is unlimited-use,
++# not because these values are freshly minted first). Moving this step
++# earlier in the sequence, before any prior run has ever populated .env,
++# would start vault-agent against empty/invalid credentials that it bakes
++# into its environment once at container start and never re-reads live —
++# a real regression, not a cosmetic one, so this stays exactly here.
++run "Vault: start arcanium-vault-agent (needs ARCANIUM_VAULT_ROLE_ID/SECRET_ID already in .env from a prior run)" \
++  bash -c '
++    # Prompt 45 fix — found live: podman seeds a brand-new named volume as
++    # root-owned, and arcanium-vault-agent runs non-root (user 1000:1000,
++    # read_only, cap_drop ALL — see compose/vault/compose.yaml for why).
++    # vault-agent-secrets got a new project-qualified name the first time
++    # this ran after the move (arcanium-vault_vault-agent-secrets), so it
++    # was created fresh and hit exactly that: the container crash-looped
++    # (~1000 restarts observed) on "permission denied" writing its token
++    # sink. Harmless no-op on an already-correctly-owned volume, so this
++    # runs unconditionally rather than trying to detect first-creation.
++    podman run --rm --user 0:0 -v arcanium-vault_vault-agent-secrets:/vault/secrets \
++      --entrypoint sh docker.io/hashicorp/vault-enterprise:2.1.0-ent \
++      -c "chown -R 1000:1000 /vault/secrets"
++    ./scripts/compose.sh vault up -d arcanium-vault-agent
++    for i in $(seq 1 30); do
++      status=$(podman inspect --format "{{.State.Health.Status}}" arcanium-vault-agent 2>/dev/null || echo "")
++      [ "$status" = "healthy" ] && exit 0
++      sleep 2
++    done
++    echo "arcanium-vault-agent did not report healthy within 60s — check .env has a valid ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID pair (make workload-credentials-issue writes these) and podman logs arcanium-vault-agent" >&2
++    exit 1
++  '
+ run "Arcanium: API/UI/worker (migrations run inline on API startup, idempotent)" make arcanium-up
+ run "workload credentials: arcanium-api, arcanium-hsm-read, document-signing" \
+   ./scripts/workload-credentials.sh issue-all
+diff --git a/state/CURRENT b/state/CURRENT
+index 0c817dd..c39f579 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/2026-09-15_post-prompt-44-periodic-reconciliation
++state/baselines/2026-09-15_pre-prompt-45-move-vault-agent

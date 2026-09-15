@@ -1,8 +1,9 @@
 // vault.js — Vault API client.
 //
 // Prompt 30 — AppRole auto-auth and dynamic-DB-credential rotation are no
-// longer this file's problem. arcanium-vault-agent (compose/arcanium/
-// vault-agent/) owns both: it authenticates on its own schedule/retry
+// longer this file's problem. arcanium-vault-agent (compose/vault/
+// vault-agent/ — moved there from compose/arcanium/ in Prompt 45) owns
+// both: it authenticates on its own schedule/retry
 // logic (HashiCorp's own, not ours) and renders a current token +
 // database/creds/arcanium-api-role credential to a shared volume. This
 // file just reads what Agent already wrote, and reacts when those files
@@ -347,7 +348,7 @@ export function getDbCredentials() {
 // FailingStreak in the hundreds, while every actual database query kept
 // succeeding the entire time.
 //
-// The template already renders `lease_id` (compose/arcanium/vault-agent/
+// The template already renders `lease_id` (compose/vault/vault-agent/
 // config.hcl) — previously unused. This asks Vault directly, via
 // `sys/leases/lookup`, for the lease's real remaining TTL — the one
 // number that actually reflects Agent's background renewals, since

@@ -28,8 +28,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   two mechanisms work together — the watch as the fast path, the timer
   as the guaranteed-eventually backstop.
 
+### Changed
+
+- Moved `arcanium-vault-agent` from `compose/arcanium/compose.yaml` to
+  `compose/vault/compose.yaml` (Prompt 45), consolidating everything
+  Vault-related — Vault itself, and now its Agent — under one compose
+  stack. User: "it feels right when everything Vault is in one place."
+  Pure reorganization, not a behavior change: its auth/render logic,
+  healthcheck, and security settings (`cap_drop`, `read_only`, `user`)
+  are untouched. The compose-level `depends_on: arcanium-vault-agent`
+  on arcanium-api/api-dev/worker (impossible across compose projects)
+  became an explicit health-poll step in `scripts/rehydrate-stack.sh`,
+  positioned at the same relative point in the sequence vault-agent
+  used to implicitly start at — this matters because
+  `ARCANIUM_VAULT_ROLE_ID`/`SECRET_ID` are only freshly issued by the
+  step *after* it; starting vault-agent any earlier would bake stale
+  or empty credentials into its environment (it does not re-read
+  `.env` live). `vault-agent-secrets` is now owned by the vault
+  project (`arcanium-vault_vault-agent-secrets`) and referenced as
+  `external: true` from the arcanium side. As a side effect, `make
+  down` now also correctly stops `arcanium-vault-agent` (`vault-down`
+  already did a blanket stop of its whole project) — closing a gap
+  found live the same week where the arcanium stack's own stop line
+  never named it explicitly.
+
 ### Fixed
 
+- A brand-new `vault-agent-secrets` volume (created fresh the first
+  time under its new Prompt-45 project-qualified name) crash-looped
+  `arcanium-vault-agent` on "permission denied" — Podman seeds new
+  named volumes root-owned, and the container runs non-root
+  (`user: "1000:1000"`, `read_only`, `cap_drop: [ALL]`). Found live
+  during Prompt 45's own rehydrate proof (983 restarts before
+  diagnosis); root-caused by reproducing the failure outside compose
+  with a bare `podman run` (ruling out an initial, wrong suspicion
+  that `HOME`/token-helper resolution was at fault). Fixed with an
+  idempotent one-shot ownership fix
+  (`podman run --user 0:0 ... chown -R 1000:1000 /vault/secrets`)
+  added to `rehydrate-stack.sh`'s vault-agent step, ahead of
+  `compose.sh vault up -d` — a harmless no-op once ownership is
+  already correct, so a real fresh-clone rehydrate is covered too, not
+  just this one migration.
 - Credential rotation silently stopped after the first pickup, ever
   (Prompt 43) — a real, live production-availability bug, found the hard
   way: a day after the previous session, sign-in started failing with a

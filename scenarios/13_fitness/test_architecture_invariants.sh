@@ -495,7 +495,8 @@ fi
 # itself (only its assignment into a file) — a credential-in-logs check,
 # the same discipline every other secret-issuing script in this repo
 # already follows.
-ENTRYPOINT="compose/arcanium/vault-agent/entrypoint.sh"
+# Prompt 45 — path updated: arcanium-vault-agent moved to compose/vault/.
+ENTRYPOINT="compose/vault/vault-agent/entrypoint.sh"
 if [ -f "$ENTRYPOINT" ]; then
   LEAK=$(grep -E 'echo.*\$ARCANIUM_VAULT_SECRET_ID\b' "$ENTRYPOINT" || true)
   if [ -z "$LEAK" ]; then

@@ -1,0 +1,60 @@
+[
+  {
+    "name": "arcanium-vault-agent",
+    "image": "docker.io/hashicorp/vault-enterprise:2.1.0-ent",
+    "state": "exited",
+    "status": "Exited (0) 8 minutes ago (healthy)",
+    "ports": [],
+    "networks": [
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-api",
+    "image": "localhost/arcanium-api:local",
+    "state": "exited",
+    "status": "Exited (0) 8 minutes ago (healthy)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3001,
+        "host_port": 3001,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  },
+  {
+    "name": "arcanium-ui",
+    "image": "localhost/arcanium-ui:local",
+    "state": "exited",
+    "status": "Exited (0) 8 minutes ago (stopped)",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 3000,
+        "host_port": 3000,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ],
+    "networks": [
+      "arcanium-control"
+    ]
+  },
+  {
+    "name": "arcanium-worker",
+    "image": "localhost/arcanium-api:local",
+    "state": "exited",
+    "status": "Exited (137) 8 minutes ago (healthy)",
+    "ports": [],
+    "networks": [
+      "arcanium-control",
+      "arcanium-vault-internal"
+    ]
+  }
+]

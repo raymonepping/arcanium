@@ -1,4 +1,7 @@
-# compose/arcanium/vault-agent/config.hcl — Prompt 30, Deliverable 1.
+# compose/vault/vault-agent/config.hcl — Prompt 30, Deliverable 1.
+# Prompt 45 — moved here from compose/arcanium/vault-agent/: this file is
+# Vault auto-auth config, not arcanium-application config; consolidating
+# everything Vault-related under one compose stack.
 #
 # Owns exactly two things for the arcanium-api identity: (1) AppRole
 # auto-auth + token renewal (replaces vault.js's own login()/

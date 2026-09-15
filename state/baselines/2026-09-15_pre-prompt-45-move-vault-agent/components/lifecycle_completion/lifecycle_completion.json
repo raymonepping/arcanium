@@ -1,0 +1,20 @@
+{
+  "service_accounts": {
+    "active": null,
+    "revoked": null
+  },
+  "expiry_date": {
+    "tracked": null,
+    "drifted": null
+  },
+  "offboarding": {
+    "initiated": null,
+    "completed": null,
+    "completed_verified_destroyed": null,
+    "completed_still_live_in_vault": null
+  },
+  "approval_execution_backlog": null,
+  "query_errors": [
+    "arcanium-postgres not running"
+  ]
+}

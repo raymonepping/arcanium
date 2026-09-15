@@ -1,0 +1,117 @@
+baseline:
+  id: 2026-09-15_pre-prompt-45-move-vault-agent
+  purpose: "pre: move arcanium-vault-agent from compose/arcanium to compose/vault (stack currently fully down)"
+  captured_at: 2026-09-15T08:46:53Z
+  project: "arcanium"
+  previous_baseline: "2026-09-15_post-prompt-44-periodic-reconciliation"
+  git:
+    commit: "c20f3ba82c456d7fc771fb50c51c296d4a24cb85"
+    branch: "main"
+    tag: "none"
+    dirty: true
+
+runtime:
+  type: podman
+  architecture: "arm64"
+
+components:
+  arcanium:
+    capture_status: UNKNOWN
+  vault:
+    capture_status: UNKNOWN
+  hsm:
+    capture_status: UNKNOWN
+  identity:
+    capture_status: UNKNOWN
+  infra:
+    capture_status: UNKNOWN
+  kms:
+    capture_status: UNKNOWN
+  observability:
+    capture_status: UNKNOWN
+  workloads:
+    capture_status: UNKNOWN
+
+# Pre-24, Deliverable 12 — safe, non-secret persistence indicators only.
+# Never a SecretID, OIDC client secret, LDAP password, Vault token, HSM
+# PIN, or database password — see docs/persistence.md.
+persistence:
+  postgres:
+    volume_present: true
+    schema_version: "025"
+  vault:
+    raft_storage_present:
+      main_1: true
+      main_2: true
+      main_3: true
+      seal_provider: true
+    cluster_id: "unknown"
+  identity:
+    ldap_directory_present: true
+    keycloak_data_present: true
+  hsm:
+    softhsm_token_store_present: true
+    vault_hsm_storage_present: true
+  workloads:
+    credential_bootstrap_ready: false
+    detail: "verify-all FAIL — see workload-credentials-verify.log"
+  restart_persistence: FAIL
+  restart_persistence_detail: "from scenarios/pre_24_persistence/test_restart_persistence.sh's last run"
+
+# Prompt 24, Deliverable 8 — whether a restore drill has ever actually
+# verified recovery, and its measured RTO/RPO. Never the snapshot/dump
+# itself (state/README.md's 'state is not backup' rule) — see
+# restore_drill_results and docs/operations.md's Backup and recovery section.
+backup:
+  vault_snapshot:
+    available: false
+    last_verified_at: null
+    rto_seconds: null
+    rpo_seconds: null
+  postgres:
+    available: false
+    last_verified_at: null
+    rto_seconds: null
+    rpo_seconds: null
+
+# Prompt 27, Deliverable 8 — team count, environment-tag coverage, and
+# the last scenarios/16_multitenancy/test_scope_isolation.sh result.
+multitenancy:
+  teams_count: null
+  applications:
+    total: null
+    with_environment_tag: null
+  scope_isolation:
+    last_result: PASS
+    detail: "last run: 2026-09-12T20:44:57Z"
+
+verification:
+  supplier_isolation: UNKNOWN
+  oidc_discovery: UNKNOWN
+  reconciliation: UNKNOWN
+  maturity: UNKNOWN
+  intent_view: UNKNOWN
+  onboarding: UNKNOWN
+  transit: UNKNOWN
+  pki: UNKNOWN
+  kmip: UNKNOWN
+  managed_key: UNKNOWN
+  sentinel_negative: UNKNOWN
+
+capture:
+  overall: PARTIAL
+  checks:
+    source: CAPTURED
+    runtime: CAPTURED
+    arcanium: UNKNOWN
+    vault: UNKNOWN
+    hsm: UNKNOWN
+    identity: UNKNOWN
+    infra: UNKNOWN
+    kms: UNKNOWN
+    observability: UNKNOWN
+    workloads: UNKNOWN
+    persistence: CAPTURED
+    backup: UNKNOWN
+    multitenancy: UNKNOWN
+    verification: CAPTURED

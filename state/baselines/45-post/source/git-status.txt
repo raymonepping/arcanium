@@ -1,0 +1,12 @@
+ M Makefile
+ M arcanium/api/src/config.js
+ M arcanium/api/src/vault.js
+ M compose/arcanium/compose.yaml
+ M compose/vault/compose.yaml
+RM compose/arcanium/vault-agent/config.hcl -> compose/vault/vault-agent/config.hcl
+RM compose/arcanium/vault-agent/entrypoint.sh -> compose/vault/vault-agent/entrypoint.sh
+ M scenarios/13_fitness/test_architecture_invariants.sh
+ M scripts/rehydrate-stack.sh
+ M state/CURRENT
+?? scripts/clean-slate.sh
+?? state/baselines/2026-09-15_pre-prompt-45-move-vault-agent/

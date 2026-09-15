@@ -1,0 +1,5 @@
+{
+  "vault_hsm": "down",
+  "softhsm_proxy": "down",
+  "implementation": "SoftHSM/PKCS11 (emulated HSM, not a production HSM)"
+}

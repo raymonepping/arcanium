@@ -1,5 +1,7 @@
 #!/bin/sh
-# compose/arcanium/vault-agent/entrypoint.sh — Prompt 30, Deliverable 1.
+# compose/vault/vault-agent/entrypoint.sh — Prompt 30, Deliverable 1.
+# Prompt 45 — moved here from compose/arcanium/vault-agent/: consolidating
+# everything Vault-related under one compose stack.
 #
 # Vault Agent's AppRole auto-auth method needs role_id/secret_id as FILES,
 # not env vars — but this project's existing credential-issuance path

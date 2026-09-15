@@ -25,7 +25,7 @@ const config = {
     // dynamic DB credential to agentSecretsDir below. VAULT_ROLE_ID/
     // VAULT_SECRET_ID are no longer read here — they're consumed directly
     // by the vault-agent container's own entrypoint
-    // (compose/arcanium/vault-agent/entrypoint.sh), which still sources
+    // (compose/vault/vault-agent/entrypoint.sh — Prompt 45), which still sources
     // them from the exact same ARCANIUM_VAULT_ROLE_ID/
     // ARCANIUM_VAULT_SECRET_ID .env values as before (no new credential
     // issuance path — see that entrypoint's own header comment).
