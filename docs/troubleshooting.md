@@ -52,3 +52,19 @@ The supplier-key route may return an empty array for Vault permission denial. Em
 ## Optional systems unavailable
 
 Observability requires running services, valid scrape/export configuration and traffic. Managed Key enrichment requires the HSM read identity. LocalStack KMS state can disappear on recreation. Treat each as a distinct capability failure, not a reason to mark unrelated Vault nodes down.
+
+## Unrelated containers turn unhealthy together after long uptime
+
+Symptom: containers with nothing in common — PostgreSQL, Keycloak, sometimes Podman's own `conmon` — start reporting unhealthy at the same time, with no application-level error to explain it. Login may fail with Keycloak's generic "An internal server error has occurred." Container logs carry the real signature: PostgreSQL logs `could not fork new process for connection: Resource temporarily unavailable` or `could not fork autovacuum worker process`; Keycloak (a JVM) logs `pthread_create failed (EAGAIN)` and `OutOfMemoryError: unable to create native thread`. The `podman` CLI itself may also intermittently report `Cannot connect to Podman... EOF`.
+
+This is the Podman machine VM hitting its own OS-level thread/process ceiling, not a bug in any of the affected applications — every symptom above is the same underlying cause wearing a different process's name. It builds up over long continuous uptime (observed recurring at roughly 20–26 hours) across the many containers this stack runs, and does not self-clear.
+
+Fix, in order:
+
+1. `podman machine stop && podman machine start` — reclaims the VM's OS-level state; usually sufficient on its own.
+2. A full host restart, if the machine restart alone does not clear it.
+3. `make rehydrate` (idempotent, safe to rerun) to bring the estate back up once the machine is healthy again.
+
+Increasing the machine's allocated CPU/memory (`podman machine set`) may push the recurrence further out, but has not been confirmed to eliminate it outright — the pattern looks like gradual accumulation over time, not a fixed ceiling that is simply too low today.
+
+Never run `make rehydrate`/`make up` more than once concurrently. A second run colliding with one already in progress can itself fail partway through with a plain connection error — that looks like a different problem, but is really just two processes racing over the same containers and Terraform state.
