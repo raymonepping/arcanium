@@ -72,6 +72,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /api/v1/suppliers` (and the `/:id`, `/:id/applications`,
+  `/:id/keys` detail routes) never used `teamReadScope()` (Prompt 27,
+  Deliverable 3) — a team-scoped identity with no estate-wide read role
+  (e.g. `arcanium-auditor:team:platform`) saw *every* supplier, not just
+  its own team's. `applications`/`controls`/`reconciliation` were
+  already wired into this; `suppliers.js` was missed (Prompt 47). Found
+  live during a real UI walkthrough: registered a team linked to one
+  supplier, signed in as the pre-seeded scoped demo account, and the
+  Suppliers page still showed every supplier. Fixed by composing
+  `tenantScope()` + `teamReadScope()` in the list route (same pattern
+  already used in `applications.js`) and adding a `scopedReadDenied()`
+  check to the three by-id routes, closing the same class of "list
+  filters, direct-by-id doesn't" gap Prompt 27 already fixed elsewhere.
+  Verified live with real accounts: the scoped identity now sees only
+  its team's supplier and gets a clean 404 (not a leak) reaching
+  another supplier directly by id; the estate-wide `operator` role is
+  unaffected.
 - `compose/vault/compose.yaml`'s new `arcanium-vault-agent` service block
   (Prompt 45) had a `container_name: arcanium-vault-agent` that didn't
   actually match — a transcription slip, most likely picked up from the

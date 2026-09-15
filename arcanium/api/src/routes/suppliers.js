@@ -13,7 +13,8 @@ import {
 } from "../provisioner/supplier.js";
 import { tenantScope } from "../auth/index.js";
 import { checkIsolation } from "../suppliers/isolation.js";
-import { authorize } from "../auth/authorize.js";
+import { authorize, roleVerdict } from "../auth/authorize.js";
+import { teamReadScope, scopedReadDenied } from "../auth/scope.js";
 
 export const suppliersRouter = Router();
 
@@ -50,17 +51,36 @@ async function namespaceOf(supplierId) {
 }
 
 // GET /api/v1/suppliers
+// Prompt 47 — found live: teamReadScope() (Prompt 27, Deliverable 3) was
+// never wired in here, unlike applications.js/controls/reconciliation's
+// own GET / handlers. An identity with no estate-wide read role but a
+// scoped grant like "arcanium-auditor:team:platform" saw every supplier,
+// not just its own team's — same pattern as applications.js's GET /,
+// composed with (not replacing) tenantScope()'s own path.
 suppliersRouter.get("/", async (req, res, next) => {
   try {
     const scope = await tenantScope(req);
-    const { rows } = scope.scoped
-      ? await query(
-          "SELECT id, name, vault_namespace, sla_tier, created_at FROM suppliers WHERE id = ANY($1) ORDER BY created_at DESC",
-          [scope.supplierIds],
-        )
-      : await query(
-          "SELECT id, name, vault_namespace, sla_tier, created_at FROM suppliers ORDER BY created_at DESC",
-        );
+    let supplierIdFilter = null; // null = unscoped (see everything)
+    if (scope.scoped) {
+      supplierIdFilter = scope.supplierIds;
+    } else {
+      const estateWideRead = (req.identity?.roles || []).some(
+        (r) => roleVerdict(r, "read") === true,
+      );
+      if (!estateWideRead) {
+        const team = await teamReadScope(req.identity);
+        if (team.scoped) supplierIdFilter = team.supplierIds;
+      }
+    }
+    const { rows } =
+      supplierIdFilter !== null
+        ? await query(
+            "SELECT id, name, vault_namespace, sla_tier, created_at FROM suppliers WHERE id = ANY($1) ORDER BY created_at DESC",
+            [supplierIdFilter],
+          )
+        : await query(
+            "SELECT id, name, vault_namespace, sla_tier, created_at FROM suppliers ORDER BY created_at DESC",
+          );
     res.json(rows);
   } catch (err) {
     next(err);
@@ -160,6 +180,15 @@ suppliersRouter.get("/:id", async (req, res, next) => {
       [req.params.id],
     );
     if (!rows.length) throw notFound();
+    // Prompt 47, same reasoning as Prompt 27 Deliverable 5's fix to
+    // applications.js: GET / already narrows by team-scoped grants; a
+    // direct-by-id fetch had not, letting a scoped identity bypass the
+    // list filter entirely for a supplier outside its team. A supplier's
+    // own id IS the supplierId being checked here (no separate FK, unlike
+    // applications) — no env concept for this resource type.
+    if (await scopedReadDenied(req.identity, { supplierId: rows[0].id })) {
+      throw notFound();
+    }
     res.json(rows[0]);
   } catch (err) {
     next(err);
@@ -300,6 +329,12 @@ suppliersRouter.get("/:id/applications", async (req, res, next) => {
       [req.params.id],
     );
     if (!sup.length) throw notFound();
+    // Prompt 47 — same team-scoped gap as GET /:id: existence + tenantScope
+    // isn't enough, a scoped-out team grant must also 404, not leak via
+    // "inspect domain" once GET /suppliers itself started hiding this row.
+    if (await scopedReadDenied(req.identity, { supplierId: req.params.id })) {
+      throw notFound();
+    }
     const { rows } = await query(
       `SELECT id, name, description, registered_at FROM applications
        WHERE supplier_id = $1 ORDER BY registered_at DESC`,
@@ -339,6 +374,10 @@ suppliersRouter.get("/:id/keys", async (req, res, next) => {
       [req.params.id],
     );
     if (!rows.length) throw notFound();
+    // Prompt 47 — same team-scoped gap as GET /:id/applications above.
+    if (await scopedReadDenied(req.identity, { supplierId: req.params.id })) {
+      throw notFound();
+    }
     const namespace = rows[0].vault_namespace;
     const names = await listNamespaceTransitKeys(namespace);
     const keys = await Promise.all(
