@@ -159,6 +159,12 @@ services:
       VAULT_SECRET_ID: "${SUPPLIER_VAULT_SECRET_ID}"
       ARCANIUM_API: "http://arcanium-api:3001"
       ARCANIUM_APP_ID: "${SUPPLIER_ARCANIUM_APP_ID}"
+      # Prompt 49 — POST /api/v1/approvals requires an authenticated
+      # caller once ARCANIUM_AUTH_ENABLED=true (this deployment always
+      # runs that way); a Prompt 28 service-account token, minted by
+      # scenarios/05_approval/provision.sh, same as every other
+      # credential this workload uses.
+      ARCANIUM_TOKEN: "${SUPPLIER_ARCANIUM_TOKEN}"
       TRANSIT_KEY: "external-supplier-key"
       CYCLE_INTERVAL_MS: "120000"
     volumes:

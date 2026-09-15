@@ -1,0 +1,8 @@
+ M Makefile
+ M compose/workloads/compose.yaml
+ M scenarios/05_approval/provision.sh
+ M state/CURRENT
+ M workloads/external-supplier/src/config.js
+ M workloads/external-supplier/src/index.js
+?? scripts/clean-slate.sh
+?? state/baselines/49-pre/

@@ -45,10 +45,30 @@ SUPPLIER_SECRET_ID=$(vault write -f -field=secret_id auth/approle/role/external-
 APPROVER_ROLE_ID=$(vault read -field=role_id auth/approle/role/approver-1/role-id)
 APPROVER_SECRET_ID=$(vault write -f -field=secret_id auth/approle/role/approver-1/secret-id)
 
+# Prompt 49 — found live: external-supplier's own POST /api/v1/approvals
+# call has no Arcanium credential at all (a gap predating Prompt 18's real
+# auth — worked only when ARCANIUM_AUTH_ENABLED=false, the default,
+# because requireSession auto-grants an identity in that mode). Mint it
+# the Prompt 28 service-account token this deployment already supports
+# for exactly this machine-to-machine case. "operator" is the minimum
+# role that satisfies POST /api/v1/approvals' authorize() check (its
+# action defaults to destroy_request when the body's "encrypt" isn't in
+# KNOWN_ACTION_MAP, and MATRIX grants operator unconditional
+# destroy_request:true — no tenant/env scoping needed for this call).
+echo "[approval-provision] provisioning external-supplier's Arcanium service-account token..."
+SA_RESPONSE=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/service-accounts" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"external-supplier-workload","description":"external-supplier Control Group demo — POST /api/v1/approvals","roles":["operator"]}' 2>/dev/null ||
+  curl -sf "${CURL_AUTH[@]}" "$ARCANIUM_API/api/v1/service-accounts" | python3 -c "import sys,json; accts=json.load(sys.stdin); [print(json.dumps(a)) for a in accts if a['name']=='external-supplier-workload']" | head -1)
+SA_ID=$(echo "$SA_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+SA_TOKEN=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/service-accounts/$SA_ID/tokens" \
+  -H "Content-Type: application/json" \
+  -d '{"description":"approval-provision.sh"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
 # Append to .env.workloads (create if absent)
 touch "$ROOT_DIR/.env.workloads"
 # Remove any existing entries for these vars
-sed -i '' '/^SUPPLIER_VAULT_ROLE_ID=/d;/^SUPPLIER_VAULT_SECRET_ID=/d;/^APPROVER_VAULT_ROLE_ID=/d;/^APPROVER_VAULT_SECRET_ID=/d;/^SUPPLIER_ARCANIUM_APP_ID=/d' "$ROOT_DIR/.env.workloads" 2>/dev/null || true
+sed -i '' '/^SUPPLIER_VAULT_ROLE_ID=/d;/^SUPPLIER_VAULT_SECRET_ID=/d;/^APPROVER_VAULT_ROLE_ID=/d;/^APPROVER_VAULT_SECRET_ID=/d;/^SUPPLIER_ARCANIUM_APP_ID=/d;/^SUPPLIER_ARCANIUM_TOKEN=/d' "$ROOT_DIR/.env.workloads" 2>/dev/null || true
 
 cat >>"$ROOT_DIR/.env.workloads" <<EOF
 SUPPLIER_VAULT_ROLE_ID=${SUPPLIER_ROLE_ID}
@@ -56,6 +76,7 @@ SUPPLIER_VAULT_SECRET_ID=${SUPPLIER_SECRET_ID}
 APPROVER_VAULT_ROLE_ID=${APPROVER_ROLE_ID}
 APPROVER_VAULT_SECRET_ID=${APPROVER_SECRET_ID}
 SUPPLIER_ARCANIUM_APP_ID=${APP_ID}
+SUPPLIER_ARCANIUM_TOKEN=${SA_TOKEN}
 EOF
 
 echo "[approval-provision] credentials appended to .env.workloads"

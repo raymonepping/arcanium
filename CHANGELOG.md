@@ -78,6 +78,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `external-supplier` (the Control Group demo workload) never carried
+  any Arcanium API credential — a gap predating Prompt 18's real auth,
+  masked until now because it only worked when
+  `ARCANIUM_AUTH_ENABLED=false` (`requireSession` auto-grants an
+  identity in that mode; this deployment always runs with real auth
+  on). `POST /api/v1/approvals` correctly 401'd every time (Prompt 49).
+  Found live exercising the approval demo end-to-end for the first
+  time this session. Fixed by minting it a real Prompt 28
+  service-account token (`scenarios/05_approval/provision.sh`, role
+  `operator` — the minimum MATRIX grant `POST /api/v1/approvals`
+  needs) and wiring it through as `Authorization: Bearer` — no
+  `arcanium-api` changes, the mechanism already existed. Verified live:
+  the workload registered a real approval request, and the maturity
+  score jumped from level 2 to level 4 as a direct result (`AUD-01`
+  went from `UNKNOWN` to satisfied).
 - `GET /api/v1/suppliers` (and the `/:id`, `/:id/applications`,
   `/:id/keys` detail routes) never used `teamReadScope()` (Prompt 27,
   Deliverable 3) — a team-scoped identity with no estate-wide read role

@@ -14,6 +14,11 @@ export default {
   },
   arcaniumApi: process.env.ARCANIUM_API ?? "http://arcanium-api:3001",
   arcaniumAppId: required("ARCANIUM_APP_ID"),
+  // Prompt 49 — a Prompt 28 service-account token; requireSession has no
+  // no-auth bypass once ARCANIUM_AUTH_ENABLED=true (this deployment
+  // always runs that way), so every Arcanium API call this workload
+  // makes needs this now.
+  arcaniumToken: required("ARCANIUM_TOKEN"),
   transitKey: process.env.TRANSIT_KEY ?? "external-supplier-key",
   cycleIntervalMs: parseInt(process.env.CYCLE_INTERVAL_MS ?? "120000", 10),
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS ?? "5000", 10),

@@ -39,6 +39,7 @@ function arcaniumRequest(method, path, body) {
         method,
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${config.arcaniumToken}`,
           ...(data ? { "Content-Length": Buffer.byteLength(data) } : {}),
         },
       },

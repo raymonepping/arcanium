@@ -1,0 +1,32 @@
+{
+  "nodes": [
+    {
+      "node": "vault-s",
+      "initialized": true,
+      "sealed": false,
+      "seal_type": "shamir",
+      "version": "2.1.0+ent"
+    },
+    {
+      "node": "vault-1",
+      "initialized": true,
+      "sealed": false,
+      "seal_type": "transit",
+      "version": "2.1.0+ent"
+    },
+    {
+      "node": "vault-2",
+      "initialized": true,
+      "sealed": false,
+      "seal_type": "transit",
+      "version": "2.1.0+ent"
+    },
+    {
+      "node": "vault-3",
+      "initialized": true,
+      "sealed": false,
+      "seal_type": "transit",
+      "version": "2.1.0+ent"
+    }
+  ]
+}

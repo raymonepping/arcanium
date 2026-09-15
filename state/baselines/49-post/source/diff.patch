@@ -1,0 +1,110 @@
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/compose/workloads/compose.yaml b/compose/workloads/compose.yaml
+index 741d6d8..7f38bfd 100644
+--- a/compose/workloads/compose.yaml
++++ b/compose/workloads/compose.yaml
+@@ -159,6 +159,12 @@ services:
+       VAULT_SECRET_ID: "${SUPPLIER_VAULT_SECRET_ID}"
+       ARCANIUM_API: "http://arcanium-api:3001"
+       ARCANIUM_APP_ID: "${SUPPLIER_ARCANIUM_APP_ID}"
++      # Prompt 49 — POST /api/v1/approvals requires an authenticated
++      # caller once ARCANIUM_AUTH_ENABLED=true (this deployment always
++      # runs that way); a Prompt 28 service-account token, minted by
++      # scenarios/05_approval/provision.sh, same as every other
++      # credential this workload uses.
++      ARCANIUM_TOKEN: "${SUPPLIER_ARCANIUM_TOKEN}"
+       TRANSIT_KEY: "external-supplier-key"
+       CYCLE_INTERVAL_MS: "120000"
+     volumes:
+diff --git a/scenarios/05_approval/provision.sh b/scenarios/05_approval/provision.sh
+index 9069686..ebe6fdc 100755
+--- a/scenarios/05_approval/provision.sh
++++ b/scenarios/05_approval/provision.sh
+@@ -45,10 +45,30 @@ SUPPLIER_SECRET_ID=$(vault write -f -field=secret_id auth/approle/role/external-
+ APPROVER_ROLE_ID=$(vault read -field=role_id auth/approle/role/approver-1/role-id)
+ APPROVER_SECRET_ID=$(vault write -f -field=secret_id auth/approle/role/approver-1/secret-id)
+ 
++# Prompt 49 — found live: external-supplier's own POST /api/v1/approvals
++# call has no Arcanium credential at all (a gap predating Prompt 18's real
++# auth — worked only when ARCANIUM_AUTH_ENABLED=false, the default,
++# because requireSession auto-grants an identity in that mode). Mint it
++# the Prompt 28 service-account token this deployment already supports
++# for exactly this machine-to-machine case. "operator" is the minimum
++# role that satisfies POST /api/v1/approvals' authorize() check (its
++# action defaults to destroy_request when the body's "encrypt" isn't in
++# KNOWN_ACTION_MAP, and MATRIX grants operator unconditional
++# destroy_request:true — no tenant/env scoping needed for this call).
++echo "[approval-provision] provisioning external-supplier's Arcanium service-account token..."
++SA_RESPONSE=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/service-accounts" \
++  -H "Content-Type: application/json" \
++  -d '{"name":"external-supplier-workload","description":"external-supplier Control Group demo — POST /api/v1/approvals","roles":["operator"]}' 2>/dev/null ||
++  curl -sf "${CURL_AUTH[@]}" "$ARCANIUM_API/api/v1/service-accounts" | python3 -c "import sys,json; accts=json.load(sys.stdin); [print(json.dumps(a)) for a in accts if a['name']=='external-supplier-workload']" | head -1)
++SA_ID=$(echo "$SA_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
++SA_TOKEN=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/service-accounts/$SA_ID/tokens" \
++  -H "Content-Type: application/json" \
++  -d '{"description":"approval-provision.sh"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
++
+ # Append to .env.workloads (create if absent)
+ touch "$ROOT_DIR/.env.workloads"
+ # Remove any existing entries for these vars
+-sed -i '' '/^SUPPLIER_VAULT_ROLE_ID=/d;/^SUPPLIER_VAULT_SECRET_ID=/d;/^APPROVER_VAULT_ROLE_ID=/d;/^APPROVER_VAULT_SECRET_ID=/d;/^SUPPLIER_ARCANIUM_APP_ID=/d' "$ROOT_DIR/.env.workloads" 2>/dev/null || true
++sed -i '' '/^SUPPLIER_VAULT_ROLE_ID=/d;/^SUPPLIER_VAULT_SECRET_ID=/d;/^APPROVER_VAULT_ROLE_ID=/d;/^APPROVER_VAULT_SECRET_ID=/d;/^SUPPLIER_ARCANIUM_APP_ID=/d;/^SUPPLIER_ARCANIUM_TOKEN=/d' "$ROOT_DIR/.env.workloads" 2>/dev/null || true
+ 
+ cat >>"$ROOT_DIR/.env.workloads" <<EOF
+ SUPPLIER_VAULT_ROLE_ID=${SUPPLIER_ROLE_ID}
+@@ -56,6 +76,7 @@ SUPPLIER_VAULT_SECRET_ID=${SUPPLIER_SECRET_ID}
+ APPROVER_VAULT_ROLE_ID=${APPROVER_ROLE_ID}
+ APPROVER_VAULT_SECRET_ID=${APPROVER_SECRET_ID}
+ SUPPLIER_ARCANIUM_APP_ID=${APP_ID}
++SUPPLIER_ARCANIUM_TOKEN=${SA_TOKEN}
+ EOF
+ 
+ echo "[approval-provision] credentials appended to .env.workloads"
+diff --git a/state/CURRENT b/state/CURRENT
+index 7e57ae4..9cde10a 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/48-post
++state/baselines/49-pre
+diff --git a/workloads/external-supplier/src/config.js b/workloads/external-supplier/src/config.js
+index 27ae0c3..7e19446 100644
+--- a/workloads/external-supplier/src/config.js
++++ b/workloads/external-supplier/src/config.js
+@@ -14,6 +14,11 @@ export default {
+   },
+   arcaniumApi: process.env.ARCANIUM_API ?? "http://arcanium-api:3001",
+   arcaniumAppId: required("ARCANIUM_APP_ID"),
++  // Prompt 49 — a Prompt 28 service-account token; requireSession has no
++  // no-auth bypass once ARCANIUM_AUTH_ENABLED=true (this deployment
++  // always runs that way), so every Arcanium API call this workload
++  // makes needs this now.
++  arcaniumToken: required("ARCANIUM_TOKEN"),
+   transitKey: process.env.TRANSIT_KEY ?? "external-supplier-key",
+   cycleIntervalMs: parseInt(process.env.CYCLE_INTERVAL_MS ?? "120000", 10),
+   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS ?? "5000", 10),
+diff --git a/workloads/external-supplier/src/index.js b/workloads/external-supplier/src/index.js
+index 3b026bc..819a49b 100644
+--- a/workloads/external-supplier/src/index.js
++++ b/workloads/external-supplier/src/index.js
+@@ -39,6 +39,7 @@ function arcaniumRequest(method, path, body) {
+         method,
+         headers: {
+           "Content-Type": "application/json",
++          Authorization: `Bearer ${config.arcaniumToken}`,
+           ...(data ? { "Content-Length": Buffer.byteLength(data) } : {}),
+         },
+       },

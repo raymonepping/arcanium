@@ -1,0 +1,18 @@
+{
+  "service_accounts": {
+    "active": 1,
+    "revoked": 8
+  },
+  "expiry_date": {
+    "tracked": 0,
+    "drifted": 0
+  },
+  "offboarding": {
+    "initiated": 0,
+    "completed": 0,
+    "completed_verified_destroyed": 0,
+    "completed_still_live_in_vault": 0
+  },
+  "approval_execution_backlog": 0,
+  "query_errors": []
+}
