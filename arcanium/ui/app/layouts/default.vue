@@ -359,8 +359,11 @@ const navItems = computed<NavItem[]>(() => {
     { divider: true },
     { to: '/suppliers', label: 'Suppliers', icon: NAV_ICONS.suppliers, platform: true },
     { to: '/teams', label: 'Teams', icon: NAV_ICONS.teams, platform: true },
-    { to: '/applications', label: 'Applications', icon: NAV_ICONS.applications },
+    // Prompt 48 — Onboard ahead of Applications: it's the actual
+    // registration entry point (Applications itself is read-only), so
+    // listing it first matches the order someone actually uses them in.
     { to: '/onboard', label: 'Onboard', icon: NAV_ICONS.onboard },
+    { to: '/applications', label: 'Applications', icon: NAV_ICONS.applications },
     { divider: true },
     { to: '/integrations', label: 'Integrations', icon: NAV_ICONS.integrations },
     { to: '/jobs', label: 'Jobs', icon: NAV_ICONS.jobs, platform: true },
@@ -441,8 +444,8 @@ const ALL_CMDS = [
   { to: '/', label: 'Dashboard', category: 'Page', icon: NAV_ICONS.dashboard },
   { to: '/suppliers', label: 'Suppliers', category: 'Page', icon: NAV_ICONS.suppliers },
   { to: '/teams', label: 'Teams', category: 'Page', icon: NAV_ICONS.teams },
-  { to: '/applications', label: 'Applications', category: 'Page', icon: NAV_ICONS.applications },
   { to: '/onboard', label: 'Onboard a Workload', category: 'Page', icon: NAV_ICONS.onboard },
+  { to: '/applications', label: 'Applications', category: 'Page', icon: NAV_ICONS.applications },
   { to: '/integrations', label: 'Integration Channels', category: 'Page', icon: NAV_ICONS.integrations },
   { to: '/jobs', label: 'Provisioning Jobs', category: 'Page', icon: NAV_ICONS.jobs },
   { to: '/keys', label: 'Key Inventory', category: 'Page', icon: NAV_ICONS.keys },

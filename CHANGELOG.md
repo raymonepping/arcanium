@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filter runs (verified live in both personas). The ⌘K command palette's
   item list was reordered to match for consistency, since its default
   empty-query view shows the first six.
+- Sidebar/⌘K order (Prompt 48): Onboard now comes before Applications.
+  User, discovering mid-walkthrough that Applications is a read-only
+  list with no inline "+ Create" (registration only happens through the
+  Onboard wizard): "we need to move onboard 1 level up. above
+  'applications'. that keeps it in logical order." Same group, same
+  divider placement — just the two entries swapped.
 
 ### Added
 

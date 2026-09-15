@@ -1,0 +1,20 @@
+{
+  "acl": [
+    "arcanium-admin",
+    "arcanium-pki",
+    "arcanium-transit",
+    "automation",
+    "crypto-approver-policy",
+    "default",
+    "default-ceiling",
+    "external-supplier-policy",
+    "external-supplier-workload",
+    "metrics",
+    "payments-api-workload",
+    "pki-client-workload",
+    "scope-isolation-staging-app-workload",
+    "transit-demo-app-key",
+    "workload-read-only",
+    "root"
+  ]
+}
