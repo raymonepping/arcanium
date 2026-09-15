@@ -292,7 +292,16 @@ else
   warn "No applications registered — skipping detail/patch checks"
 fi
 
-# POST + DELETE lifecycle (ephemeral test app)
+# POST + DELETE lifecycle (ephemeral test app), plus the duplicate-name
+# check against that SAME ephemeral app while it still exists. Found live:
+# this used to hardcode {"name":"payments-api"} for the duplicate check,
+# assuming a real "payments-api" application was already registered (true
+# after onboarding, false right after a clean-slate reset) — against an
+# empty deployment there was nothing to collide with, so the POST didn't
+# 409, it silently CREATED a real, permanent "payments-api" application as
+# a side effect of running verification. Testing duplicate-detection
+# against our own ephemeral app's name removes the dependency on any
+# specific pre-existing application ever existing.
 TEST_APP=$(curl -sf --max-time 5 "${AUTH_OPTS[@]}" -X POST "$API/api/v1/applications" \
   -H "Content-Type: application/json" \
   -d '{"name":"verify-stack-test-app","description":"ephemeral smoke test"}' 2>/dev/null |
@@ -300,20 +309,21 @@ TEST_APP=$(curl -sf --max-time 5 "${AUTH_OPTS[@]}" -X POST "$API/api/v1/applicat
 
 if [[ -n "$TEST_APP" ]]; then
   pass "POST /api/v1/applications  → $TEST_APP"
+
+  # 409 on duplicate name (use -s not -sf so 4xx doesn't cause non-zero exit)
+  DUPE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${AUTH_OPTS[@]}" \
+    -X POST "$API/api/v1/applications" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"verify-stack-test-app"}' 2>/dev/null || echo "000")
+  [[ "$DUPE" == "409" ]] && pass "POST /api/v1/applications 409 on duplicate name" ||
+    warn "POST duplicate name returned $DUPE (expected 409)"
+
   STATUS=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 5 "${AUTH_OPTS[@]}" \
     -X DELETE "$API/api/v1/applications/$TEST_APP" 2>/dev/null || echo "000")
   if [[ "$STATUS" == "204" ]]; then pass "DELETE /api/v1/applications/:id"; else fail "DELETE /api/v1/applications/:id  [got $STATUS]"; fi
 else
-  warn "Could not create ephemeral test app (409 name conflict is OK, 401/403 means --user needs provisioning rights)"
+  warn "Could not create ephemeral test app (409 name conflict is OK, 401/403 means --user needs provisioning rights) — duplicate-name check skipped"
 fi
-
-# 409 on duplicate name (use -s not -sf so 4xx doesn't cause non-zero exit)
-DUPE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${AUTH_OPTS[@]}" \
-  -X POST "$API/api/v1/applications" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"payments-api"}' 2>/dev/null || echo "000")
-[[ "$DUPE" == "409" ]] && pass "POST /api/v1/applications 409 on duplicate name" ||
-  warn "POST duplicate name returned $DUPE (expected 409)"
 
 # ── 3. Transit Keys ─────────────────────────────────────────────────────────
 section "3. Transit Keys"
