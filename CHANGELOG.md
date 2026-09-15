@@ -54,6 +54,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `compose/vault/compose.yaml`'s new `arcanium-vault-agent` service block
+  (Prompt 45) had a `container_name: arcanium-vault-agent` that didn't
+  actually match — a transcription slip, most likely picked up from the
+  `vault_s`/`vault_1`/`vault_2`/`vault_3` container names immediately
+  above it in the same file, all of which use an underscore. The service
+  key and `hostname:` correctly used the hyphen; only `container_name:`
+  didn't, so the container silently came up as `arcanium-vault-agent`
+  while `rehydrate-stack.sh`'s health-poll (and every other reference —
+  `capture-state.sh`, the fitness suite, `vault.js`/`config.js`
+  comments) looked for `arcanium-vault_agent` (or vice versa, depending
+  on which was "correct" at any given moment) — reported as a false
+  "did not report healthy" failure even though the container was
+  actually up. Resolved by adopting the underscore consistently (`user`
+  preference, matching `vault_s`/`vault_1/2/3`'s existing convention in
+  that file) and updating every functional reference across the repo
+  that targets the container by name. `scripts/clean-slate.sh` still has
+  one such reference and needs the same update — it's off-limits to
+  Claude (separate, user-owned in-progress work), so it wasn't touched
+  here.
 - A brand-new `vault-agent-secrets` volume (created fresh the first
   time under its new Prompt-45 project-qualified name) crash-looped
   `arcanium-vault-agent` on "permission denied" — Podman seeds new

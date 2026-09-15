@@ -214,10 +214,10 @@ capture_arcanium() {
   # fabricated: UNKNOWN unless the container is actually running and both
   # files are actually readable. mtime, not file content (the token/DB
   # password are never captured here).
-  if running arcanium-vault-agent; then
+  if running arcanium-vault_agent; then
     local token_mtime creds_mtime
-    token_mtime=$(podman exec arcanium-vault-agent stat -c '%Y' /vault/secrets/token 2>/dev/null || echo "")
-    creds_mtime=$(podman exec arcanium-vault-agent stat -c '%Y' /vault/secrets/db-creds.json 2>/dev/null || echo "")
+    token_mtime=$(podman exec arcanium-vault_agent stat -c '%Y' /vault/secrets/token 2>/dev/null || echo "")
+    creds_mtime=$(podman exec arcanium-vault_agent stat -c '%Y' /vault/secrets/db-creds.json 2>/dev/null || echo "")
     jq -n \
       --arg tm "${token_mtime:-null}" --arg cm "${creds_mtime:-null}" \
       '{
@@ -225,7 +225,7 @@ capture_arcanium() {
         db_creds_file: { present: ($cm != "null" and $cm != ""), mtime_epoch: (if $cm == "null" or $cm == "" then null else ($cm | tonumber) end) }
       }' >"$d/vault-agent.json"
   else
-    jq -n '{status:"UNKNOWN", detail:"arcanium-vault-agent not running"}' >"$d/vault-agent.json"
+    jq -n '{status:"UNKNOWN", detail:"arcanium-vault_agent not running"}' >"$d/vault-agent.json"
     echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' >"$d/api-smoke.json"
   fi
 

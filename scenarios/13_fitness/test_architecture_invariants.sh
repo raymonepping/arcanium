@@ -371,7 +371,7 @@ echo
 # both vault.js retry loops used to have to reschedule themselves on
 # failure, not just log and stop (found live: neither did, and a single
 # transient Vault timeout permanently killed DB-credential rotation).
-# Prompt 30 deleted both functions entirely — arcanium-vault-agent now
+# Prompt 30 deleted both functions entirely — arcanium-vault_agent now
 # owns that retry problem — so this check is retired here and replaced by
 # Prompt 30's own "no scheduler at all" assertion below, not left in place
 # to fail forever against code that was deliberately removed.
@@ -466,7 +466,7 @@ echo
 # ── Deliverable 5 — vault.js must contain no setTimeout-based retry/
 # rotation scheduler for the token or DB credential anymore — Prompt 29's
 # hand-rolled schedulers are GONE, not just unused, replaced by
-# arcanium-vault-agent's own auth/render retry (HashiCorp's problem now).
+# arcanium-vault_agent's own auth/render retry (HashiCorp's problem now).
 if grep -qE "scheduleTokenRefresh|scheduleDbCredsRotation" arcanium/api/src/vault.js; then
   bad "vault.js still contains the old setTimeout-based retry scheduler (scheduleTokenRefresh/scheduleDbCredsRotation) — should be fully removed, not just unused"
 else
@@ -478,10 +478,10 @@ fi
 # secrets volume read-only.
 COMPOSE_FILE="compose/arcanium/compose.yaml"
 # Anchored on the exact key (leading whitespace, no preceding word char) —
-# ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID (arcanium-vault-agent's
+# ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID (arcanium-vault_agent's
 # own env, a substring match away from these) are legitimate and expected.
 if grep -qE '^\s*VAULT_ROLE_ID:|^\s*VAULT_SECRET_ID:' "$COMPOSE_FILE"; then
-  bad "compose/arcanium/compose.yaml still sets VAULT_ROLE_ID/VAULT_SECRET_ID directly on a service — should read from arcanium-vault-agent's rendered files instead"
+  bad "compose/arcanium/compose.yaml still sets VAULT_ROLE_ID/VAULT_SECRET_ID directly on a service — should read from arcanium-vault_agent's rendered files instead"
 else
   ok "no arcanium service sets VAULT_ROLE_ID/VAULT_SECRET_ID directly — all consume vault-agent-secrets"
 fi
@@ -491,16 +491,16 @@ else
   bad "vault-agent-secrets read-only mount not found in compose/arcanium/compose.yaml"
 fi
 
-# ── arcanium-vault-agent's entrypoint never echoes the secret_id value
+# ── arcanium-vault_agent's entrypoint never echoes the secret_id value
 # itself (only its assignment into a file) — a credential-in-logs check,
 # the same discipline every other secret-issuing script in this repo
 # already follows.
-# Prompt 45 — path updated: arcanium-vault-agent moved to compose/vault/.
+# Prompt 45 — path updated: arcanium-vault_agent moved to compose/vault/.
 ENTRYPOINT="compose/vault/vault-agent/entrypoint.sh"
 if [ -f "$ENTRYPOINT" ]; then
   LEAK=$(grep -E 'echo.*\$ARCANIUM_VAULT_SECRET_ID\b' "$ENTRYPOINT" || true)
   if [ -z "$LEAK" ]; then
-    ok "arcanium-vault-agent's entrypoint never echoes the secret_id value"
+    ok "arcanium-vault_agent's entrypoint never echoes the secret_id value"
   else
     bad "entrypoint.sh appears to echo the secret_id value: $LEAK"
   fi
@@ -581,7 +581,7 @@ echo
 # Deliverable 1 Vault policy grant actually took effect live, the same way
 # it was verified by hand while writing prompts/base_project/
 # 32_01_supplier_key_public_material.md, but as a repeatable fitness check.
-API_TOKEN=$(podman exec arcanium-vault-agent cat /vault/secrets/token 2>/dev/null)
+API_TOKEN=$(podman exec arcanium-vault_agent cat /vault/secrets/token 2>/dev/null)
 if [ -n "$API_TOKEN" ]; then
   VAULT_ENV_ADDR="https://127.0.0.1:18200"
   VAULT_ENV_CACERT="$(pwd)/vault-tls/ca-chain.pem"
@@ -599,7 +599,7 @@ if [ -n "$API_TOKEN" ]; then
     bad "arcanium-api's real token could not READ suppliers/cocacola's transit key metadata (got '$COKE_TYPE')"
   fi
 else
-  unk "Prompt 32 live Vault policy grant checks — arcanium-vault-agent not reachable"
+  unk "Prompt 32 live Vault policy grant checks — arcanium-vault_agent not reachable"
 fi
 
 JAR=$(mktemp)

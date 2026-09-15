@@ -21,7 +21,7 @@ const config = {
     addr: optional("VAULT_ADDR", "https://vault-1:8200").replace(/\/$/, ""),
     cacert: required("VAULT_CACERT"),
     // Prompt 30 — this process no longer performs its own AppRole login;
-    // arcanium-vault-agent owns that (auto-auth) and renders a token +
+    // arcanium-vault_agent owns that (auto-auth) and renders a token +
     // dynamic DB credential to agentSecretsDir below. VAULT_ROLE_ID/
     // VAULT_SECRET_ID are no longer read here — they're consumed directly
     // by the vault-agent container's own entrypoint

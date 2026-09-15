@@ -1,0 +1,310 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 7fc585f..029b38f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -54,6 +54,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ### Fixed
+ 
++- `compose/vault/compose.yaml`'s new `arcanium-vault-agent` service block
++  (Prompt 45) had a `container_name: arcanium-vault-agent` that didn't
++  actually match — a transcription slip, most likely picked up from the
++  `vault_s`/`vault_1`/`vault_2`/`vault_3` container names immediately
++  above it in the same file, all of which use an underscore. The service
++  key and `hostname:` correctly used the hyphen; only `container_name:`
++  didn't, so the container silently came up as `arcanium-vault-agent`
++  while `rehydrate-stack.sh`'s health-poll (and every other reference —
++  `capture-state.sh`, the fitness suite, `vault.js`/`config.js`
++  comments) looked for `arcanium-vault_agent` (or vice versa, depending
++  on which was "correct" at any given moment) — reported as a false
++  "did not report healthy" failure even though the container was
++  actually up. Resolved by adopting the underscore consistently (`user`
++  preference, matching `vault_s`/`vault_1/2/3`'s existing convention in
++  that file) and updating every functional reference across the repo
++  that targets the container by name. `scripts/clean-slate.sh` still has
++  one such reference and needs the same update — it's off-limits to
++  Claude (separate, user-owned in-progress work), so it wasn't touched
++  here.
+ - A brand-new `vault-agent-secrets` volume (created fresh the first
+   time under its new Prompt-45 project-qualified name) crash-looped
+   `arcanium-vault-agent` on "permission denied" — Podman seeds new
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/arcanium/api/src/config.js b/arcanium/api/src/config.js
+index 8299a09..d1ad6e3 100644
+--- a/arcanium/api/src/config.js
++++ b/arcanium/api/src/config.js
+@@ -21,7 +21,7 @@ const config = {
+     addr: optional("VAULT_ADDR", "https://vault-1:8200").replace(/\/$/, ""),
+     cacert: required("VAULT_CACERT"),
+     // Prompt 30 — this process no longer performs its own AppRole login;
+-    // arcanium-vault-agent owns that (auto-auth) and renders a token +
++    // arcanium-vault_agent owns that (auto-auth) and renders a token +
+     // dynamic DB credential to agentSecretsDir below. VAULT_ROLE_ID/
+     // VAULT_SECRET_ID are no longer read here — they're consumed directly
+     // by the vault-agent container's own entrypoint
+diff --git a/arcanium/api/src/vault.js b/arcanium/api/src/vault.js
+index e46de61..ba71816 100644
+--- a/arcanium/api/src/vault.js
++++ b/arcanium/api/src/vault.js
+@@ -1,7 +1,7 @@
+ // vault.js — Vault API client.
+ //
+ // Prompt 30 — AppRole auto-auth and dynamic-DB-credential rotation are no
+-// longer this file's problem. arcanium-vault-agent (compose/vault/
++// longer this file's problem. arcanium-vault_agent (compose/vault/
+ // vault-agent/ — moved there from compose/arcanium/ in Prompt 45) owns
+ // both: it authenticates on its own schedule/retry
+ // logic (HashiCorp's own, not ours) and renders a current token +
+@@ -170,7 +170,7 @@ async function waitForFile(path, label, timeoutMs = 30_000) {
+     }
+   }
+   throw new Error(
+-    `[vault] timed out waiting for ${label} (${path}) after ${timeoutMs}ms — is arcanium-vault-agent running and authenticated? last error: ${lastErr?.message}`,
++    `[vault] timed out waiting for ${label} (${path}) after ${timeoutMs}ms — is arcanium-vault_agent running and authenticated? last error: ${lastErr?.message}`,
+   );
+ }
+ 
+@@ -272,7 +272,7 @@ export async function init() {
+   state.token = readTokenFile();
+   state.authenticated = true;
+   state.lastTokenRefreshAt = new Date();
+-  console.log("[vault] token read from arcanium-vault-agent sink");
++  console.log("[vault] token read from arcanium-vault_agent sink");
+ 
+   const creds = readDbCredsFile();
+   state.dbCreds = { username: creds.username, password: creds.password };
+@@ -280,7 +280,7 @@ export async function init() {
+   state.dbCredsLeaseId = creds.lease_id ?? null;
+   state.lastDbRotationAt = new Date();
+   console.log(
+-    `[vault] db credentials read from arcanium-vault-agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
++    `[vault] db credentials read from arcanium-vault_agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
+   );
+ 
+   // Prompt 43 — found live: this used to be watch(TOKEN_PATH, ...) and
+@@ -290,7 +290,7 @@ export async function init() {
+   // file's underlying inode, and once the rename swaps in a new inode
+   // at the same path, nothing re-arms the watch — Node does not
+   // silently resubscribe, and no error is raised either. Confirmed live
+-  // (arcanium-vault-agent's own logs vs. arcanium-api's own logs, after
++  // (arcanium-vault_agent's own logs vs. arcanium-api's own logs, after
+   // ~9h uptime): Agent rendered 4 fresh db-creds.json files; arcanium-api
+   // picked up exactly the FIRST one and never fired again — eventually
+   // the credential it kept using genuinely expired, and every database
+diff --git a/compose/arcanium/compose.yaml b/compose/arcanium/compose.yaml
+index a833ea8..c7e2f77 100644
+--- a/compose/arcanium/compose.yaml
++++ b/compose/arcanium/compose.yaml
+@@ -45,7 +45,7 @@ services:
+       VAULT_ADDR: "https://vault-1:8200"
+       VAULT_CACERT: "/vault/tls/ca-chain.pem"
+       # Prompt 30 — VAULT_ROLE_ID/VAULT_SECRET_ID removed: this process no
+-      # longer logs in itself. arcanium-vault-agent (compose/vault/
++      # longer logs in itself. arcanium-vault_agent (compose/vault/
+       # compose.yaml — moved there Prompt 45) does, and renders a token +
+       # DB credential into vault-agent-secrets, mounted read-only here.
+       # Prompt 14.2 — provisioner token for cross-namespace writes
+@@ -85,11 +85,11 @@ services:
+       - arcanium-control
+       - arcanium-vault-internal
+     restart: unless-stopped
+-    # Prompt 45 — the compose-level `depends_on: arcanium-vault-agent`
++    # Prompt 45 — the compose-level `depends_on: arcanium-vault_agent`
+     # that used to be here is gone: Compose has no cross-project
+-    # depends_on, and arcanium-vault-agent now lives in compose/vault/
++    # depends_on, and arcanium-vault_agent now lives in compose/vault/
+     # compose.yaml. scripts/rehydrate-stack.sh's own explicit step waits
+-    # for arcanium-vault-agent to report healthy before this service is
++    # for arcanium-vault_agent to report healthy before this service is
+     # started, replacing that guarantee at the orchestration-script level.
+     # vault.js's own waitForFile() (30s, with retry) is the last-resort
+     # safety net for anyone starting this container standalone.
+@@ -160,7 +160,7 @@ services:
+       - arcanium-control
+       - arcanium-vault-internal
+     # Prompt 45 — same as arcanium-api: the depends_on on
+-    # arcanium-vault-agent that used to be here moved to
++    # arcanium-vault_agent that used to be here moved to
+     # scripts/rehydrate-stack.sh's own explicit wait step (Compose has no
+     # cross-project depends_on, and vault-agent lives in compose/vault/
+     # compose.yaml now).
+@@ -225,7 +225,7 @@ services:
+       timeout: 3s
+       retries: 3
+       start_period: 20s
+-    # Prompt 45 — the arcanium-vault-agent entry that used to be here
++    # Prompt 45 — the arcanium-vault_agent entry that used to be here
+     # moved to scripts/rehydrate-stack.sh's own explicit wait step (same
+     # reasoning as arcanium-api/arcanium-api-dev above). The arcanium-api
+     # dependency stays — that one's still in this same compose project.
+@@ -246,9 +246,9 @@ volumes:
+   vault-1-audit:
+     name: arcanium-vault_vault-1-audit
+     external: true
+-  # Prompt 30 — shared between arcanium-vault-agent (writer) and
++  # Prompt 30 — shared between arcanium-vault_agent (writer) and
+   # arcanium-api/arcanium-worker (read-only consumers, Deliverable 3).
+-  # Prompt 45 — arcanium-vault-agent itself moved to compose/vault/
++  # Prompt 45 — arcanium-vault_agent itself moved to compose/vault/
+   # compose.yaml (this is Vault auto-auth, not an arcanium-application
+   # concern — see that file's own comment); this volume moved with it and
+   # is owned there now, referenced here as external. Naming matches the
+diff --git a/scenarios/13_fitness/test_architecture_invariants.sh b/scenarios/13_fitness/test_architecture_invariants.sh
+index de277d2..06e1004 100755
+--- a/scenarios/13_fitness/test_architecture_invariants.sh
++++ b/scenarios/13_fitness/test_architecture_invariants.sh
+@@ -371,7 +371,7 @@ echo
+ # both vault.js retry loops used to have to reschedule themselves on
+ # failure, not just log and stop (found live: neither did, and a single
+ # transient Vault timeout permanently killed DB-credential rotation).
+-# Prompt 30 deleted both functions entirely — arcanium-vault-agent now
++# Prompt 30 deleted both functions entirely — arcanium-vault_agent now
+ # owns that retry problem — so this check is retired here and replaced by
+ # Prompt 30's own "no scheduler at all" assertion below, not left in place
+ # to fail forever against code that was deliberately removed.
+@@ -466,7 +466,7 @@ echo
+ # ── Deliverable 5 — vault.js must contain no setTimeout-based retry/
+ # rotation scheduler for the token or DB credential anymore — Prompt 29's
+ # hand-rolled schedulers are GONE, not just unused, replaced by
+-# arcanium-vault-agent's own auth/render retry (HashiCorp's problem now).
++# arcanium-vault_agent's own auth/render retry (HashiCorp's problem now).
+ if grep -qE "scheduleTokenRefresh|scheduleDbCredsRotation" arcanium/api/src/vault.js; then
+   bad "vault.js still contains the old setTimeout-based retry scheduler (scheduleTokenRefresh/scheduleDbCredsRotation) — should be fully removed, not just unused"
+ else
+@@ -478,10 +478,10 @@ fi
+ # secrets volume read-only.
+ COMPOSE_FILE="compose/arcanium/compose.yaml"
+ # Anchored on the exact key (leading whitespace, no preceding word char) —
+-# ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID (arcanium-vault-agent's
++# ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID (arcanium-vault_agent's
+ # own env, a substring match away from these) are legitimate and expected.
+ if grep -qE '^\s*VAULT_ROLE_ID:|^\s*VAULT_SECRET_ID:' "$COMPOSE_FILE"; then
+-  bad "compose/arcanium/compose.yaml still sets VAULT_ROLE_ID/VAULT_SECRET_ID directly on a service — should read from arcanium-vault-agent's rendered files instead"
++  bad "compose/arcanium/compose.yaml still sets VAULT_ROLE_ID/VAULT_SECRET_ID directly on a service — should read from arcanium-vault_agent's rendered files instead"
+ else
+   ok "no arcanium service sets VAULT_ROLE_ID/VAULT_SECRET_ID directly — all consume vault-agent-secrets"
+ fi
+@@ -491,16 +491,16 @@ else
+   bad "vault-agent-secrets read-only mount not found in compose/arcanium/compose.yaml"
+ fi
+ 
+-# ── arcanium-vault-agent's entrypoint never echoes the secret_id value
++# ── arcanium-vault_agent's entrypoint never echoes the secret_id value
+ # itself (only its assignment into a file) — a credential-in-logs check,
+ # the same discipline every other secret-issuing script in this repo
+ # already follows.
+-# Prompt 45 — path updated: arcanium-vault-agent moved to compose/vault/.
++# Prompt 45 — path updated: arcanium-vault_agent moved to compose/vault/.
+ ENTRYPOINT="compose/vault/vault-agent/entrypoint.sh"
+ if [ -f "$ENTRYPOINT" ]; then
+   LEAK=$(grep -E 'echo.*\$ARCANIUM_VAULT_SECRET_ID\b' "$ENTRYPOINT" || true)
+   if [ -z "$LEAK" ]; then
+-    ok "arcanium-vault-agent's entrypoint never echoes the secret_id value"
++    ok "arcanium-vault_agent's entrypoint never echoes the secret_id value"
+   else
+     bad "entrypoint.sh appears to echo the secret_id value: $LEAK"
+   fi
+@@ -581,7 +581,7 @@ echo
+ # Deliverable 1 Vault policy grant actually took effect live, the same way
+ # it was verified by hand while writing prompts/base_project/
+ # 32_01_supplier_key_public_material.md, but as a repeatable fitness check.
+-API_TOKEN=$(podman exec arcanium-vault-agent cat /vault/secrets/token 2>/dev/null)
++API_TOKEN=$(podman exec arcanium-vault_agent cat /vault/secrets/token 2>/dev/null)
+ if [ -n "$API_TOKEN" ]; then
+   VAULT_ENV_ADDR="https://127.0.0.1:18200"
+   VAULT_ENV_CACERT="$(pwd)/vault-tls/ca-chain.pem"
+@@ -599,7 +599,7 @@ if [ -n "$API_TOKEN" ]; then
+     bad "arcanium-api's real token could not READ suppliers/cocacola's transit key metadata (got '$COKE_TYPE')"
+   fi
+ else
+-  unk "Prompt 32 live Vault policy grant checks — arcanium-vault-agent not reachable"
++  unk "Prompt 32 live Vault policy grant checks — arcanium-vault_agent not reachable"
+ fi
+ 
+ JAR=$(mktemp)
+diff --git a/scripts/rehydrate-stack.sh b/scripts/rehydrate-stack.sh
+index 76d358e..bd5dec2 100755
+--- a/scripts/rehydrate-stack.sh
++++ b/scripts/rehydrate-stack.sh
+@@ -119,9 +119,11 @@ optional "HSM: Managed Key + document-signing-key (needs SoftHSM slot resolved a
+ run "identity: OpenLDAP + Keycloak" make identity-up
+ run "identity: LDAP fixture + Keycloak realm/client/federation (idempotent — ensure_* reconciles, never recreates)" make identity-bootstrap
+ run "Terraform: workloads + kmip + suppliers (seeded demo tenants)" bash -c "make tf-workloads && make tf-kmip && make tf-suppliers"
+-# Prompt 45 — arcanium-vault-agent moved from compose/arcanium/compose.yaml
+-# to compose/vault/compose.yaml (consolidating everything Vault-related in
+-# one place). It used to start implicitly here, as arcanium-api/worker's
++# Prompt 45 — arcanium-vault_agent (compose service key: arcanium-vault-
++# agent) moved from compose/arcanium/compose.yaml to compose/vault/
++# compose.yaml (consolidating everything Vault-related in one place;
++# container_name matches vault_s/vault_1/2/3's underscore convention in
++# that file). It used to start implicitly here, as arcanium-api/worker's
+ # own compose-level `depends_on: arcanium-vault-agent` — Compose has no
+ # cross-project depends_on, so that guarantee is now this explicit step,
+ # positioned at exactly the same point in the sequence as before. That
+@@ -134,10 +136,10 @@ run "Terraform: workloads + kmip + suppliers (seeded demo tenants)" bash -c "mak
+ # would start vault-agent against empty/invalid credentials that it bakes
+ # into its environment once at container start and never re-reads live —
+ # a real regression, not a cosmetic one, so this stays exactly here.
+-run "Vault: start arcanium-vault-agent (needs ARCANIUM_VAULT_ROLE_ID/SECRET_ID already in .env from a prior run)" \
++run "Vault: start arcanium-vault_agent (needs ARCANIUM_VAULT_ROLE_ID/SECRET_ID already in .env from a prior run)" \
+   bash -c '
+     # Prompt 45 fix — found live: podman seeds a brand-new named volume as
+-    # root-owned, and arcanium-vault-agent runs non-root (user 1000:1000,
++    # root-owned, and arcanium-vault_agent runs non-root (user 1000:1000,
+     # read_only, cap_drop ALL — see compose/vault/compose.yaml for why).
+     # vault-agent-secrets got a new project-qualified name the first time
+     # this ran after the move (arcanium-vault_vault-agent-secrets), so it
+@@ -150,11 +152,11 @@ run "Vault: start arcanium-vault-agent (needs ARCANIUM_VAULT_ROLE_ID/SECRET_ID a
+       -c "chown -R 1000:1000 /vault/secrets"
+     ./scripts/compose.sh vault up -d arcanium-vault-agent
+     for i in $(seq 1 30); do
+-      status=$(podman inspect --format "{{.State.Health.Status}}" arcanium-vault-agent 2>/dev/null || echo "")
++      status=$(podman inspect --format "{{.State.Health.Status}}" arcanium-vault_agent 2>/dev/null || echo "")
+       [ "$status" = "healthy" ] && exit 0
+       sleep 2
+     done
+-    echo "arcanium-vault-agent did not report healthy within 60s — check .env has a valid ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID pair (make workload-credentials-issue writes these) and podman logs arcanium-vault-agent" >&2
++    echo "arcanium-vault_agent did not report healthy within 60s — check .env has a valid ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID pair (make workload-credentials-issue writes these) and podman logs arcanium-vault_agent" >&2
+     exit 1
+   '
+ run "Arcanium: API/UI/worker (migrations run inline on API startup, idempotent)" make arcanium-up
+diff --git a/state/scripts/capture-state.sh b/state/scripts/capture-state.sh
+index 823dbbb..8650502 100755
+--- a/state/scripts/capture-state.sh
++++ b/state/scripts/capture-state.sh
+@@ -214,10 +214,10 @@ capture_arcanium() {
+   # fabricated: UNKNOWN unless the container is actually running and both
+   # files are actually readable. mtime, not file content (the token/DB
+   # password are never captured here).
+-  if running arcanium-vault-agent; then
++  if running arcanium-vault_agent; then
+     local token_mtime creds_mtime
+-    token_mtime=$(podman exec arcanium-vault-agent stat -c '%Y' /vault/secrets/token 2>/dev/null || echo "")
+-    creds_mtime=$(podman exec arcanium-vault-agent stat -c '%Y' /vault/secrets/db-creds.json 2>/dev/null || echo "")
++    token_mtime=$(podman exec arcanium-vault_agent stat -c '%Y' /vault/secrets/token 2>/dev/null || echo "")
++    creds_mtime=$(podman exec arcanium-vault_agent stat -c '%Y' /vault/secrets/db-creds.json 2>/dev/null || echo "")
+     jq -n \
+       --arg tm "${token_mtime:-null}" --arg cm "${creds_mtime:-null}" \
+       '{
+@@ -225,7 +225,7 @@ capture_arcanium() {
+         db_creds_file: { present: ($cm != "null" and $cm != ""), mtime_epoch: (if $cm == "null" or $cm == "" then null else ($cm | tonumber) end) }
+       }' >"$d/vault-agent.json"
+   else
+-    jq -n '{status:"UNKNOWN", detail:"arcanium-vault-agent not running"}' >"$d/vault-agent.json"
++    jq -n '{status:"UNKNOWN", detail:"arcanium-vault_agent not running"}' >"$d/vault-agent.json"
+     echo '{"status":"UNKNOWN","detail":"arcanium-api not running"}' >"$d/api-smoke.json"
+   fi
+ 

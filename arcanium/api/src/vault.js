@@ -1,7 +1,7 @@
 // vault.js — Vault API client.
 //
 // Prompt 30 — AppRole auto-auth and dynamic-DB-credential rotation are no
-// longer this file's problem. arcanium-vault-agent (compose/vault/
+// longer this file's problem. arcanium-vault_agent (compose/vault/
 // vault-agent/ — moved there from compose/arcanium/ in Prompt 45) owns
 // both: it authenticates on its own schedule/retry
 // logic (HashiCorp's own, not ours) and renders a current token +
@@ -170,7 +170,7 @@ async function waitForFile(path, label, timeoutMs = 30_000) {
     }
   }
   throw new Error(
-    `[vault] timed out waiting for ${label} (${path}) after ${timeoutMs}ms — is arcanium-vault-agent running and authenticated? last error: ${lastErr?.message}`,
+    `[vault] timed out waiting for ${label} (${path}) after ${timeoutMs}ms — is arcanium-vault_agent running and authenticated? last error: ${lastErr?.message}`,
   );
 }
 
@@ -272,7 +272,7 @@ export async function init() {
   state.token = readTokenFile();
   state.authenticated = true;
   state.lastTokenRefreshAt = new Date();
-  console.log("[vault] token read from arcanium-vault-agent sink");
+  console.log("[vault] token read from arcanium-vault_agent sink");
 
   const creds = readDbCredsFile();
   state.dbCreds = { username: creds.username, password: creds.password };
@@ -280,7 +280,7 @@ export async function init() {
   state.dbCredsLeaseId = creds.lease_id ?? null;
   state.lastDbRotationAt = new Date();
   console.log(
-    `[vault] db credentials read from arcanium-vault-agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
+    `[vault] db credentials read from arcanium-vault_agent render (username=${creds.username} ttl=${creds.lease_duration}s)`,
   );
 
   // Prompt 43 — found live: this used to be watch(TOKEN_PATH, ...) and
@@ -290,7 +290,7 @@ export async function init() {
   // file's underlying inode, and once the rename swaps in a new inode
   // at the same path, nothing re-arms the watch — Node does not
   // silently resubscribe, and no error is raised either. Confirmed live
-  // (arcanium-vault-agent's own logs vs. arcanium-api's own logs, after
+  // (arcanium-vault_agent's own logs vs. arcanium-api's own logs, after
   // ~9h uptime): Agent rendered 4 fresh db-creds.json files; arcanium-api
   // picked up exactly the FIRST one and never fired again — eventually
   // the credential it kept using genuinely expired, and every database

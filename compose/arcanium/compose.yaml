@@ -45,7 +45,7 @@ services:
       VAULT_ADDR: "https://vault-1:8200"
       VAULT_CACERT: "/vault/tls/ca-chain.pem"
       # Prompt 30 — VAULT_ROLE_ID/VAULT_SECRET_ID removed: this process no
-      # longer logs in itself. arcanium-vault-agent (compose/vault/
+      # longer logs in itself. arcanium-vault_agent (compose/vault/
       # compose.yaml — moved there Prompt 45) does, and renders a token +
       # DB credential into vault-agent-secrets, mounted read-only here.
       # Prompt 14.2 — provisioner token for cross-namespace writes
@@ -85,11 +85,11 @@ services:
       - arcanium-control
       - arcanium-vault-internal
     restart: unless-stopped
-    # Prompt 45 — the compose-level `depends_on: arcanium-vault-agent`
+    # Prompt 45 — the compose-level `depends_on: arcanium-vault_agent`
     # that used to be here is gone: Compose has no cross-project
-    # depends_on, and arcanium-vault-agent now lives in compose/vault/
+    # depends_on, and arcanium-vault_agent now lives in compose/vault/
     # compose.yaml. scripts/rehydrate-stack.sh's own explicit step waits
-    # for arcanium-vault-agent to report healthy before this service is
+    # for arcanium-vault_agent to report healthy before this service is
     # started, replacing that guarantee at the orchestration-script level.
     # vault.js's own waitForFile() (30s, with retry) is the last-resort
     # safety net for anyone starting this container standalone.
@@ -160,7 +160,7 @@ services:
       - arcanium-control
       - arcanium-vault-internal
     # Prompt 45 — same as arcanium-api: the depends_on on
-    # arcanium-vault-agent that used to be here moved to
+    # arcanium-vault_agent that used to be here moved to
     # scripts/rehydrate-stack.sh's own explicit wait step (Compose has no
     # cross-project depends_on, and vault-agent lives in compose/vault/
     # compose.yaml now).
@@ -225,7 +225,7 @@ services:
       timeout: 3s
       retries: 3
       start_period: 20s
-    # Prompt 45 — the arcanium-vault-agent entry that used to be here
+    # Prompt 45 — the arcanium-vault_agent entry that used to be here
     # moved to scripts/rehydrate-stack.sh's own explicit wait step (same
     # reasoning as arcanium-api/arcanium-api-dev above). The arcanium-api
     # dependency stays — that one's still in this same compose project.
@@ -246,9 +246,9 @@ volumes:
   vault-1-audit:
     name: arcanium-vault_vault-1-audit
     external: true
-  # Prompt 30 — shared between arcanium-vault-agent (writer) and
+  # Prompt 30 — shared between arcanium-vault_agent (writer) and
   # arcanium-api/arcanium-worker (read-only consumers, Deliverable 3).
-  # Prompt 45 — arcanium-vault-agent itself moved to compose/vault/
+  # Prompt 45 — arcanium-vault_agent itself moved to compose/vault/
   # compose.yaml (this is Vault auto-auth, not an arcanium-application
   # concern — see that file's own comment); this volume moved with it and
   # is owned there now, referenced here as external. Naming matches the

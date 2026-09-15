@@ -119,9 +119,11 @@ optional "HSM: Managed Key + document-signing-key (needs SoftHSM slot resolved a
 run "identity: OpenLDAP + Keycloak" make identity-up
 run "identity: LDAP fixture + Keycloak realm/client/federation (idempotent — ensure_* reconciles, never recreates)" make identity-bootstrap
 run "Terraform: workloads + kmip + suppliers (seeded demo tenants)" bash -c "make tf-workloads && make tf-kmip && make tf-suppliers"
-# Prompt 45 — arcanium-vault-agent moved from compose/arcanium/compose.yaml
-# to compose/vault/compose.yaml (consolidating everything Vault-related in
-# one place). It used to start implicitly here, as arcanium-api/worker's
+# Prompt 45 — arcanium-vault_agent (compose service key: arcanium-vault-
+# agent) moved from compose/arcanium/compose.yaml to compose/vault/
+# compose.yaml (consolidating everything Vault-related in one place;
+# container_name matches vault_s/vault_1/2/3's underscore convention in
+# that file). It used to start implicitly here, as arcanium-api/worker's
 # own compose-level `depends_on: arcanium-vault-agent` — Compose has no
 # cross-project depends_on, so that guarantee is now this explicit step,
 # positioned at exactly the same point in the sequence as before. That
@@ -134,10 +136,10 @@ run "Terraform: workloads + kmip + suppliers (seeded demo tenants)" bash -c "mak
 # would start vault-agent against empty/invalid credentials that it bakes
 # into its environment once at container start and never re-reads live —
 # a real regression, not a cosmetic one, so this stays exactly here.
-run "Vault: start arcanium-vault-agent (needs ARCANIUM_VAULT_ROLE_ID/SECRET_ID already in .env from a prior run)" \
+run "Vault: start arcanium-vault_agent (needs ARCANIUM_VAULT_ROLE_ID/SECRET_ID already in .env from a prior run)" \
   bash -c '
     # Prompt 45 fix — found live: podman seeds a brand-new named volume as
-    # root-owned, and arcanium-vault-agent runs non-root (user 1000:1000,
+    # root-owned, and arcanium-vault_agent runs non-root (user 1000:1000,
     # read_only, cap_drop ALL — see compose/vault/compose.yaml for why).
     # vault-agent-secrets got a new project-qualified name the first time
     # this ran after the move (arcanium-vault_vault-agent-secrets), so it
@@ -150,11 +152,11 @@ run "Vault: start arcanium-vault-agent (needs ARCANIUM_VAULT_ROLE_ID/SECRET_ID a
       -c "chown -R 1000:1000 /vault/secrets"
     ./scripts/compose.sh vault up -d arcanium-vault-agent
     for i in $(seq 1 30); do
-      status=$(podman inspect --format "{{.State.Health.Status}}" arcanium-vault-agent 2>/dev/null || echo "")
+      status=$(podman inspect --format "{{.State.Health.Status}}" arcanium-vault_agent 2>/dev/null || echo "")
       [ "$status" = "healthy" ] && exit 0
       sleep 2
     done
-    echo "arcanium-vault-agent did not report healthy within 60s — check .env has a valid ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID pair (make workload-credentials-issue writes these) and podman logs arcanium-vault-agent" >&2
+    echo "arcanium-vault_agent did not report healthy within 60s — check .env has a valid ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID pair (make workload-credentials-issue writes these) and podman logs arcanium-vault_agent" >&2
     exit 1
   '
 run "Arcanium: API/UI/worker (migrations run inline on API startup, idempotent)" make arcanium-up
