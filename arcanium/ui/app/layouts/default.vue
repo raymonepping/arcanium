@@ -15,22 +15,24 @@
       </div>
 
       <nav class="sidebar-nav">
-        <NuxtLink
-          v-for="item in navItems"
-          :key="item.to"
-          :to="item.to"
-          class="nav-item"
-          :class="{ active: isActive(item) }"
-          :title="sidebarCollapsed ? item.label : undefined"
-        >
-          <span class="nav-icon" v-html="item.icon" />
-          <span v-if="!sidebarCollapsed" class="nav-label">{{ item.label }}</span>
-          <span
-            v-if="!sidebarCollapsed && item.badge"
-            class="nav-badge"
-            :class="item.badgeType"
-          >{{ item.badge }}</span>
-        </NuxtLink>
+        <template v-for="(item, idx) in navItems" :key="item.to || `divider-${idx}`">
+          <div v-if="item.divider" class="nav-divider" />
+          <NuxtLink
+            v-else
+            :to="item.to"
+            class="nav-item"
+            :class="{ active: isActive(item) }"
+            :title="sidebarCollapsed ? item.label : undefined"
+          >
+            <span class="nav-icon" v-html="item.icon" />
+            <span v-if="!sidebarCollapsed" class="nav-label">{{ item.label }}</span>
+            <span
+              v-if="!sidebarCollapsed && item.badge"
+              class="nav-badge"
+              :class="item.badgeType"
+            >{{ item.badge }}</span>
+          </NuxtLink>
+        </template>
       </nav>
 
       <div class="sidebar-footer">
@@ -332,15 +334,45 @@ const NAV_ICONS = {
 
 const isSupplierAdmin = computed(() => persona.value === 'supplier-admin')
 
-const navItems = computed(() => {
-  const all = [
+type NavItem =
+  | { divider: true }
+  | {
+      divider?: false
+      to: string
+      label: string
+      icon: string
+      exact?: boolean
+      platform?: boolean
+      badge?: number
+      badgeType?: string
+    }
+
+// Prompt 46 — grouped by function, then by type, with a divider between
+// groups: register/manage tenant objects, automation, crypto material,
+// platform-health views, governance/audit trail. `platform` filtering
+// (below) can hide every item in a group for a given persona, so
+// dividers are cleaned up in a second pass rather than assumed safe —
+// see that comment for why.
+const navItems = computed<NavItem[]>(() => {
+  const all: NavItem[] = [
     { to: '/', label: 'Dashboard', icon: NAV_ICONS.dashboard, exact: true },
+    { divider: true },
     { to: '/suppliers', label: 'Suppliers', icon: NAV_ICONS.suppliers, platform: true },
+    { to: '/teams', label: 'Teams', icon: NAV_ICONS.teams, platform: true },
     { to: '/applications', label: 'Applications', icon: NAV_ICONS.applications },
+    { to: '/onboard', label: 'Onboard', icon: NAV_ICONS.onboard },
+    { divider: true },
+    { to: '/integrations', label: 'Integrations', icon: NAV_ICONS.integrations },
+    { to: '/jobs', label: 'Jobs', icon: NAV_ICONS.jobs, platform: true },
+    { divider: true },
     { to: '/keys', label: 'Keys', icon: NAV_ICONS.keys },
     { to: '/pki', label: 'PKI', icon: NAV_ICONS.pki, platform: true },
+    { divider: true },
+    { to: '/cluster', label: 'Cluster', icon: NAV_ICONS.cluster, platform: true },
+    { to: '/observability', label: 'Observability', icon: NAV_ICONS.observability, platform: true },
+    { to: '/maturity', label: 'Maturity', icon: NAV_ICONS.maturity },
+    { divider: true },
     { to: '/reconciliation', label: 'Reconciliation', icon: NAV_ICONS.reconciliation, badge: driftCount.value > 0 ? driftCount.value : undefined, badgeType: 'critical' },
-    { to: '/onboard', label: 'Onboard', icon: NAV_ICONS.onboard },
     {
       to: '/approvals',
       label: 'Approvals',
@@ -349,14 +381,18 @@ const navItems = computed(() => {
       badgeType: 'governance',
     },
     { to: '/evidence', label: 'Evidence', icon: NAV_ICONS.evidence },
-    { to: '/integrations', label: 'Integrations', icon: NAV_ICONS.integrations },
-    { to: '/jobs', label: 'Jobs', icon: NAV_ICONS.jobs, platform: true },
-    { to: '/cluster', label: 'Cluster', icon: NAV_ICONS.cluster, platform: true },
-    { to: '/maturity', label: 'Maturity', icon: NAV_ICONS.maturity },
-    { to: '/observability', label: 'Observability', icon: NAV_ICONS.observability, platform: true },
-    { to: '/teams', label: 'Teams', icon: NAV_ICONS.teams, platform: true },
   ]
-  return isSupplierAdmin.value ? all.filter((i) => !i.platform) : all
+  const filtered = isSupplierAdmin.value ? all.filter((i) => !i.platform) : all
+  // A divider has no `platform` field, so it always survives the filter
+  // above — drop any that's now leading, trailing, or next to another
+  // divider (a persona hiding every item in a group would otherwise
+  // leave a doubled/dangling rule line).
+  return filtered.filter((item, idx) => {
+    if (!item.divider) return true
+    const prev = filtered[idx - 1]
+    const next = filtered[idx + 1]
+    return prev && !prev.divider && next && !next.divider
+  })
 })
 
 function isActive(item: { to: string; exact?: boolean }) {
@@ -397,22 +433,26 @@ const cmdQuery = ref('')
 const cmdCursor = ref(0)
 const cmdInput = ref<HTMLInputElement | null>(null)
 
+// Prompt 46 — reordered to match navItems' new grouping (no dividers
+// here, it's a fuzzy-searched flat list, but the default empty-query
+// view shows the first 6, so a stale order here would be visibly
+// inconsistent with the sidebar).
 const ALL_CMDS = [
   { to: '/', label: 'Dashboard', category: 'Page', icon: NAV_ICONS.dashboard },
   { to: '/suppliers', label: 'Suppliers', category: 'Page', icon: NAV_ICONS.suppliers },
+  { to: '/teams', label: 'Teams', category: 'Page', icon: NAV_ICONS.teams },
   { to: '/applications', label: 'Applications', category: 'Page', icon: NAV_ICONS.applications },
+  { to: '/onboard', label: 'Onboard a Workload', category: 'Page', icon: NAV_ICONS.onboard },
+  { to: '/integrations', label: 'Integration Channels', category: 'Page', icon: NAV_ICONS.integrations },
+  { to: '/jobs', label: 'Provisioning Jobs', category: 'Page', icon: NAV_ICONS.jobs },
   { to: '/keys', label: 'Key Inventory', category: 'Page', icon: NAV_ICONS.keys },
   { to: '/pki', label: 'PKI', category: 'Page', icon: NAV_ICONS.pki },
+  { to: '/cluster', label: 'Cluster Health', category: 'Page', icon: NAV_ICONS.cluster },
+  { to: '/observability', label: 'Observability', category: 'Page', icon: NAV_ICONS.observability },
+  { to: '/maturity', label: 'Maturity', category: 'Page', icon: NAV_ICONS.maturity },
   { to: '/reconciliation', label: 'Reconciliation', category: 'Page', icon: NAV_ICONS.reconciliation },
   { to: '/approvals', label: 'Approvals', category: 'Page', icon: NAV_ICONS.approvals },
   { to: '/evidence', label: 'Evidence Trail', category: 'Page', icon: NAV_ICONS.evidence },
-  { to: '/jobs', label: 'Provisioning Jobs', category: 'Page', icon: NAV_ICONS.jobs },
-  { to: '/onboard', label: 'Onboard a Workload', category: 'Page', icon: NAV_ICONS.onboard },
-  { to: '/integrations', label: 'Integration Channels', category: 'Page', icon: NAV_ICONS.integrations },
-  { to: '/cluster', label: 'Cluster Health', category: 'Page', icon: NAV_ICONS.cluster },
-  { to: '/maturity', label: 'Maturity', category: 'Page', icon: NAV_ICONS.maturity },
-  { to: '/observability', label: 'Observability', category: 'Page', icon: NAV_ICONS.observability },
-  { to: '/teams', label: 'Teams', category: 'Page', icon: NAV_ICONS.teams },
 ]
 
 const cmdResults = computed(() => {
@@ -516,6 +556,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   transition: background 0.12s, color 0.12s;
   white-space: nowrap;
   position: relative;
+}
+.nav-divider {
+  height: 0;
+  margin: 4px 14px;
+  border-top: 1px solid var(--arc-border-subtle);
 }
 .nav-item:hover { background: rgba(255,255,255,0.04); color: var(--arc-text-primary); }
 .nav-item.active {

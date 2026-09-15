@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Sidebar navigation (Prompt 46) regrouped by function, then by type,
+  with a divider between groups: Dashboard · Suppliers/Teams/
+  Applications/Onboard · Integrations/Jobs · Keys/PKI · Cluster/
+  Observability/Maturity · Reconciliation/Approvals/Evidence. User:
+  "Grouping by function, and then by type" — asked where Reconciliation
+  should sit (platform-state group or governance group); the user
+  agreed it reads better next to Approvals/Evidence, since reconciliation
+  runs are what approval/destroy gates key off of. No grouping/divider
+  mechanism existed before (`arcanium/ui/app/layouts/default.vue`'s
+  `navItems` was a flat array) — added from scratch, including a second
+  filter pass that drops any divider left leading, trailing, or adjacent
+  to another divider once the `supplier-admin` persona's platform-item
+  filter runs (verified live in both personas). The ⌘K command palette's
+  item list was reordered to match for consistency, since its default
+  empty-query view shows the first six.
+
 ### Added
 
 - Periodic credential/token reconciliation, a backstop on top of Prompt

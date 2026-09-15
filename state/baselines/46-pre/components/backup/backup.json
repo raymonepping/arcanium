@@ -1,0 +1,14 @@
+{
+  "vault_snapshot": {
+    "available": false,
+    "last_verified_at": null,
+    "rto_seconds": null,
+    "rpo_seconds": null
+  },
+  "postgres": {
+    "available": false,
+    "last_verified_at": null,
+    "rto_seconds": null,
+    "rpo_seconds": null
+  }
+}
