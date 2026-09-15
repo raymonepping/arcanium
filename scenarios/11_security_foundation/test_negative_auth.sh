@@ -254,10 +254,20 @@ fi
 # "CIPHERTEXT ONLY, operator-gated"). Fixture setup only (not the thing
 # under test) — produce a real ciphertext by calling Vault Transit directly
 # with the local root token, the same way scripts/vault-status.sh does.
+#
+# Found live: against a freshly clean-slated deployment (no payments-api-key
+# registered), `vault write transit/encrypt/payments-api-key` doesn't just
+# fail — Transit auto-vivifies the key on first encrypt when the caller has
+# create capability (true for the root token used here), so this fixture
+# prep silently created a real, permanent key as a side effect of running
+# this test. Existence-checked first now (a read-only `vault read`, no
+# mutation) so the check is skipped, not mutating, when there's nothing to
+# rewrap against.
 if session_ok "${JAR[operator]}" && [ -f .secrets/vault/cluster-init.json ] && command -v jq >/dev/null 2>&1; then
   ROOT_TOKEN=$(jq -er '.root_token' .secrets/vault/cluster-init.json 2>/dev/null)
   CIPHERTEXT=""
-  if [ -n "$ROOT_TOKEN" ]; then
+  if [ -n "$ROOT_TOKEN" ] && VAULT_ADDR=https://127.0.0.1:18200 VAULT_TOKEN="$ROOT_TOKEN" VAULT_CACERT="$(pwd)/vault-tls/ca-chain.pem" \
+    vault read -field=name transit/keys/payments-api-key >/dev/null 2>&1; then
     CIPHERTEXT=$(VAULT_ADDR=https://127.0.0.1:18200 VAULT_TOKEN="$ROOT_TOKEN" VAULT_CACERT="$(pwd)/vault-tls/ca-chain.pem" \
       vault write -field=ciphertext transit/encrypt/payments-api-key plaintext="$(printf 'test' | base64)" 2>/dev/null)
   fi
@@ -266,7 +276,7 @@ if session_ok "${JAR[operator]}" && [ -f .secrets/vault/cluster-init.json ] && c
       -d "{\"ciphertext\":\"$CIPHERTEXT\"}" "$API/api/v1/keys/payments-api-key/rewrap")
     [ "$S" = "200" ] && ok "operator rewrap -> 200" || bad "operator rewrap (got $S)"
   else
-    unk "operator rewrap — could not produce a fixture ciphertext (payments-api-key unavailable?)"
+    unk "operator rewrap — payments-api-key not registered (clean-slate state?), nothing to rewrap"
   fi
 else
   unk "operator rewrap — no session, or no local root token to prepare a fixture ciphertext"
