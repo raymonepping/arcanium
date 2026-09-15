@@ -78,6 +78,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scenarios/05_approval/approve.sh` had the same pre-Prompt-18 gap as
+  `external-supplier` (Prompt 50, found immediately after fixing that
+  one): its two Arcanium API calls carried no credential, so the very
+  first one 401'd once `ARCANIUM_AUTH_ENABLED=true`. Found live: the
+  user approved a request as `demo-ciso` in the UI and correctly got a
+  409 (the UI honestly warns that its own approve button only records a
+  DB decision, never the real Vault Control Group authorize step) —
+  running the actual script that does that real step failed outright.
+  Fixed using the same OIDC-login convention `provision.sh` already
+  established, signing in as `demo-ciso` specifically (the only persona
+  MATRIX grants `approve: true` — confirmed live that an operator's own
+  attempt is correctly denied). Verified live end to end: real Vault CG
+  authorize, then a genuine Arcanium-recorded approval with the
+  approver name resolved from Vault's own response. `AUD-01` and
+  `GOV-01` both now pass; the maturity level is capped only by
+  `TEN-ISO-01` needing a second supplier — a data fact, not a gap.
 - `external-supplier` (the Control Group demo workload) never carried
   any Arcanium API credential — a gap predating Prompt 18's real auth,
   masked until now because it only worked when

@@ -1,0 +1,66 @@
+diff --git a/Makefile b/Makefile
+index fbde29d..c18283c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -478,3 +478,9 @@ reset-demo: ## DESTRUCTIVE — down -v every stack and delete all persistent vol
+ 		./scripts/compose.sh "$$s" down -v 2>/dev/null || true; \
+ 	done
+ 	@echo "All stacks and volumes removed."
++
++clean-slate: ## DESTRUCTIVE (lighter than reset-demo) — wipe accumulated demo/build-up data, keep identity + platform baseline running. See scripts/clean-slate.sh --help.
++	@./scripts/clean-slate.sh
++
++clean-slate-keep-containers: ## Same as clean-slate, but leaves the workload containers running (they will error until re-onboarded)
++	@./scripts/clean-slate.sh --skip-containers
+diff --git a/scenarios/05_approval/approve.sh b/scenarios/05_approval/approve.sh
+index 2f404e2..cab4c5b 100755
+--- a/scenarios/05_approval/approve.sh
++++ b/scenarios/05_approval/approve.sh
+@@ -18,6 +18,23 @@ if [ -f ".env.workloads" ]; then
+   set +o allexport
+ fi
+ 
++# Prompt 50 — found live: this script predates Prompt 18's real auth
++# (untouched since the initial platform build) and sent no Arcanium
++# credential at all — its very first call 401'd once
++# ARCANIUM_AUTH_ENABLED=true, same class of gap Prompt 49 fixed for
++# external-supplier. The final POST .../approve call needs the "ciso"
++# persona specifically (MATRIX grants approve:true only to ciso —
++# confirmed live: an operator's own attempt is correctly denied).
++source "$(dirname "${BASH_SOURCE[0]}")/../lib/oidc_login.sh"
++OIDC_LOGIN_TAG="approve"
++CURL_AUTH=()
++if [ "$(auth_enabled "$ARCANIUM_API")" = "true" ]; then
++  echo "[approve] ARCANIUM_AUTH_ENABLED — signing in as demo-ciso"
++  oidc_login "demo-ciso" "Arcanium-ciso-2026" "$ARCANIUM_API" || exit 1
++  trap 'rm -f "$OIDC_JAR"' EXIT
++  CURL_AUTH=(-b "$OIDC_JAR")
++fi
++
+ ROLE_ID="${APPROVER_VAULT_ROLE_ID:-}"
+ SECRET_ID="${APPROVER_VAULT_SECRET_ID:-}"
+ 
+@@ -28,7 +45,7 @@ if [ -z "$ROLE_ID" ] || [ -z "$SECRET_ID" ]; then
+ fi
+ 
+ # Get newest pending approval from Arcanium API
+-PENDING=$(curl -sf "$ARCANIUM_API/api/v1/approvals")
++PENDING=$(curl -sf "${CURL_AUTH[@]}" "$ARCANIUM_API/api/v1/approvals")
+ COUNT=$(echo "$PENDING" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+ 
+ if [ "$COUNT" = "0" ]; then
+@@ -73,6 +90,6 @@ else
+ fi
+ 
+ # Step 3: record the approval in Arcanium API (updates DB status → 'approved')
+-RESULT=$(curl -sf -X POST "$ARCANIUM_API/api/v1/approvals/$FIRST_ID/approve" \
++RESULT=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/approvals/$FIRST_ID/approve" \
+   -H "Content-Type: application/json")
+ echo "[approve] Arcanium API result: $RESULT"
+diff --git a/state/CURRENT b/state/CURRENT
+index 3d1cb82..962115e 100644
+--- a/state/CURRENT
++++ b/state/CURRENT
+@@ -1 +1 @@
+-state/baselines/49-post
++state/baselines/50-pre

@@ -18,6 +18,23 @@ if [ -f ".env.workloads" ]; then
   set +o allexport
 fi
 
+# Prompt 50 — found live: this script predates Prompt 18's real auth
+# (untouched since the initial platform build) and sent no Arcanium
+# credential at all — its very first call 401'd once
+# ARCANIUM_AUTH_ENABLED=true, same class of gap Prompt 49 fixed for
+# external-supplier. The final POST .../approve call needs the "ciso"
+# persona specifically (MATRIX grants approve:true only to ciso —
+# confirmed live: an operator's own attempt is correctly denied).
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/oidc_login.sh"
+OIDC_LOGIN_TAG="approve"
+CURL_AUTH=()
+if [ "$(auth_enabled "$ARCANIUM_API")" = "true" ]; then
+  echo "[approve] ARCANIUM_AUTH_ENABLED — signing in as demo-ciso"
+  oidc_login "demo-ciso" "Arcanium-ciso-2026" "$ARCANIUM_API" || exit 1
+  trap 'rm -f "$OIDC_JAR"' EXIT
+  CURL_AUTH=(-b "$OIDC_JAR")
+fi
+
 ROLE_ID="${APPROVER_VAULT_ROLE_ID:-}"
 SECRET_ID="${APPROVER_VAULT_SECRET_ID:-}"
 
@@ -28,7 +45,7 @@ if [ -z "$ROLE_ID" ] || [ -z "$SECRET_ID" ]; then
 fi
 
 # Get newest pending approval from Arcanium API
-PENDING=$(curl -sf "$ARCANIUM_API/api/v1/approvals")
+PENDING=$(curl -sf "${CURL_AUTH[@]}" "$ARCANIUM_API/api/v1/approvals")
 COUNT=$(echo "$PENDING" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
 
 if [ "$COUNT" = "0" ]; then
@@ -73,6 +90,6 @@ else
 fi
 
 # Step 3: record the approval in Arcanium API (updates DB status → 'approved')
-RESULT=$(curl -sf -X POST "$ARCANIUM_API/api/v1/approvals/$FIRST_ID/approve" \
+RESULT=$(curl -sf "${CURL_AUTH[@]}" -X POST "$ARCANIUM_API/api/v1/approvals/$FIRST_ID/approve" \
   -H "Content-Type: application/json")
 echo "[approve] Arcanium API result: $RESULT"
