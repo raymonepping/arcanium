@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# scripts/workload-credentials.sh — Pre-24, Deliverable 5.
+# scripts/workload-credentials.sh
 #
-# Shared AppRole RoleID/SecretID issuance for every workload identity that
-# was previously a one-time manual `vault write -f .../secret-id` + hand
-# paste into .env (docs/setup.md, before this prompt): arcanium-api,
-# arcanium-hsm-read and document-signing.
+# Shared AppRole RoleID/SecretID issuance for workload identities that are
+# managed by this script: arcanium-hsm-read, document-signing, and the
+# vault-rotator sidecar (approle-rotator).
+#
+# arcanium-api is deliberately NOT in this registry. Its secret-id is now
+# managed end-to-end by the vault-rotator sidecar — this script issuing one
+# would create a second, independent credential pair for the same role, which
+# is exactly what docs/resource-ownership.md exists to avoid. The rotator
+# generates arcanium-api's secret-id itself on first startup and rotates it
+# every 60 days without any operator action.
+#
+# What IS here:
+#   - approle-rotator: the rotator sidecar's own bootstrap identity (one-time,
+#     its secret_id_ttl=0 — issued once, never expires, reissued by this script
+#     only if the operator explicitly wants to revoke and reissue).
+#   - arcanium-hsm-read, document-signing: unchanged from before.
 #
 # This deliberately does NOT cover payments-workload, pki-workload,
 # external-supplier, approver-1 or the pepsi/cocacola tenant roles.
 # scenarios/01_onboarding/run.sh, scenarios/06_supplier_isolation/provision.sh
 # and scenarios/05_approval/provision.sh already generate and idempotently
-# rewrite those into .env.workloads, and are exercised by working, tested
-# scenarios (2x2 supplier isolation, 29/29 negative-auth). A second,
-# independent path minting the same credentials would not be wrong (every
-# `vault write .../secret-id` call mints a fresh valid SecretID regardless
-# of caller), but it would be a second system claiming ownership of the
-# same resource — exactly what docs/resource-ownership.md exists to avoid.
-# This script covers exactly the identities that had no automated path at
-# all before this prompt.
+# rewrite those into .env.workloads.
 #
 # RoleID is an identifier (safe to read, safe to log which one was read).
 # SecretID is credential material: never printed, never logged, written
@@ -42,7 +47,12 @@ source "$ROOT/scripts/vault-common.sh"
 # vault-instance is "main" (vault-1, published :18200) or "hsm" (vault-hsm, :18300).
 # namespace is "-" for the root namespace.
 REGISTRY=(
-  "arcanium-api:main:-:auth/approle/role/arcanium-api:ARCANIUM_VAULT_ROLE_ID:ARCANIUM_VAULT_SECRET_ID"
+  # approle-rotator: vault-rotator sidecar's own bootstrap identity.
+  # secret_id_ttl=0 on this role — the secret-id never expires, so issuing a
+  # new one here explicitly revokes the old one (new login = old pair still
+  # works until you restart vault-rotator, at which point it will use this new
+  # ROTATOR_SECRET_ID). Issued once on first rehydrate; only reissue deliberately.
+  "approle-rotator:main:-:auth/approle/role/approle-rotator:ROTATOR_ROLE_ID:ROTATOR_SECRET_ID"
   "arcanium-hsm-read:hsm:-:auth/approle/role/arcanium-hsm-read:ARCANIUM_HSM_ROLE_ID:ARCANIUM_HSM_SECRET_ID"
   "document-signing:hsm:-:auth/approle/role/document-signing:DOCSIGN_VAULT_ROLE_ID:DOCSIGN_VAULT_SECRET_ID"
 )

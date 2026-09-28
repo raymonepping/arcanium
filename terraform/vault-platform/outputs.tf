@@ -4,6 +4,12 @@ output "approle_arcanium_api_role_id" {
   sensitive   = false
 }
 
+output "approle_rotator_role_id" {
+  description = "AppRole role_id for approle-rotator sidecar (seed into ROTATOR_ROLE_ID in .env)"
+  value       = vault_approle_auth_backend_role.approle_rotator.role_id
+  sensitive   = false
+}
+
 output "approle_path" {
   description = "AppRole auth mount path"
   value       = vault_auth_backend.approle.path

@@ -119,49 +119,39 @@ optional "HSM: Managed Key + document-signing-key (needs SoftHSM slot resolved a
 run "identity: OpenLDAP + Keycloak" make identity-up
 run "identity: LDAP fixture + Keycloak realm/client/federation (idempotent — ensure_* reconciles, never recreates)" make identity-bootstrap
 run "Terraform: workloads + kmip + suppliers (seeded demo tenants)" bash -c "make tf-workloads && make tf-kmip && make tf-suppliers"
-# Prompt 45 — arcanium-vault_agent (compose service key: arcanium-vault-
-# agent) moved from compose/arcanium/compose.yaml to compose/vault/
-# compose.yaml (consolidating everything Vault-related in one place;
-# container_name matches vault_s/vault_1/2/3's underscore convention in
-# that file). It used to start implicitly here, as arcanium-api/worker's
-# own compose-level `depends_on: arcanium-vault-agent` — Compose has no
-# cross-project depends_on, so that guarantee is now this explicit step,
-# positioned at exactly the same point in the sequence as before. That
-# position matters: ARCANIUM_VAULT_ROLE_ID/SECRET_ID are only freshly
-# issued by workload-credentials.sh, the step right after this one —
-# vault-agent starts here using whatever is ALREADY in .env from a prior
-# run (this works today because AppRole secret_id here is unlimited-use,
-# not because these values are freshly minted first). Moving this step
-# earlier in the sequence, before any prior run has ever populated .env,
-# would start vault-agent against empty/invalid credentials that it bakes
-# into its environment once at container start and never re-reads live —
-# a real regression, not a cosmetic one, so this stays exactly here.
-run "Vault: start arcanium-vault_agent (needs ARCANIUM_VAULT_ROLE_ID/SECRET_ID already in .env from a prior run)" \
+# vault-rotator needs its own bootstrap secret-id (ROTATOR_SECRET_ID) in .env
+# before it starts. workload-credentials.sh issue-all issues it from Vault and
+# writes it to .env. vault-agent depends_on: vault-rotator: service_healthy, so
+# Compose ensures the ordering: rotator up → rotator healthy (arcanium-api
+# secret-id written to vault-approle-credentials) → agent starts.
+# vault-agent-secrets is written by the agent (user 1000:1000); pre-own the
+# volume the same way as before so it is writable on a fresh named volume.
+run "workload credentials: approle-rotator, arcanium-hsm-read, document-signing" \
+  ./scripts/workload-credentials.sh issue-all
+run "Vault: start vault-rotator + arcanium-vault_agent" \
   bash -c '
-    # Prompt 45 fix — found live: podman seeds a brand-new named volume as
-    # root-owned, and arcanium-vault_agent runs non-root (user 1000:1000,
-    # read_only, cap_drop ALL — see compose/vault/compose.yaml for why).
-    # vault-agent-secrets got a new project-qualified name the first time
-    # this ran after the move (arcanium-vault_vault-agent-secrets), so it
-    # was created fresh and hit exactly that: the container crash-looped
-    # (~1000 restarts observed) on "permission denied" writing its token
-    # sink. Harmless no-op on an already-correctly-owned volume, so this
-    # runs unconditionally rather than trying to detect first-creation.
+    # Pre-own vault-agent-secrets so arcanium-vault_agent (user 1000:1000,
+    # read_only, cap_drop ALL) can write its token sink on a fresh named volume.
     podman run --rm --user 0:0 -v arcanium-vault_vault-agent-secrets:/vault/secrets \
       --entrypoint sh docker.io/hashicorp/vault-enterprise:2.1.0-ent \
       -c "chown -R 1000:1000 /vault/secrets"
+    # Pre-own vault-approle-credentials for the same reason (vault-rotator
+    # writes role-id/secret-id/metadata.json there).
+    podman run --rm --user 0:0 -v arcanium-vault_vault-approle-credentials:/run/approle \
+      --entrypoint sh docker.io/hashicorp/vault-enterprise:2.1.0-ent \
+      -c "chown -R 1000:1000 /run/approle"
+    # Compose dependency: vault-agent depends_on vault-rotator service_healthy,
+    # so starting arcanium-vault-agent here starts both in the right order.
     ./scripts/compose.sh vault up -d arcanium-vault-agent
-    for i in $(seq 1 30); do
+    for i in $(seq 1 45); do
       status=$(podman inspect --format "{{.State.Health.Status}}" arcanium-vault_agent 2>/dev/null || echo "")
       [ "$status" = "healthy" ] && exit 0
       sleep 2
     done
-    echo "arcanium-vault_agent did not report healthy within 60s — check .env has a valid ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID pair (make workload-credentials-issue writes these) and podman logs arcanium-vault_agent" >&2
+    echo "arcanium-vault_agent did not report healthy within 90s — check podman logs arcanium-vault_rotator and podman logs arcanium-vault_agent" >&2
     exit 1
   '
 run "Arcanium: API/UI/worker (migrations run inline on API startup, idempotent)" make arcanium-up
-run "workload credentials: arcanium-api, arcanium-hsm-read, document-signing" \
-  ./scripts/workload-credentials.sh issue-all
 run "workload credentials: onboarding (payments/pki + app registration)" make onboarding
 run "workload credentials: supplier isolation (pepsi/cocacola app+approver)" make supplier-provision
 run "workload credentials: approval demo (external-supplier/approver-1)" make approval-provision

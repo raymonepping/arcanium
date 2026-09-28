@@ -209,6 +209,34 @@ resource "vault_policy" "arcanium_pki" {
   EOT
 }
 
+# vault-rotator sidecar policy — scoped strictly to generating and inspecting
+# secret-ids for arcanium-api. Cannot read, modify, or delete any other resource.
+resource "vault_policy" "approle_rotator" {
+  name = "approle-rotator"
+
+  policy = <<-EOT
+    path "auth/approle/role/arcanium-api/secret-id" {
+      capabilities = ["create", "update"]
+    }
+
+    path "auth/approle/role/arcanium-api/custom-secret-id" {
+      capabilities = ["create", "update"]
+    }
+
+    path "auth/approle/role/arcanium-api/secret-id-accessor" {
+      capabilities = ["list"]
+    }
+
+    path "auth/approle/role/arcanium-api/secret-id-accessor/*" {
+      capabilities = ["read", "list", "delete"]
+    }
+
+    path "auth/approle/role/arcanium-api/role-id" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 # Workload read-only policy — read secrets from designated paths, nothing else.
 resource "vault_policy" "workload_read_only" {
   name = "workload-read-only"

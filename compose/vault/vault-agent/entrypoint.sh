@@ -1,29 +1,26 @@
 #!/bin/sh
-# compose/vault/vault-agent/entrypoint.sh — Prompt 30, Deliverable 1.
-# Prompt 45 — moved here from compose/arcanium/vault-agent/: consolidating
-# everything Vault-related under one compose stack.
+# compose/vault/vault-agent/entrypoint.sh
 #
-# Vault Agent's AppRole auto-auth method needs role_id/secret_id as FILES,
-# not env vars — but this project's existing credential-issuance path
-# (scripts/workload-credentials.sh) writes them into .env as
-# ARCANIUM_VAULT_ROLE_ID/ARCANIUM_VAULT_SECRET_ID, matching every other
-# workload identity in this repo. This script is a translation shim only:
-# it does not mint a new credential or claim ownership of this one (see
-# docs/resource-ownership.md) — it just writes the SAME existing values to
-# files so Agent can read them, then execs Agent itself.
-#
-# The secret_id value is never echoed or logged — only its presence/length
-# would ever appear in a log line if this script printed diagnostics, and
-# it deliberately does not.
+# Vault Agent reads role-id and secret-id from the shared /run/approle volume,
+# which is managed and automatically rotated by the vault-rotator sidecar.
+# The depends_on: vault-rotator: condition: service_healthy in compose.yaml
+# guarantees the files are present before this container starts, but a brief
+# wait loop is kept as a belt-and-suspenders guard against timing edge cases
+# (e.g. manual container restarts outside Compose's dependency tracking).
 set -eu
 
-: "${ARCANIUM_VAULT_ROLE_ID:?ARCANIUM_VAULT_ROLE_ID is required}"
-: "${ARCANIUM_VAULT_SECRET_ID:?ARCANIUM_VAULT_SECRET_ID is required}"
-
 umask 077
-printf '%s' "$ARCANIUM_VAULT_ROLE_ID" >/tmp/role-id
-printf '%s' "$ARCANIUM_VAULT_SECRET_ID" >/tmp/secret-id
-chmod 600 /tmp/role-id /tmp/secret-id
 
-echo "[vault-agent entrypoint] role-id/secret-id files written, starting vault agent"
+echo "[vault-agent entrypoint] waiting for role-id and secret-id in /run/approle..."
+attempt=0
+while [ ! -s /run/approle/role-id ] || [ ! -s /run/approle/secret-id ]; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 30 ]; then
+    echo "[vault-agent entrypoint] timed out waiting for /run/approle files — is vault-rotator healthy?" >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+echo "[vault-agent entrypoint] AppRole credentials found, starting vault agent..."
 exec vault agent -config=/vault/agent/config.hcl
