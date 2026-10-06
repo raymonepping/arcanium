@@ -445,6 +445,7 @@ up: ## Bring the full stack up from existing persistent state (idempotent — sa
 	@echo "Core stack is up. Run 'make workloads-up', 'make observability-up', 'make kms-sim-up' for the optional stacks, or 'make rehydrate' for the full sequence."
 
 down: ## Stop every stack WITHOUT deleting persistent volumes/data (never -v)
+	@./scripts/podman-drain.sh
 	@./scripts/compose.sh workloads down 2>/dev/null || true
 	@./scripts/compose.sh kms-sim down 2>/dev/null || true
 	@./scripts/compose.sh observability down 2>/dev/null || true
