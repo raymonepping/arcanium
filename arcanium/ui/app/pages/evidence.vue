@@ -31,12 +31,12 @@
 
     <div class="filter-bar">
       <input v-model="search" class="filter-input" placeholder="Filter by operation, resource, actor…" type="search" />
-      <select v-model="filterOrigin" class="filter-select">
+      <select v-model="filterOrigin" class="filter-select" aria-label="Filter by origin">
         <option value="">All evidence</option>
         <option value="audit-log">Crypto operations</option>
         <option value="approval">Governance</option>
       </select>
-      <select v-model="filterSource" class="filter-select">
+      <select v-model="filterSource" class="filter-select" aria-label="Filter by source">
         <option value="">All sources</option>
         <option value="manual">Manual</option>
         <option value="local">Local</option>
@@ -171,20 +171,20 @@ usePolling(load, 15000)
 @keyframes spin { to { transform: rotate(360deg); } }
 .empty-title { font-size: 15px; font-weight: 700; color: var(--arc-text-secondary); margin: 0; }
 .empty-sub { font-size: 12px; margin: 0; }
-.empty-sub code { color: var(--arc-action-bright); font-family: ui-monospace, monospace; }
+.empty-sub code { color: var(--arc-action-bright); font-family: var(--font-mono); }
 
 .table-wrap { border: 1px solid var(--arc-glass-border); border-radius: 12px; overflow: hidden; background: var(--arc-glass); }
 .arc-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.arc-table th { text-align: left; padding: 9px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--arc-text-muted); background: rgba(0,8,24,0.4); border-bottom: 1px solid var(--arc-border-subtle); }
+.arc-table th { text-align: left; padding: 9px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--arc-text-muted); background: var(--arc-well); border-bottom: 1px solid var(--arc-border-subtle); }
 .arc-table td { padding: 10px 14px; border-bottom: 1px solid var(--arc-border-subtle); color: var(--arc-text-secondary); }
 .arc-table tr:last-child td { border-bottom: none; }
-.arc-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
-.mono { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--arc-action-bright); }
+.arc-table tbody tr:hover td { background: var(--arc-hover-soft); }
+.mono { font-family: var(--font-mono); font-size: 11.5px; color: var(--arc-action-bright); }
 .muted { color: var(--arc-text-muted) !important; font-size: 11px; }
 
 .source-pill { font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
-.source-pill.manual { background: rgba(124,158,245,0.14); color: #9db6f7; }
-.source-pill.local { background: rgba(72,202,228,0.12); color: var(--arc-info); }
+.source-pill.manual { background: color-mix(in srgb, var(--arc-hue-indigo) 14%, transparent); color: var(--arc-indigo); }
+.source-pill.local { background: color-mix(in srgb, var(--arc-hue-cyan) 12%, transparent); color: var(--arc-info); }
 .source-pill.external { background: var(--arc-pending-bg); color: var(--arc-governance); }
 .outcome { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 100px; }
 .outcome.ok { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
@@ -194,19 +194,20 @@ usePolling(load, 15000)
 
 /* KML lifecycle strip + per-row stage tag (Prompt 16.6) */
 .kml-strip { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
-.kml-chip { flex: 1; min-width: 120px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--arc-glass-border); background: rgba(0,8,24,0.4); color: var(--arc-text-secondary); font-family: inherit; font-size: 11.5px; cursor: pointer; transition: border-color .14s, background .14s; }
+.kml-chip { flex: 1; min-width: 120px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--arc-glass-border); background: var(--arc-well); color: var(--arc-text-secondary); font-family: inherit; font-size: 11.5px; cursor: pointer; transition: border-color .14s, background .14s; }
 .kml-chip:hover { border-color: var(--arc-action-primary); }
-.kml-chip.on { border-color: var(--arc-action-bright); background: rgba(0,180,216,0.1); color: var(--arc-text-primary); }
-.kml-chip.empty { opacity: 0.5; }
+.kml-chip.on { border-color: var(--arc-action-bright); background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-text-primary); }
+.kml-chip.empty { color: var(--arc-text-dim); border-style: dashed; background: transparent; }
+.kml-chip.empty * { color: var(--arc-text-dim); }
 .kml-name { font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; }
 .kml-n { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--arc-text-primary); }
 .kml-chip.empty .kml-n { color: var(--arc-text-dim); font-weight: 600; }
 
-.stage-tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 4px; background: rgba(120,160,220,0.12); color: var(--arc-text-secondary); }
-.stage-tag.Generate { background: rgba(72,202,228,0.14); color: var(--arc-info); }
-.stage-tag.Distribute { background: rgba(124,158,245,0.14); color: #9db6f7; }
-.stage-tag.Store { background: rgba(148,163,184,0.14); color: var(--arc-text-muted); }
-.stage-tag.Use { background: rgba(34,197,94,0.12); color: var(--arc-healthy); }
+.stage-tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 4px; background: color-mix(in srgb, var(--arc-hue-slate) 12%, transparent); color: var(--arc-text-secondary); }
+.stage-tag.Generate { background: color-mix(in srgb, var(--arc-hue-cyan) 14%, transparent); color: var(--arc-info); }
+.stage-tag.Distribute { background: color-mix(in srgb, var(--arc-hue-indigo) 14%, transparent); color: var(--arc-indigo); }
+.stage-tag.Store { background: color-mix(in srgb, var(--arc-hue-slate) 14%, transparent); color: var(--arc-text-muted); }
+.stage-tag.Use { background: color-mix(in srgb, var(--arc-hue-green) 12%, transparent); color: var(--arc-healthy); }
 .stage-tag.Rotate { background: var(--arc-pending-bg); color: var(--arc-governance); }
 .stage-tag.Destroy { background: var(--arc-critical-bg); color: var(--arc-critical); }
 </style>

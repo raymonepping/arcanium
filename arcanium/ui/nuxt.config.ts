@@ -80,10 +80,11 @@ export default defineNuxtConfig({
   app: {
     head: {
       title: 'Arcanium',
+      htmlAttrs: { lang: 'en' },
       meta: [
         { name: 'description', content: 'Arcanium — Enterprise Cryptographic Lifecycle Platform' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { name: 'color-scheme', content: 'dark' },
+        { name: 'color-scheme', content: 'light' },
       ],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },

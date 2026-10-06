@@ -276,14 +276,14 @@ onMounted(async () => {
 .story-banner.empty { border-style: dashed; }
 .story-chip {
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
-  padding: 3px 9px; border-radius: 100px; background: rgba(0,119,182,0.1); color: var(--arc-action-bright);
+  padding: 3px 9px; border-radius: 100px; background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-action-bright);
 }
 .story-summary { font-size: 12px; color: var(--arc-text-secondary); }
 
 .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .policy-btn { margin-left: auto; padding: 5px 12px; font-size: 12px; }
 .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-primary); margin: 0; }
-.count-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 100px; background: rgba(0,119,182,0.1); color: var(--arc-action-bright); }
+.count-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 100px; background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-action-bright); }
 .empty-panel { background: var(--arc-bg-card); border: 1px solid var(--arc-border-subtle); border-radius: 10px; padding: 20px; text-align: center; font-size: 13px; color: var(--arc-text-muted); margin-bottom: 16px; }
 
 .req-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 24px; }
@@ -298,7 +298,7 @@ onMounted(async () => {
 
 .governance-note { font-size: 12px; color: var(--arc-text-secondary); margin: 0 0 12px; }
 
-.mono { font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; font-size: 11px; color: var(--arc-action-bright); }
+.mono { font-family: var(--font-mono); font-size: 11px; color: var(--arc-action-bright); }
 .muted { color: var(--arc-text-muted) !important; font-size: 12px; }
 
 .arc-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--arc-bg-card); border: 1px solid var(--arc-border-subtle); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
@@ -310,10 +310,10 @@ onMounted(async () => {
 .status-pill.COMPLIANT, .status-pill.PASS, .status-pill.approved { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .status-pill.DRIFTED, .status-pill.FAIL, .status-pill.rejected { background: var(--arc-critical-bg); color: var(--arc-critical); }
 .status-pill.UNKNOWN, .status-pill.pending { background: var(--arc-pending-bg); color: var(--arc-governance); }
-.status-pill.N-A { background: rgba(148,163,184,0.14); color: var(--arc-text-muted); }
+.status-pill.N-A { background: color-mix(in srgb, var(--arc-hue-slate) 14%, transparent); color: var(--arc-text-muted); }
 
 .disposition-pill { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.04em; }
-.disposition-pill.OPEN { background: rgba(148,163,184,0.12); color: var(--arc-text-muted); }
+.disposition-pill.OPEN { background: color-mix(in srgb, var(--arc-hue-slate) 12%, transparent); color: var(--arc-text-muted); }
 .disposition-pill.EXCEPTION_ACCEPTED { background: var(--arc-pending-bg); color: var(--arc-governance); }
-.disposition-pill.RECONCILED { background: rgba(72,202,228,0.12); color: var(--arc-info); }
+.disposition-pill.RECONCILED { background: color-mix(in srgb, var(--arc-hue-cyan) 12%, transparent); color: var(--arc-info); }
 </style>

@@ -293,7 +293,7 @@ usePolling(loadRecords, 10000)
   font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 100px;
   background: var(--arc-pending-bg); color: var(--arc-governance);
 }
-.tab-badge.muted { background: rgba(125,133,151,0.1); color: var(--arc-text-muted); }
+.tab-badge.muted { background: color-mix(in srgb, var(--arc-hue-slate) 10%, transparent); color: var(--arc-text-muted); }
 
 /* States */
 .state-loading, .state-empty, .state-error {
@@ -314,13 +314,13 @@ usePolling(loadRecords, 10000)
 .arc-table td { padding: 11px 16px; border-bottom: 1px solid var(--arc-border-subtle); color: var(--arc-text-secondary); }
 .arc-table tr:last-child td { border-bottom: none; }
 .data-row { cursor: pointer; transition: background 0.1s; }
-.data-row:hover td { background: rgba(255,255,255,0.02); }
+.data-row:hover td { background: var(--arc-hover-soft); }
 /* Prompt 16.5 — one amber indicator per row (the left edge), not one per cell.
    The amber status pill carries the rest of the "pending" signal. */
-.row-pending td:first-child { border-left: 2px solid var(--arc-governance); padding-left: 14px; }
-.mono { font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; font-size: 11px; color: var(--arc-action-bright); }
+.row-pending td { background: color-mix(in srgb, var(--arc-hue-amber) 5%, transparent); }
+.mono { font-family: var(--font-mono); font-size: 11px; color: var(--arc-action-bright); }
 .muted { color: var(--arc-text-muted) !important; font-size: 11px; }
-.app-link { color: var(--arc-action-bright); text-decoration: none; font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; font-size: 11px; }
+.app-link { color: var(--arc-action-bright); text-decoration: none; font-family: var(--font-mono); font-size: 11px; }
 .app-link:hover { text-decoration: underline; }
 
 .status-pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 100px; text-transform: capitalize; }
@@ -329,19 +329,19 @@ usePolling(loadRecords, 10000)
 .status-pill.rejected { background: var(--arc-critical-bg); color: var(--arc-critical); }
 
 .source-pill { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
-.source-pill.manual { background: rgba(0,119,182,0.1); color: var(--arc-action-bright); }
-.source-pill.local { background: rgba(34,197,94,0.1); color: var(--arc-healthy); }
-.source-pill.external { background: rgba(255,170,0,0.1); color: var(--arc-governance); }
+.source-pill.manual { background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-action-bright); }
+.source-pill.local { background: color-mix(in srgb, var(--arc-hue-green) 10%, transparent); color: var(--arc-healthy); }
+.source-pill.external { background: color-mix(in srgb, var(--arc-hue-amber) 10%, transparent); color: var(--arc-governance); }
 
 .action-btns { display: flex; gap: 6px; }
 .action-btn { font-size: 11px; font-weight: 600; padding: 3px 12px; border-radius: 6px; cursor: pointer; font-family: inherit; border: none; transition: background 0.12s; }
-.action-btn.approve { background: rgba(0,119,182,0.15); color: var(--arc-action-bright); border: 1px solid rgba(0,119,182,0.3); }
-.action-btn.approve:hover { background: rgba(0,119,182,0.25); }
+.action-btn.approve { background: color-mix(in srgb, var(--arc-hue-blue) 15%, transparent); color: var(--arc-action-bright); border: 1px solid color-mix(in srgb, var(--arc-hue-blue) 30%, transparent); }
+.action-btn.approve:hover { background: color-mix(in srgb, var(--arc-hue-blue) 25%, transparent); }
 
 /* ── Drawer ────────────────────────────────────────────────── */
 .drawer-overlay {
   position: fixed; inset: 0; z-index: 9000;
-  background: rgba(0, 8, 24, 0.5); backdrop-filter: blur(3px);
+  background: var(--arc-scrim); backdrop-filter: blur(3px);
   display: flex; justify-content: flex-end;
 }
 .drawer-panel {
@@ -368,7 +368,7 @@ usePolling(loadRecords, 10000)
 /* CG notice */
 .cg-notice {
   display: flex; gap: 12px; padding: 14px 16px;
-  background: rgba(255,170,0,0.06); border: 1px solid rgba(255,170,0,0.25);
+  background: color-mix(in srgb, var(--arc-hue-amber) 6%, transparent); border: 1px solid color-mix(in srgb, var(--arc-hue-amber) 25%, transparent);
   border-radius: 10px; margin-bottom: 18px;
 }
 .cg-notice-icon { width: 18px; height: 18px; color: var(--arc-governance); flex-shrink: 0; margin-top: 2px; }
@@ -389,7 +389,7 @@ usePolling(loadRecords, 10000)
 
 .ack-label {
   display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
-  padding: 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--arc-border-subtle);
+  padding: 12px; background: var(--arc-hover-soft); border: 1px solid var(--arc-border-subtle);
   border-radius: 8px; margin-bottom: 16px;
 }
 .ack-checkbox { width: 15px; height: 15px; flex-shrink: 0; margin-top: 2px; cursor: pointer; accent-color: var(--arc-action-primary); }
@@ -401,10 +401,10 @@ usePolling(loadRecords, 10000)
 .drawer-actions { display: flex; gap: 10px; }
 .btn-deny {
   flex: 1; padding: 10px 0; border-radius: 8px; font-size: 13px; font-weight: 600;
-  font-family: inherit; cursor: pointer; border: 1px solid rgba(220,47,2,0.3);
-  background: rgba(220,47,2,0.08); color: var(--arc-critical); transition: background 0.12s;
+  font-family: inherit; cursor: pointer; border: 1px solid color-mix(in srgb, var(--arc-hue-red) 30%, transparent);
+  background: color-mix(in srgb, var(--arc-hue-red) 8%, transparent); color: var(--arc-critical); transition: background 0.12s;
 }
-.btn-deny:hover:not(:disabled) { background: rgba(220,47,2,0.16); }
+.btn-deny:hover:not(:disabled) { background: color-mix(in srgb, var(--arc-hue-red) 16%, transparent); }
 .btn-deny:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-approve {
   flex: 2; padding: 10px 0; border-radius: 8px; font-size: 13px; font-weight: 600;
@@ -418,8 +418,8 @@ usePolling(loadRecords, 10000)
 .resolved-banner {
   padding: 14px 18px; border-radius: 10px; font-size: 14px; font-weight: 700; text-align: center;
 }
-.resolved-banner.approved { background: var(--arc-healthy-bg); color: var(--arc-healthy); border: 1px solid rgba(34,197,94,0.2); }
-.resolved-banner.rejected { background: var(--arc-critical-bg); color: var(--arc-critical); border: 1px solid rgba(220,47,2,0.2); }
+.resolved-banner.approved { background: var(--arc-healthy-bg); color: var(--arc-healthy); border: 1px solid color-mix(in srgb, var(--arc-hue-green) 20%, transparent); }
+.resolved-banner.rejected { background: var(--arc-critical-bg); color: var(--arc-critical); border: 1px solid color-mix(in srgb, var(--arc-hue-red) 20%, transparent); }
 
 /* Transition */
 .drawer-slide-enter-active, .drawer-slide-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }

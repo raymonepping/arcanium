@@ -19,13 +19,13 @@
 
     <div class="filter-bar">
       <input v-model="search" class="filter-input" placeholder="Filter by application or key…" type="search" />
-      <select v-model="filterStatus" class="filter-select">
+      <select v-model="filterStatus" class="filter-select" aria-label="Filter by status">
         <option value="">All statuses</option>
         <option value="COMPLIANT">Compliant</option>
         <option value="DRIFTED">Drifted</option>
         <option value="UNKNOWN">Unknown</option>
       </select>
-      <select v-model="filterDisposition" class="filter-select">
+      <select v-model="filterDisposition" class="filter-select" aria-label="Filter by disposition">
         <option value="">All dispositions</option>
         <option value="OPEN">Open</option>
         <option value="EXCEPTION_ACCEPTED">Exception accepted</option>
@@ -189,23 +189,23 @@ usePolling(load, 20000)
 
 .table-wrap { border: 1px solid var(--arc-glass-border); border-radius: 12px; overflow: hidden; background: var(--arc-glass); }
 .arc-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.arc-table th { text-align: left; padding: 9px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--arc-text-muted); background: rgba(0,8,24,0.4); border-bottom: 1px solid var(--arc-border-subtle); }
+.arc-table th { text-align: left; padding: 9px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--arc-text-muted); background: var(--arc-well); border-bottom: 1px solid var(--arc-border-subtle); }
 .arc-table td { padding: 10px 14px; border-bottom: 1px solid var(--arc-border-subtle); color: var(--arc-text-secondary); }
 .arc-table tr:last-child td { border-bottom: none; }
 .data-row.clickable { cursor: pointer; }
-.data-row.clickable:hover td { background: rgba(255,255,255,0.02); }
-.mono { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--arc-action-bright); }
+.data-row.clickable:hover td { background: var(--arc-hover-soft); }
+.mono { font-family: var(--font-mono); font-size: 11.5px; color: var(--arc-action-bright); }
 .muted { color: var(--arc-text-muted) !important; font-size: 11px; }
 
 .status-pill { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 100px; letter-spacing: 0.03em; }
 .status-pill.COMPLIANT { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .status-pill.DRIFTED { background: var(--arc-critical-bg); color: var(--arc-critical); }
-.status-pill.UNKNOWN { background: rgba(148,163,184,0.14); color: var(--arc-text-muted); }
+.status-pill.UNKNOWN { background: color-mix(in srgb, var(--arc-hue-slate) 14%, transparent); color: var(--arc-text-muted); }
 
 .disposition-pill { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; letter-spacing: 0.04em; }
-.disposition-pill.OPEN { background: rgba(148,163,184,0.12); color: var(--arc-text-muted); }
+.disposition-pill.OPEN { background: color-mix(in srgb, var(--arc-hue-slate) 12%, transparent); color: var(--arc-text-muted); }
 .disposition-pill.EXCEPTION_ACCEPTED { background: var(--arc-pending-bg); color: var(--arc-governance); }
-.disposition-pill.RECONCILED { background: rgba(72,202,228,0.12); color: var(--arc-info); }
+.disposition-pill.RECONCILED { background: color-mix(in srgb, var(--arc-hue-cyan) 12%, transparent); color: var(--arc-info); }
 
-.inline-notice { font-size: 12px; color: var(--arc-action-bright); margin: 0 0 14px; padding: 8px 12px; background: rgba(0,119,182,0.08); border: 1px solid var(--arc-glass-border); border-radius: 8px; }
+.inline-notice { font-size: 12px; color: var(--arc-action-bright); margin: 0 0 14px; padding: 8px 12px; background: color-mix(in srgb, var(--arc-hue-blue) 8%, transparent); border: 1px solid var(--arc-glass-border); border-radius: 8px; }
 </style>

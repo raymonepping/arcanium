@@ -248,11 +248,11 @@ onMounted(async () => {
 .meta-value { font-size: 12px; color: var(--arc-text-secondary); }
 .supplier-link { font-size: 12px; color: var(--arc-action-bright); text-decoration: none; }
 .supplier-link:hover { text-decoration: underline; }
-.provision-msg { font-size: 12px; color: var(--arc-action-bright); margin: 0 0 20px; line-height: 1.5; padding: 10px 14px; background: rgba(0,119,182,0.08); border: 1px solid var(--arc-glass-border); border-radius: 8px; }
+.provision-msg { font-size: 12px; color: var(--arc-action-bright); margin: 0 0 20px; line-height: 1.5; padding: 10px 14px; background: color-mix(in srgb, var(--arc-hue-blue) 8%, transparent); border: 1px solid var(--arc-glass-border); border-radius: 8px; }
 
 .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-primary); margin: 0; }
-.count-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 100px; background: rgba(0,119,182,0.1); color: var(--arc-action-bright); }
+.count-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 100px; background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-action-bright); }
 .section-link { margin-left: auto; font-size: 12px; color: var(--arc-action-bright); text-decoration: none; }
 .section-link:hover { text-decoration: underline; }
 .empty-panel { background: var(--arc-bg-card); border: 1px solid var(--arc-border-subtle); border-radius: 10px; padding: 24px; text-align: center; font-size: 13px; color: var(--arc-text-muted); }
@@ -267,15 +267,15 @@ onMounted(async () => {
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
   padding: 2px 8px; border-radius: 4px; align-self: flex-start;
 }
-.profile-type-badge.transit { background: rgba(0,119,182,0.1); color: var(--arc-action-bright); }
-.profile-type-badge.pki { background: rgba(34,197,94,0.1); color: var(--arc-healthy); }
-.profile-type-badge.kmip { background: rgba(255,170,0,0.1); color: var(--arc-governance); }
-.profile-type-badge.managed_key { background: rgba(125,133,151,0.1); color: var(--arc-text-secondary); }
+.profile-type-badge.transit { background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-action-bright); }
+.profile-type-badge.pki { background: color-mix(in srgb, var(--arc-hue-green) 10%, transparent); color: var(--arc-healthy); }
+.profile-type-badge.kmip { background: color-mix(in srgb, var(--arc-hue-amber) 10%, transparent); color: var(--arc-governance); }
+.profile-type-badge.managed_key { background: color-mix(in srgb, var(--arc-hue-slate) 10%, transparent); color: var(--arc-text-secondary); }
 .profile-path { font-size: 12px; color: var(--arc-action-bright); word-break: break-all; }
 .profile-id { font-size: 10px; color: var(--arc-text-muted); }
 .profile-ts { font-size: 11px; }
 
-.mono { font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; font-size: 11px; color: var(--arc-action-bright); }
+.mono { font-family: var(--font-mono); font-size: 11px; color: var(--arc-action-bright); }
 .muted { color: var(--arc-text-muted) !important; font-size: 12px; }
 
 .arc-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--arc-bg-card); border: 1px solid var(--arc-border-subtle); border-radius: 10px; overflow: hidden; }
@@ -291,9 +291,9 @@ onMounted(async () => {
   display: inline-block; font-size: 10px; font-weight: 600;
   padding: 1px 7px; border-radius: 10px; letter-spacing: 0.03em; text-transform: lowercase;
 }
-.cat-platform { background: rgba(124,134,152,0.15); color: var(--arc-text-muted); }
-.cat-tenant   { background: rgba(0,119,182,0.15);  color: var(--arc-action-bright); }
-.cat-unscoped { background: rgba(255,170,0,0.15);  color: var(--arc-governance); }
+.cat-platform { background: color-mix(in srgb, var(--arc-hue-slate) 15%, transparent); color: var(--arc-text-muted); }
+.cat-tenant   { background: color-mix(in srgb, var(--arc-hue-blue) 15%, transparent);  color: var(--arc-action-bright); }
+.cat-unscoped { background: color-mix(in srgb, var(--arc-hue-amber) 15%, transparent);  color: var(--arc-governance); }
 .classify-toggle {
   font-size: 10px; color: var(--arc-text-muted); background: none; border: none;
   cursor: pointer; padding: 0 4px; text-decoration: underline;

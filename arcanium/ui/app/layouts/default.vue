@@ -2,14 +2,18 @@
   <div class="arc-shell">
     <a class="skip-link" href="#main-content">Skip to content</a>
     <!-- ── Sidebar ──────────────────────────────────────── -->
-    <aside class="arc-sidebar" :class="{ collapsed: sidebarCollapsed }">
+    <aside
+      class="arc-sidebar"
+      :class="{ collapsed: sidebarCollapsed }"
+      data-testid="sidebar"
+    >
       <div class="sidebar-brand">
         <svg class="brand-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="12" cy="12" r="9" stroke="#0096c7" stroke-width="1.2"/>
-          <polygon points="12,5 17.5,8.5 17.5,15.5 12,19 6.5,15.5 6.5,8.5" stroke="#00b4d8" stroke-width="1" fill="none"/>
-          <circle cx="12" cy="12" r="2" fill="#ffaa00"/>
-          <line x1="12" y1="14" x2="12" y2="17.5" stroke="#ffaa00" stroke-width="1.2" stroke-linecap="round"/>
-          <line x1="10.8" y1="16" x2="12" y2="16" stroke="#ffaa00" stroke-width="1" stroke-linecap="round"/>
+          <circle cx="12" cy="12" r="9" stroke="#0f1a2a" stroke-width="1.2"/>
+          <polygon points="12,5 17.5,8.5 17.5,15.5 12,19 6.5,15.5 6.5,8.5" stroke="#0369a1" stroke-width="1" fill="none"/>
+          <circle cx="12" cy="12" r="2" fill="#c2620a"/>
+          <line x1="12" y1="14" x2="12" y2="17.5" stroke="#c2620a" stroke-width="1.2" stroke-linecap="round"/>
+          <line x1="10.8" y1="16" x2="12" y2="16" stroke="#c2620a" stroke-width="1" stroke-linecap="round"/>
         </svg>
         <span v-if="!sidebarCollapsed" class="brand-name">Arcanium</span>
       </div>
@@ -48,9 +52,9 @@
     <!-- ── Main area ──────────────────────────────────────── -->
     <div class="arc-main" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
       <!-- Topbar -->
-      <header class="arc-topbar">
+      <header class="arc-topbar" data-testid="topbar">
         <div class="topbar-left">
-          <h1 class="page-title">{{ currentTitle }}</h1>
+          <h1 class="page-title" data-testid="page-title">{{ currentTitle }}</h1>
         </div>
 
         <div class="topbar-centre">
@@ -65,7 +69,7 @@
         </div>
 
         <div class="topbar-right">
-          <span class="env-badge" title="Deployment environment">DEMO</span>
+          <span class="env-badge" data-testid="env-badge" title="Deployment environment">DEMO</span>
 
           <div class="cluster-pill" role="status" :class="clusterStatusClass" :title="clusterStatusTitle">
             <span class="cluster-dot" :class="{ live: clusterStatusClass === 'healthy' }" />
@@ -79,9 +83,9 @@
             :title="`${pendingCount} approval request${pendingCount === 1 ? '' : 's'} awaiting a decision`"
           >
             <svg viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="7" stroke="#ffaa00" stroke-width="1.2"/>
-              <line x1="8" y1="4" x2="8" y2="9" stroke="#ffaa00" stroke-width="1.5" stroke-linecap="round"/>
-              <circle cx="8" cy="11.5" r="0.8" fill="#ffaa00"/>
+              <circle cx="8" cy="8" r="7" stroke="#c2620a" stroke-width="1.2"/>
+              <line x1="8" y1="4" x2="8" y2="9" stroke="#c2620a" stroke-width="1.5" stroke-linecap="round"/>
+              <circle cx="8" cy="11.5" r="0.8" fill="#c2620a"/>
             </svg>
             <span>{{ pendingCount }}<span class="pending-pill__label"> pending</span></span>
           </button>
@@ -141,7 +145,7 @@
       </main>
 
       <!-- Footer -->
-      <AppFooter />
+      <AppFooter data-testid="footer" />
     </div>
 
     <!-- ── Command palette ────────────────────────────────── -->
@@ -504,10 +508,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .arc-sidebar {
   width: var(--sidebar-w);
   min-height: 100vh;
-  background: linear-gradient(180deg, rgba(0, 20, 60, 0.72), rgba(0, 12, 40, 0.72));
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--arc-bg-shell);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
   border-right: 1px solid var(--arc-glass-border);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.6), 8px 0 32px -24px rgba(15, 26, 42, 0.35);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -530,11 +535,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 }
 .brand-icon { width: 22px; height: 22px; flex-shrink: 0; }
 .brand-name {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
   color: var(--arc-text-primary);
   white-space: nowrap;
+  font-family: var(--font-sans);
 }
 
 .sidebar-nav {
@@ -550,13 +556,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 14px;
-  height: 38px;
+  margin: 0 8px;
+  padding: 0 10px;
+  height: 36px;
   font-size: 13px;
+  font-weight: 550;
   color: var(--arc-text-secondary);
   text-decoration: none;
-  border-radius: 0;
-  transition: background 0.12s, color 0.12s;
+  border-radius: 8px;
+  transition: background 0.18s var(--arc-ease-out), color 0.18s, box-shadow 0.18s;
   white-space: nowrap;
   position: relative;
 }
@@ -565,13 +573,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   margin: 4px 14px;
   border-top: 1px solid var(--arc-border-subtle);
 }
-.nav-item:hover { background: rgba(255,255,255,0.04); color: var(--arc-text-primary); }
+.nav-item:hover { background: rgba(255, 255, 255, 0.55); color: var(--arc-text-primary); }
 .nav-item.active {
-  background: var(--arc-selected);
-  color: var(--arc-action-hover);
-  border-left: 2px solid var(--arc-action-primary);
-  padding-left: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--arc-text-primary);
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px rgba(15, 26, 42, 0.08), 0 4px 12px -8px rgba(15, 26, 42, 0.35);
 }
+.nav-item.active .nav-icon { color: var(--arc-action-primary); }
 .nav-icon { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; }
 .nav-icon :deep(svg) { width: 16px; height: 16px; }
 .nav-label { flex: 1; }
@@ -585,12 +594,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .nav-badge.governance {
   background: var(--arc-pending-bg);
   color: var(--arc-governance);
-  border: 1px solid rgba(255,170,0,0.3);
+  border: 1px solid color-mix(in srgb, var(--arc-hue-amber) 30%, transparent);
 }
 .nav-badge.critical {
   background: var(--arc-critical-bg);
   color: var(--arc-critical);
-  border: 1px solid rgba(220,47,2,0.3);
+  border: 1px solid color-mix(in srgb, var(--arc-hue-red) 30%, transparent);
 }
 
 .sidebar-footer {
@@ -610,7 +619,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   color: var(--arc-text-muted);
   transition: background 0.12s, color 0.12s;
 }
-.sidebar-toggle:hover { background: rgba(255,255,255,0.06); color: var(--arc-text-secondary); }
+.sidebar-toggle:hover { background: var(--arc-hover); color: var(--arc-text-secondary); }
 .sidebar-toggle svg { width: 14px; height: 14px; }
 
 /* ── Main area ───────────────────────────────────────────── */
@@ -624,10 +633,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 /* ── Topbar ──────────────────────────────────────────────── */
 .arc-topbar {
   height: var(--topbar-h);
-  background: rgba(0, 16, 44, 0.68);
-  backdrop-filter: blur(14px) saturate(1.1);
-  -webkit-backdrop-filter: blur(14px) saturate(1.1);
-  border-bottom: 1px solid var(--arc-glass-border);
+  background: var(--arc-bg-shell);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  border: 1px solid var(--arc-glass-border);
+  border-radius: 14px;
+  box-shadow: var(--arc-shadow-md), inset 0 1px 0 var(--arc-glass-hi);
   display: flex;
   align-items: center;
   padding: 0 24px;
@@ -638,7 +649,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   flex-shrink: 0;
 }
 .topbar-left { flex: 0 1 auto; min-width: 0; }
-.page-title { font-size: 15px; font-weight: 600; color: var(--arc-text-primary); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--arc-text-primary); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar-centre { flex: 1 1 auto; min-width: 120px; max-width: 360px; }
 .topbar-right { flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .topbar-right > * { white-space: nowrap; flex-shrink: 0; }
@@ -661,7 +672,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .cmd-trigger:hover { border-color: var(--arc-border-strong); color: var(--arc-text-secondary); }
 .cmd-trigger svg { width: 14px; height: 14px; flex-shrink: 0; }
 .cmd-trigger span { flex: 1; text-align: left; }
-.cmd-trigger kbd { font-size: 11px; opacity: 0.5; }
+.cmd-trigger kbd { font-size: 11px; color: var(--arc-text-dim); font-family: var(--font-mono); }
 
 .cluster-pill {
   display: flex;
@@ -674,10 +685,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   white-space: nowrap;
   cursor: default;
 }
-.cluster-pill.healthy { background: var(--arc-healthy-bg); color: var(--arc-healthy); border: 1px solid rgba(34,197,94,0.2); }
-.cluster-pill.degraded { background: rgba(244,140,6,0.1); color: var(--arc-warning); border: 1px solid rgba(244,140,6,0.2); }
-.cluster-pill.critical { background: var(--arc-critical-bg); color: var(--arc-critical); border: 1px solid rgba(220,47,2,0.2); }
-.cluster-pill.unknown { background: rgba(125,133,151,0.1); color: var(--arc-text-muted); border: 1px solid rgba(125,133,151,0.2); }
+.cluster-pill.healthy { background: var(--arc-healthy-bg); color: var(--arc-healthy); border: 1px solid color-mix(in srgb, var(--arc-hue-green) 20%, transparent); }
+.cluster-pill.degraded { background: color-mix(in srgb, var(--arc-hue-orange) 10%, transparent); color: var(--arc-warning); border: 1px solid color-mix(in srgb, var(--arc-hue-orange) 20%, transparent); }
+.cluster-pill.critical { background: var(--arc-critical-bg); color: var(--arc-critical); border: 1px solid color-mix(in srgb, var(--arc-hue-red) 20%, transparent); }
+.cluster-pill.unknown { background: color-mix(in srgb, var(--arc-hue-slate) 10%, transparent); color: var(--arc-text-muted); border: 1px solid color-mix(in srgb, var(--arc-hue-slate) 20%, transparent); }
 .cluster-dot {
   width: 6px;
   height: 6px;
@@ -707,7 +718,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   border-radius: 100px;
   transition: color 0.15s, border-color 0.15s;
 }
-.vault-link:hover { color: var(--arc-action-bright); border-color: rgba(0, 180, 216, 0.35); }
+.vault-link:hover { color: var(--arc-action-bright); border-color: color-mix(in srgb, var(--arc-hue-blue) 35%, transparent); }
 .vault-link svg { width: 13px; height: 13px; }
 
 .user-menu { position: relative; }
@@ -725,20 +736,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   font-family: inherit;
   cursor: pointer;
 }
-.persona:hover { color: var(--arc-text-primary); border-color: rgba(0, 180, 216, 0.35); }
+.persona:hover { color: var(--arc-text-primary); border-color: color-mix(in srgb, var(--arc-hue-blue) 35%, transparent); }
 .persona-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--arc-text-dim); }
-.persona-dot--auth { background: var(--arc-action-bright); box-shadow: 0 0 0 2px rgba(0, 180, 216, 0.18); }
+.persona-dot--auth { background: var(--arc-action-bright); box-shadow: 0 0 0 2px color-mix(in srgb, var(--arc-hue-blue) 18%, transparent); }
 
 .user-menu-panel {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
   min-width: 220px;
-  background: var(--arc-glass);
+  background: rgba(255, 255, 255, 0.9);
   border: 1px solid var(--arc-glass-border);
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: var(--arc-shadow-lg);
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(22px) saturate(150%);
   padding: 10px 12px;
   z-index: 40;
 }
@@ -750,7 +761,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .umf-chip {
   font-size: 10.5px;
   color: var(--arc-text-muted);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--arc-hover);
   border: 1px solid var(--arc-glass-border);
   border-radius: 100px;
   padding: 1px 8px;
@@ -767,7 +778,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   border-radius: 6px;
   cursor: pointer;
 }
-.umf-signout:hover { color: var(--arc-text-primary); border-color: rgba(220, 90, 90, 0.4); }
+.umf-signout:hover { color: var(--arc-text-primary); border-color: color-mix(in srgb, var(--arc-hue-red) 40%, transparent); }
 
 @media (max-width: 1180px) {
   .env-badge, .vault-link span, .persona { display: none; }
@@ -796,11 +807,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   font-family: inherit;
   background: var(--arc-pending-bg);
   color: var(--arc-governance);
-  border: 1px solid rgba(255,170,0,0.3);
+  border: 1px solid color-mix(in srgb, var(--arc-hue-amber) 30%, transparent);
   cursor: pointer;
   transition: background 0.12s;
 }
-.pending-pill:hover { background: rgba(255,170,0,0.2); }
+.pending-pill:hover { background: color-mix(in srgb, var(--arc-hue-amber) 20%, transparent); }
 .pending-pill svg { width: 14px; height: 14px; }
 
 /* ── Content ─────────────────────────────────────────────── */
@@ -813,9 +824,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   display: flex; align-items: center; gap: 10px;
   margin-bottom: 18px; padding: 10px 16px; border-radius: 10px;
   font-size: 12px; color: var(--arc-text-secondary);
-  background: rgba(0, 119, 182, 0.08); border: 1px solid var(--arc-glass-border);
+  background: color-mix(in srgb, var(--arc-hue-blue) 8%, transparent); border: 1px solid var(--arc-glass-border);
 }
-.tenant-banner strong { color: var(--arc-action-bright); font-family: ui-monospace, monospace; }
+.tenant-banner strong { color: var(--arc-action-bright); font-family: var(--font-mono); }
 .tb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--arc-action-bright); flex-shrink: 0; }
 
 /* ── Command palette ─────────────────────────────────────── */
@@ -823,7 +834,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(0, 8, 24, 0.7);
+  background: var(--arc-scrim);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: flex-start;
@@ -833,11 +844,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .cmd-panel {
   width: 100%;
   max-width: 560px;
-  background: var(--arc-bg-elevated);
-  border: 1px solid var(--arc-border-strong);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  border: 1px solid var(--arc-glass-border);
+  border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+  box-shadow: var(--arc-shadow-lg);
 }
 .cmd-search-row {
   display: flex;
@@ -861,7 +874,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .cmd-esc {
   font-size: 11px;
   color: var(--arc-text-muted);
-  background: rgba(255,255,255,0.06);
+  background: var(--arc-hover);
   border: 1px solid var(--arc-border-subtle);
   border-radius: 4px;
   padding: 2px 6px;
@@ -883,7 +896,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   text-align: left;
   transition: background 0.1s;
 }
-.cmd-result:hover, .cmd-result.active { background: rgba(0,119,182,0.15); color: var(--arc-text-primary); }
+.cmd-result:hover, .cmd-result.active { background: color-mix(in srgb, var(--arc-hue-blue) 15%, transparent); color: var(--arc-text-primary); }
 .cmd-result-icon { width: 16px; height: 16px; color: var(--arc-action-bright); flex-shrink: 0; }
 .cmd-result-icon :deep(svg) { width: 16px; height: 16px; }
 .cmd-result-label { flex: 1; }
@@ -899,4 +912,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 /* ── Transitions ─────────────────────────────────────────── */
 .cmd-fade-enter-active, .cmd-fade-leave-active { transition: opacity 0.15s; }
 .cmd-fade-enter-from, .cmd-fade-leave-to { opacity: 0; }
+
+/* ── Responsive: hide sidebar at ≤900px within the scoped style so the
+   rule wins over the global baseline (scoped styles carry attribute
+   specificity that the global reset cannot override on its own). */
+@media (max-width: 900px) {
+  .arc-sidebar { display: none !important; }
+}
 </style>

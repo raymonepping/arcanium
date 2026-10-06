@@ -9,7 +9,7 @@
         placeholder="Filter by name or ID…"
         type="search"
       />
-      <select v-model="filterSupplier" class="filter-select">
+      <select v-model="filterSupplier" class="filter-select" aria-label="Filter by supplier">
         <option value="">All suppliers</option>
         <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
       </select>
@@ -164,22 +164,22 @@ onMounted(async () => {
 .arc-table td { padding: 11px 16px; border-bottom: 1px solid var(--arc-border-subtle); color: var(--arc-text-secondary); }
 .arc-table tr:last-child td { border-bottom: none; }
 .clickable-row { cursor: pointer; transition: background 0.1s; }
-.clickable-row:hover td { background: rgba(255,255,255,0.02); }
+.clickable-row:hover td { background: var(--arc-hover-soft); }
 .app-name { font-weight: 600; color: var(--arc-text-primary) !important; }
-.mono { font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; font-size: 11px; color: var(--arc-action-bright); }
+.mono { font-family: var(--font-mono); font-size: 11px; color: var(--arc-action-bright); }
 .muted { color: var(--arc-text-muted) !important; font-size: 12px; }
 .supplier-link { color: var(--arc-action-bright); text-decoration: none; font-size: 12px; }
 .supplier-link:hover { text-decoration: underline; }
 .profile-count {
   font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 100px;
-  background: rgba(0,119,182,0.1); color: var(--arc-action-bright);
+  background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-action-bright);
 }
 .cat-badge {
   display: inline-block; font-size: 10px; font-weight: 600;
   padding: 1px 7px; border-radius: 10px; letter-spacing: 0.03em;
   text-transform: lowercase;
 }
-.cat-platform { background: rgba(124,134,152,0.15); color: var(--arc-text-muted); }
-.cat-tenant   { background: rgba(0,119,182,0.15);  color: var(--arc-action-bright); }
-.cat-unscoped { background: rgba(255,170,0,0.15);  color: var(--arc-governance); }
+.cat-platform { background: color-mix(in srgb, var(--arc-hue-slate) 15%, transparent); color: var(--arc-text-muted); }
+.cat-tenant   { background: color-mix(in srgb, var(--arc-hue-blue) 15%, transparent);  color: var(--arc-action-bright); }
+.cat-unscoped { background: color-mix(in srgb, var(--arc-hue-amber) 15%, transparent);  color: var(--arc-governance); }
 </style>

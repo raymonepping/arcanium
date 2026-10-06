@@ -60,11 +60,11 @@ function label(n?: ClusterNode) {
 .topo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 14px 4px; }
 .topo-node { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--arc-border-strong); background: var(--arc-bg-card); min-width: 96px; }
 .topo-node.sm { min-width: 84px; padding: 8px 11px; }
-.topo-node.active { border-color: rgba(34,197,94,0.45); }
-.topo-node.standby { border-color: rgba(0,180,216,0.4); }
-.topo-node.provider { border-color: var(--arc-border-strong); background: rgba(0,8,24,0.5); }
-.topo-node.sealed, .topo-node.unreachable, .topo-node.degraded { border-color: rgba(220,47,2,0.5); background: rgba(220,47,2,0.04); }
-.tn-name { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; color: var(--arc-text-primary); }
+.topo-node.active { border-color: color-mix(in srgb, var(--arc-hue-green) 45%, transparent); }
+.topo-node.standby { border-color: color-mix(in srgb, var(--arc-hue-blue) 40%, transparent); }
+.topo-node.provider { border-color: var(--arc-border-strong); background: var(--arc-well); }
+.topo-node.sealed, .topo-node.unreachable, .topo-node.degraded { border-color: color-mix(in srgb, var(--arc-hue-red) 50%, transparent); background: color-mix(in srgb, var(--arc-hue-red) 4%, transparent); }
+.tn-name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--arc-text-primary); }
 .tn-role { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--arc-text-muted); }
 .topo-node.active .tn-role { color: var(--arc-healthy); }
 .topo-node.standby .tn-role { color: var(--arc-action-bright); }

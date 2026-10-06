@@ -126,7 +126,7 @@ usePolling(load, 10000)
 .hero-title { font-size: 22px; font-weight: 750; letter-spacing: -0.02em; color: var(--arc-text-primary); margin: 0 0 8px; }
 .hero-sub { font-size: 12.5px; color: var(--arc-text-muted); line-height: 1.6; max-width: 500px; margin: 0; }
 .jobs-filter { display: flex; gap: 6px; flex-wrap: wrap; }
-.chip { font-family: inherit; font-size: 11px; text-transform: capitalize; padding: 5px 11px; border-radius: 100px; border: 1px solid var(--arc-glass-border); background: rgba(0,8,24,0.4); color: var(--arc-text-muted); cursor: pointer; }
+.chip { font-family: inherit; font-size: 11px; text-transform: capitalize; padding: 5px 11px; border-radius: 100px; border: 1px solid var(--arc-glass-border); background: var(--arc-well); color: var(--arc-text-muted); cursor: pointer; }
 .chip.on { border-color: var(--arc-action-bright); color: var(--arc-text-primary); }
 
 .state { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 60px 20px; color: var(--arc-text-muted); font-size: 13px; text-align: center; }
@@ -136,7 +136,7 @@ usePolling(load, 10000)
 
 .job-list { display: flex; flex-direction: column; gap: 8px; }
 .job { border: 1px solid var(--arc-glass-border); border-radius: 12px; background: var(--arc-glass); overflow: hidden; }
-.job.failed, .job.rolled_back { border-color: rgba(220,47,2,0.3); }
+.job.failed, .job.rolled_back { border-color: color-mix(in srgb, var(--arc-hue-red) 30%, transparent); }
 .job-head { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }
 .job-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--arc-text-dim); }
 .job-dot.succeeded { background: var(--arc-healthy); }
@@ -147,8 +147,8 @@ usePolling(load, 10000)
 .job-status { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 5px; }
 .job-status.succeeded { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .job-status.failed, .job-status.rolled_back { background: var(--arc-critical-bg); color: var(--arc-critical); }
-.job-status.running { background: rgba(0,180,216,0.12); color: var(--arc-action-bright); }
-.job-status.pending { background: rgba(125,133,151,0.12); color: var(--arc-text-muted); }
+.job-status.running { background: color-mix(in srgb, var(--arc-hue-blue) 12%, transparent); color: var(--arc-action-bright); }
+.job-status.pending { background: color-mix(in srgb, var(--arc-hue-slate) 12%, transparent); color: var(--arc-text-muted); }
 .job-when { font-size: 11px; color: var(--arc-text-muted); }
 .job-caret { font-size: 10px; color: var(--arc-text-muted); }
 
@@ -160,11 +160,11 @@ usePolling(load, 10000)
 .step-dot.running { background: var(--arc-action-bright); }
 .step-name { color: var(--arc-text-secondary); }
 .step.failed .step-name { color: var(--arc-critical); }
-.step-detail { color: var(--arc-text-muted); font-family: ui-monospace, monospace; font-size: 10.5px; }
-.job-error { font-size: 11px; color: var(--arc-critical); font-family: ui-monospace, monospace; margin-top: 6px; padding: 8px 10px; background: var(--arc-critical-bg); border-radius: 6px; }
-.job-request-id { font-size: 10.5px; color: var(--arc-text-muted); font-family: ui-monospace, monospace; margin-top: 4px; }
+.step-detail { color: var(--arc-text-muted); font-family: var(--font-mono); font-size: 10.5px; }
+.job-error { font-size: 11px; color: var(--arc-critical); font-family: var(--font-mono); margin-top: 6px; padding: 8px 10px; background: var(--arc-critical-bg); border-radius: 6px; }
+.job-request-id { font-size: 10.5px; color: var(--arc-text-muted); font-family: var(--font-mono); margin-top: 4px; }
 
-.stuck-alert { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 10px; background: var(--arc-critical-bg); border: 1px solid rgba(220,47,2,0.3); font-size: 12.5px; color: var(--arc-text-primary); }
+.stuck-alert { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 10px; background: var(--arc-critical-bg); border: 1px solid color-mix(in srgb, var(--arc-hue-red) 30%, transparent); font-size: 12.5px; color: var(--arc-text-primary); }
 .stuck-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--arc-critical); flex-shrink: 0; animation: pulse 1.4s ease-in-out infinite; }
 .stuck-detail { color: var(--arc-text-muted); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }

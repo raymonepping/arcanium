@@ -26,7 +26,7 @@ defineEmits<{ 'update:open': [value: boolean] }>()
 <style scoped>
 .management-overlay {
   position: fixed; inset: 0; z-index: 10000;
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--arc-scrim);
   backdrop-filter: blur(6px);
 }
 .management-dialog {
@@ -37,7 +37,7 @@ defineEmits<{ 'update:open': [value: boolean] }>()
   background: var(--arc-bg-card);
   border: 1px solid var(--arc-border-strong);
   border-radius: 18px;
-  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 30px 100px var(--arc-shadow-tint);
 }
 .management-dialog header {
   display: flex; gap: 20px; justify-content: space-between; margin-bottom: 24px;

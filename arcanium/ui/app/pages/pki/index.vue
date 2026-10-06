@@ -57,7 +57,7 @@ const caChainDownloadUrl = computed(() => `${config.public.apiBase}/api/v1/pki/c
           <span class="card-title">Intermediate CA chain</span>
           <a class="secondary-button" :href="caChainDownloadUrl" download>Download CA chain</a>
         </div>
-        <pre class="pem-block">{{ caChain }}</pre>
+        <pre class="pem-block" tabindex="0" aria-label="CA chain (PEM)">{{ caChain }}</pre>
       </div>
 
       <div class="card">
@@ -80,9 +80,9 @@ const caChainDownloadUrl = computed(() => `${config.public.apiBase}/api/v1/pki/c
 .card { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: 12px; padding: 16px 18px; box-shadow: inset 0 1px 0 var(--arc-glass-hi); margin-bottom: 16px; }
 .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arc-text-muted); }
-.count { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 100px; background: rgba(0,119,182,0.12); color: var(--arc-action-bright); }
-.pem-block { font-family: ui-monospace, monospace; font-size: 11.5px; line-height: 1.5; color: var(--arc-text-secondary); background: rgba(4,16,38,0.5); border: 1px solid var(--arc-border-subtle); border-radius: 8px; padding: 14px; overflow-x: auto; white-space: pre; margin: 0; max-height: 320px; overflow-y: auto; }
+.count { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 100px; background: color-mix(in srgb, var(--arc-hue-blue) 12%, transparent); color: var(--arc-action-bright); }
+.pem-block { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; color: var(--arc-text-secondary); background: var(--arc-well); border: 1px solid var(--arc-border-subtle); border-radius: 8px; padding: 14px; overflow-x: auto; white-space: pre; margin: 0; max-height: 320px; overflow-y: auto; }
 .role-list { display: flex; flex-wrap: wrap; gap: 8px; }
-.role-chip { font-size: 11.5px; padding: 4px 10px; border-radius: 100px; background: rgba(4,16,38,0.5); border: 1px solid var(--arc-border-subtle); color: var(--arc-action-bright); }
-.mono { font-family: ui-monospace, monospace; }
+.role-chip { font-size: 11.5px; padding: 4px 10px; border-radius: 100px; background: var(--arc-well); border: 1px solid var(--arc-border-subtle); color: var(--arc-action-bright); }
+.mono { font-family: var(--font-mono); }
 </style>

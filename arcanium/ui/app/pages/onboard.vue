@@ -344,7 +344,7 @@ function reset() {
 .step.done { color: var(--arc-text-muted); }
 .step-n { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--arc-border-strong); display: grid; place-items: center; font-size: 9px; }
 .step.on .step-n { border-color: var(--arc-action-bright); color: var(--arc-action-bright); }
-.step.done .step-n { background: var(--arc-healthy); border-color: var(--arc-healthy); color: #001; }
+.step.done .step-n { background: var(--arc-healthy); border-color: var(--arc-healthy); color: #fff; }
 
 .onb-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; align-items: start; }
 @media (max-width: 900px) { .onb-body { grid-template-columns: 1fr; } }
@@ -359,7 +359,7 @@ function reset() {
 .radio.disabled { opacity: 0.45; cursor: not-allowed; }
 
 .field-error { margin: 10px 0 0; font-size: 12px; color: var(--arc-critical); line-height: 1.5; }
-.field-error code { font-family: ui-monospace, monospace; }
+.field-error code { font-family: var(--font-mono); }
 
 .job-steps { display: flex; flex-direction: column; gap: 6px; }
 .jstep { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: var(--arc-text-secondary); }
@@ -367,25 +367,26 @@ function reset() {
 .jdot.succeeded { background: var(--arc-healthy); }
 .jdot.failed { background: var(--arc-critical); }
 .jstep.failed { color: var(--arc-critical); }
-.jdetail { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--arc-text-muted); }
+.jdetail { font-family: var(--font-mono); font-size: 10.5px; color: var(--arc-text-muted); }
 .done-links { display: flex; gap: 10px; margin-top: 16px; }
 
 .nav { display: flex; align-items: center; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--arc-border-subtle); }
 .grow { flex: 1; }
 
 /* ── Preview panel ── */
-.preview { position: sticky; top: 20px; background: rgba(0, 8, 24, 0.4); border: 1px solid var(--arc-glass-border); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-.preview.done { border-color: rgba(34, 197, 94, 0.35); }
+.preview { position: sticky; top: 20px; background: var(--arc-well); border: 1px solid var(--arc-glass-border); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.preview.done { border-color: color-mix(in srgb, var(--arc-hue-green) 35%, transparent); }
 .pv-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--arc-action-bright); margin: 0; }
 .preview.done .pv-eyebrow { color: var(--arc-healthy); }
 .pv-lead { font-size: 12px; color: var(--arc-text-secondary); margin: 0; }
 .pv-sec { display: flex; flex-direction: column; gap: 5px; padding-bottom: 12px; border-bottom: 1px solid var(--arc-border-subtle); transition: opacity 0.2s; }
 .pv-sec:last-child { border-bottom: none; padding-bottom: 0; }
-.pv-sec.dim { opacity: 0.4; }
+.pv-sec.dim { opacity: 1; }
+.preview .pv-sec.dim * { color: var(--arc-text-dim); background-color: transparent; border-color: var(--arc-border-subtle); }
 .pv-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--arc-text-muted); }
 .pv-v { font-size: 12px; color: var(--arc-text-secondary); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.pv-v code, .pv-res-n { font-family: ui-monospace, monospace; font-size: 11px; color: var(--arc-info); }
-.pv-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 4px; background: rgba(0, 119, 182, 0.14); color: var(--arc-action-bright); }
+.pv-v code, .pv-res-n { font-family: var(--font-mono); font-size: 11px; color: var(--arc-info); }
+.pv-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--arc-hue-blue) 14%, transparent); color: var(--arc-action-bright); }
 .pv-list { flex-direction: column; align-items: flex-start; gap: 3px; }
 .pv-none { color: var(--arc-text-muted); }
 .pv-res { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }

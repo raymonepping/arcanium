@@ -58,8 +58,11 @@ const links = [
 
 <style scoped>
 .arc-footer {
-  border-top: 1px solid var(--arc-border-subtle);
+  border: 1px solid var(--arc-glass-border);
+  border-radius: 14px;
   background: var(--arc-bg-shell);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
   flex-shrink: 0;
 }
 
@@ -104,7 +107,7 @@ const links = [
   background: linear-gradient(
     100deg,
     transparent 42%,
-    rgba(255, 255, 255, 0.9) 50%,
+    var(--arc-action-primary) 50%,
     transparent 58%
   );
   background-size: 260% 100%;

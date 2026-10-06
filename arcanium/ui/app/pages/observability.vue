@@ -205,7 +205,7 @@ const showSlo = computed(() => folds.value.slo)
 .hero-title { font-size: 22px; font-weight: 750; letter-spacing: -0.02em; color: var(--arc-text-primary); margin: 0 0 8px; }
 .hero-sub { font-size: 12.5px; color: var(--arc-text-muted); line-height: 1.6; max-width: 520px; margin: 0; }
 .grafana-link { font-size: 12px; color: var(--arc-action-bright); border: 1px solid var(--arc-glass-border); border-radius: 100px; padding: 7px 14px; text-decoration: none; white-space: nowrap; }
-.grafana-link:hover { border-color: rgba(0,180,216,0.4); }
+.grafana-link:hover { border-color: color-mix(in srgb, var(--arc-hue-blue) 40%, transparent); }
 
 .state { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 60px; color: var(--arc-text-muted); font-size: 13px; }
 .spinner { width: 22px; height: 22px; border: 2px solid var(--arc-border-strong); border-top-color: var(--arc-action-primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
@@ -214,7 +214,7 @@ const showSlo = computed(() => folds.value.slo)
 .kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
 @media (max-width: 900px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
 .tile { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; }
-.tile.warn { border-color: rgba(220,47,2,0.3); }
+.tile.warn { border-color: color-mix(in srgb, var(--arc-hue-red) 30%, transparent); }
 .tile-label { font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--arc-text-muted); }
 .tile-value { font-size: 26px; font-weight: 750; color: var(--arc-text-primary); font-variant-numeric: tabular-nums; }
 .tile .unit { font-size: 13px; color: var(--arc-text-muted); margin-left: 3px; }
@@ -224,9 +224,9 @@ const showSlo = computed(() => folds.value.slo)
 .panel.upcoming { text-align: center; padding: 40px; }
 .panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arc-text-muted); margin-bottom: 10px; }
 .collect { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--arc-text-secondary); line-height: 1.8; }
-.collect code, .cmd { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--arc-action-bright); }
+.collect code, .cmd { font-family: var(--font-mono); font-size: 11.5px; color: var(--arc-action-bright); }
 .collect-note { font-size: 11px; color: var(--arc-text-muted); line-height: 1.6; margin: 10px 0 0; }
-.cmd { display: inline-block; margin: 12px 0; padding: 8px 14px; background: rgba(0,8,24,0.5); border: 1px solid var(--arc-glass-border); border-radius: 8px; }
+.cmd { display: inline-block; margin: 12px 0; padding: 8px 14px; background: var(--arc-well); border: 1px solid var(--arc-glass-border); border-radius: 8px; }
 
 /* Foldable card — matches the Dashboard's own convention (Prompt 16.5/16-followups) */
 .dash-card { background: var(--arc-glass); border: 1px solid var(--arc-glass-border); border-radius: var(--arc-radius); padding: 18px 20px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 1px 0 var(--arc-glass-hi); }
@@ -242,7 +242,7 @@ const showSlo = computed(() => folds.value.slo)
 /* SLO status — three distinct visual states; INSUFFICIENT_DATA is never a
    green check, a red cross, or hidden (prompts/24 Deliverable 1). */
 .slo-pill { display: inline-block; padding: 3px 10px; border-radius: 100px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
-.slo-pill.met { background: rgba(16,163,74,0.15); color: #22c55e; border: 1px solid rgba(16,163,74,0.3); }
-.slo-pill.breached { background: rgba(220,47,2,0.15); color: var(--arc-critical); border: 1px solid rgba(220,47,2,0.3); }
-.slo-pill.insufficient_data { background: rgba(148,163,184,0.12); color: var(--arc-text-muted); border: 1px dashed var(--arc-glass-border); }
+.slo-pill.met { background: color-mix(in srgb, var(--arc-hue-green) 15%, transparent); color: var(--arc-healthy); border: 1px solid color-mix(in srgb, var(--arc-hue-green) 30%, transparent); }
+.slo-pill.breached { background: color-mix(in srgb, var(--arc-hue-red) 15%, transparent); color: var(--arc-critical); border: 1px solid color-mix(in srgb, var(--arc-hue-red) 30%, transparent); }
+.slo-pill.insufficient_data { background: color-mix(in srgb, var(--arc-hue-slate) 12%, transparent); color: var(--arc-text-muted); border: 1px dashed var(--arc-glass-border); }
 </style>

@@ -1,19 +1,25 @@
 <template>
-  <div class="login-wrap">
-    <div class="login-card">
+  <div class="login-wrap" data-testid="login-page">
+    <div class="login-card arc-glass" data-testid="login-card">
       <div class="login-brand">
-        <svg class="brand-icon" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="9" stroke="#0096c7" stroke-width="1.2"/>
-          <polygon points="12,5 17.5,8.5 17.5,15.5 12,19 6.5,15.5 6.5,8.5" stroke="#00b4d8" stroke-width="1" fill="none"/>
-          <circle cx="12" cy="12" r="2" fill="#ffaa00"/>
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" stroke="#0f1a2a" stroke-width="1.2"/>
+          <polygon points="12,5 17.5,8.5 17.5,15.5 12,19 6.5,15.5 6.5,8.5" stroke="#0369a1" stroke-width="1" fill="none"/>
+          <circle cx="12" cy="12" r="2" fill="#c2620a"/>
         </svg>
         <span>Arcanium</span>
       </div>
       <p class="login-sub">Enterprise Cryptographic Control Plane</p>
 
-      <p v-if="error" class="inline-notice error">{{ error }}</p>
+      <p v-if="error" class="inline-notice error" role="alert" data-testid="login-error">{{ error }}</p>
 
-      <button class="primary-button" :disabled="busy" style="width:100%;justify-content:center" @click="signIn">
+      <button
+        class="primary-button"
+        :disabled="busy"
+        style="width:100%;justify-content:center"
+        data-testid="sign-in"
+        @click="signIn"
+      >
         {{ busy ? 'Redirecting…' : 'Sign in' }}
       </button>
 
@@ -66,15 +72,15 @@ function signIn() {
 <style scoped>
 .login-wrap {
   min-height: 100vh; display: grid; place-items: center; padding: 24px;
-  background:
-    radial-gradient(900px 520px at 78% -8%, rgba(0,119,182,0.20), transparent 60%),
-    var(--arc-bg-canvas);
+  /* daylight ground comes from body — the card is the only glass here */
+  background: transparent;
 }
+/* .arc-glass from global CSS provides the backdrop-filter, border, shadow —
+   no need to duplicate those declarations here. Only size + padding are local. */
 .login-card {
   width: min(400px, 100%);
-  background: var(--arc-glass); border: 1px solid var(--arc-glass-border);
-  border-radius: 16px; padding: 32px; box-shadow: var(--arc-shadow-lg);
-  backdrop-filter: blur(14px);
+  border-radius: 16px;
+  padding: 32px;
 }
 .login-brand { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 750; color: var(--arc-text-primary); }
 .brand-icon { width: 26px; height: 26px; }

@@ -276,18 +276,18 @@ onMounted(async () => {
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
   padding: 3px 8px; border-radius: 6px;
 }
-.sla-badge.premium { background: rgba(255,170,0,0.12); color: var(--arc-governance); }
-.sla-badge.standard { background: rgba(0,119,182,0.1); color: var(--arc-action-bright); }
+.sla-badge.premium { background: color-mix(in srgb, var(--arc-hue-amber) 12%, transparent); color: var(--arc-governance); }
+.sla-badge.standard { background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-action-bright); }
 .onboarded-badge { font-size: 11px; color: var(--arc-text-muted); }
 
 /* Tenant boundary panel */
 .tenant-panel {
-  background: rgba(0,40,85,0.6); border: 1px solid rgba(0,119,182,0.3);
+  background: var(--arc-well); border: 1px solid color-mix(in srgb, var(--arc-hue-blue) 30%, transparent);
   border-radius: 12px; margin-bottom: 20px; overflow: hidden;
 }
 .tenant-panel-header {
   display: flex; align-items: center; gap: 10px; padding: 12px 20px;
-  background: rgba(0,119,182,0.08); border-bottom: 1px solid rgba(0,119,182,0.2);
+  background: color-mix(in srgb, var(--arc-hue-blue) 8%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--arc-hue-blue) 20%, transparent);
   font-size: 13px; font-weight: 600; color: var(--arc-action-bright);
 }
 .tenant-panel-header svg { width: 16px; height: 16px; flex-shrink: 0; }
@@ -300,10 +300,10 @@ onMounted(async () => {
 .boundary-row { display: flex; gap: 16px; font-size: 13px; }
 .bl { color: var(--arc-text-muted); width: 120px; flex-shrink: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 1px; }
 .bv { color: var(--arc-text-secondary); font-size: 12px; }
-.mono { font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; color: var(--arc-action-bright); }
+.mono { font-family: var(--font-mono); color: var(--arc-action-bright); }
 .boundary-notice {
   display: flex; align-items: flex-start; gap: 8px;
-  padding: 10px 12px; background: rgba(255,255,255,0.03);
+  padding: 10px 12px; background: var(--arc-hover-soft);
   border: 1px solid var(--arc-border-subtle); border-radius: 8px;
   font-size: 11px; color: var(--arc-text-muted); margin-top: 4px;
 }
@@ -314,10 +314,10 @@ onMounted(async () => {
 .mx {
   display: flex; align-items: center; gap: 10px;
   padding: 11px 13px; border-radius: 10px;
-  border: 1px solid var(--arc-border-subtle); background: rgba(4, 16, 38, 0.5);
+  border: 1px solid var(--arc-border-subtle); background: var(--arc-well);
 }
-.mx.allow { border-color: rgba(34, 197, 94, 0.28); }
-.mx.deny { border-color: rgba(220, 47, 2, 0.28); }
+.mx.allow { border-color: color-mix(in srgb, var(--arc-hue-green) 28%, transparent); }
+.mx.deny { border-color: color-mix(in srgb, var(--arc-hue-red) 28%, transparent); }
 .mx-i { width: 15px; height: 15px; flex-shrink: 0; }
 .mx.allow .mx-i { color: var(--arc-healthy); }
 .mx.deny .mx-i { color: var(--arc-critical); }
@@ -336,7 +336,7 @@ onMounted(async () => {
 .card-title { font-size: 13px; font-weight: 600; color: var(--arc-text-primary); text-transform: uppercase; letter-spacing: 0.06em; margin: 0; }
 .count-badge {
   font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 100px;
-  background: rgba(0,119,182,0.1); color: var(--arc-action-bright);
+  background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); color: var(--arc-action-bright);
 }
 .card-loading { font-size: 13px; color: var(--arc-text-muted); padding: 10px 0; }
 .empty-sm { font-size: 13px; color: var(--arc-text-muted); text-align: center; padding: 20px 0; }
@@ -367,7 +367,7 @@ onMounted(async () => {
 
 .denied-notice {
   display: flex; align-items: flex-start; gap: 12px; padding: 16px 12px;
-  background: rgba(220,47,2,0.04); border: 1px solid rgba(220,47,2,0.15);
+  background: color-mix(in srgb, var(--arc-hue-red) 4%, transparent); border: 1px solid color-mix(in srgb, var(--arc-hue-red) 15%, transparent);
   border-radius: 8px; color: var(--arc-text-muted);
 }
 .denied-notice svg { width: 20px; height: 20px; color: var(--arc-critical); flex-shrink: 0; margin-top: 2px; }

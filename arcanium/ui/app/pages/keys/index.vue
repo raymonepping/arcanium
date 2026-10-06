@@ -193,15 +193,15 @@ onMounted(async () => {
   box-shadow: inset 0 1px 0 var(--arc-glass-hi);
   transition: border-color 0.16s, transform 0.16s;
 }
-.key-card:hover { border-color: rgba(0, 180, 216, 0.4); transform: translateY(-3px); }
+.key-card:hover { border-color: color-mix(in srgb, var(--arc-hue-blue) 40%, transparent); transform: translateY(-3px); }
 .kc-head { display: flex; align-items: center; gap: 10px; }
 .kc-ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0; border: 1px solid var(--arc-border-strong); }
-.kc-ico.sign { color: var(--arc-info); background: rgba(72, 202, 228, 0.08); }
-.kc-ico.encrypt { color: var(--arc-action-bright); background: rgba(0, 119, 182, 0.1); }
+.kc-ico.sign { color: var(--arc-info); background: color-mix(in srgb, var(--arc-hue-cyan) 8%, transparent); }
+.kc-ico.encrypt { color: var(--arc-action-bright); background: color-mix(in srgb, var(--arc-hue-blue) 10%, transparent); }
 .kc-ico svg { width: 18px; height: 18px; }
 .kc-name { flex: 1; font-size: 13px; color: var(--arc-text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kc-arrow { color: var(--arc-action-bright); font-size: 13px; }
-.mono { font-family: ui-monospace, monospace; }
+.mono { font-family: var(--font-mono); }
 
 .kc-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .kc-meta > div { display: flex; flex-direction: column; gap: 1px; }
@@ -210,11 +210,11 @@ onMounted(async () => {
 
 .kc-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 5px; }
-.tag.sign { background: rgba(72, 202, 228, 0.12); color: var(--arc-info); }
-.tag.enc { background: rgba(0, 119, 182, 0.12); color: var(--arc-action-bright); }
+.tag.sign { background: color-mix(in srgb, var(--arc-hue-cyan) 12%, transparent); color: var(--arc-info); }
+.tag.enc { background: color-mix(in srgb, var(--arc-hue-blue) 12%, transparent); color: var(--arc-action-bright); }
 .tag.ok { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
 .tag.warn { background: var(--arc-pending-bg); color: var(--arc-governance); }
-.tag.hsm { background: rgba(255, 170, 0, 0.14); color: var(--arc-governance); border: 1px solid rgba(255, 170, 0, 0.3); }
+.tag.hsm { background: color-mix(in srgb, var(--arc-hue-amber) 14%, transparent); color: var(--arc-governance); border: 1px solid color-mix(in srgb, var(--arc-hue-amber) 30%, transparent); }
 
 .foot-note { font-size: 10.5px; color: var(--arc-text-muted); line-height: 1.5; max-width: 720px; margin: 0; }
 
@@ -223,7 +223,7 @@ onMounted(async () => {
 .dist-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arc-text-muted); }
 .dist-badge { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 5px; }
 .dist-badge.ok { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
-.dist-badge.off { background: rgba(125,133,151,0.12); color: var(--arc-text-muted); }
+.dist-badge.off { background: color-mix(in srgb, var(--arc-hue-slate) 12%, transparent); color: var(--arc-text-muted); }
 .dist-body { font-size: 12px; color: var(--arc-text-secondary); line-height: 1.6; }
 .dist-line { margin: 0 0 6px; }
 .dist-line.muted, .dist-body.muted { color: var(--arc-text-muted); font-size: 11.5px; }
@@ -231,8 +231,8 @@ onMounted(async () => {
 .dist-arrow { color: var(--arc-text-muted); }
 .dist-target { color: var(--arc-text-secondary); display: inline-flex; align-items: center; gap: 6px; }
 .dist-target.muted { color: var(--arc-text-muted); }
-.dist-emu { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 4px; background: rgba(180,140,40,0.16); color: #b48c28; }
+.dist-emu { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--arc-hue-amber) 16%, transparent); color: var(--arc-governance); }
 .dist-status { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 4px; }
 .dist-status.ok { background: var(--arc-healthy-bg); color: var(--arc-healthy); }
-.dist-status.bad { background: rgba(200,70,70,0.14); color: #c84646; }
+.dist-status.bad { background: color-mix(in srgb, var(--arc-hue-red) 14%, transparent); color: var(--arc-critical); }
 </style>

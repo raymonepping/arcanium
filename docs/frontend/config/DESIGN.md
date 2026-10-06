@@ -1,19 +1,45 @@
 # DESIGN.md — Arcanium
 
-The project's visual contract. Derived from the existing, deployed
-application (`arcanium/ui/app/assets/css/main.css`, `app/layouts/default.vue`,
-and every page under `app/pages/`) — not an invented aesthetic. Where this
-document prescribes a value, that value is already in production use unless
-marked "(gap)".
+The project's visual contract. Values below are the ones in production in
+`arcanium/ui/app/assets/css/main.css` (tokens) and `app/layouts/default.vue`
+(shell).
 
 See `PRODUCT.md` in this same folder for who the product is for and why.
 
+## World: daylight glass, black ink, strong signal colours
+
+Arcanium shares one visual family with its sibling demos, **Project Durin**
+and **Editors Factory**. It is a cryptographic-governance console set in a
+daylight office: frosted glass panes over a pale, window-lit ground, with
+black ink for text and primary actions. Against that calm, businesslike
+base, Arcanium keeps its own **strong semantic colours** (action blue,
+governance amber, healthy green, critical red), so state reads at a glance
+from across the room.
+
+- **Material:** glass (`backdrop-filter: blur(22px) saturate(150%)`, an
+  inset white top highlight, a soft offset shadow). Glass is the material
+  of every panel, not a decoration on some of them.
+- **Ground:** `body` paints the building behind the glass: three soft
+  daylight radials plus aluminium mullions every 180px. Panes blur it, so
+  the glass reads as glass.
+- **The ink island:** each page's `.arc-hero` band is the page's one dark
+  pane (ink glass). `.arc-hero` re-scopes the text/glass/status tokens, so
+  anything placed inside it inverts without per-page overrides.
+- **Ink primaries:** `.primary-button` / `.arc-btn--primary` are solid
+  black ink. Blue is reserved for identity, links and "approve".
+
+**History:** until 2026-10-06 Arcanium was dark navy (`#001233`) with cyan
+accents. The light re-theme was a deliberate product decision to align
+with Durin / Editors Factory. It was not driven by a linter. Do not revert
+it to dark on generic "AI palette" grounds, and do not re-darken individual
+pages.
+
 ## Product character
 
-A **command-center for cryptographic governance** — serious, dense,
-evidence-driven, dark by default. It should feel like an operations console
-for people whose job is proving controls actually work, not a marketing
-surface. Confidence comes from real numbers and real state transitions on
+A **command-center for cryptographic governance**: serious, dense and
+evidence-driven, read in a bright office. It should feel like an
+operations console for people whose job is proving controls actually
+work. Confidence comes from real numbers and real state transitions on
 screen, not from decoration.
 
 ## Audience
@@ -25,74 +51,76 @@ auditors and evaluators reviewing governance evidence. See `PRODUCT.md`.
 
 - Clarity before decoration.
 - Information hierarchy before visual effects.
-- Predictable interaction — the same card/list/dialog pattern behaves the
+- Predictable interaction: the same card/list/dialog pattern behaves the
   same way everywhere in the app.
 - Accessible contrast is non-negotiable for meaning-bearing text (see
-  Color below — this is already a documented, enforced rule in the
-  codebase, not new policy).
-- Restrained motion — reduced-motion is honored globally
-  (`prefers-reduced-motion` zeroes all animation/transition durations,
-  `app/assets/css/main.css`).
-- Responsive by default, but optimized for desktop/laptop operational use
-  first; phone width is a "must remain usable," not the primary target.
+  Color below).
+- Restrained motion: reduced-motion is honoured globally.
+- Responsive by default, optimised for desktop/laptop operational use
+  first; phone width is "must remain usable", not the primary target.
 
 ## Typography
 
-- **Sans (UI/body):** `"Inter", ui-sans-serif, system-ui, -apple-system, sans-serif`
-  at a 14px base, line-height 1.6 (`html, body` in `main.css`).
-- **Mono:** used deliberately for identifiers/technical values (node
-  names, key names, accessors) — e.g. `.arc-node-card__name { font-family:
-  monospace }`. Never used for prose.
-- **Headings/labels:** page titles ~15px/600 weight (`.page-title`); card
-  titles and section labels typically 11–13px, often with
-  `letter-spacing` for small-caps-style eyebrows (`.card-title`,
-  `.env-badge`) — used sparingly (dashboard section headers, status
-  badges), not stacked on every element.
-- **Body floor:** 12px is the accessible floor for any real body/paragraph
-  text. 10.5px was found in production use in one place (login page,
-  see `UI_AUDIT.md`) and corrected — do not reintroduce sub-12px body text.
+- **Sans (UI/body):** Hanken Grotesk Variable (self-hosted via
+  `@fontsource-variable`, same as Durin) at a 14px base, line-height 1.6.
+- **Mono:** JetBrains Mono Variable, always via `var(--font-mono)`, never
+  a raw `monospace` / `ui-monospace` stack (those fall back to Courier).
+  Only for identifiers and technical values: key names, accessors,
+  namespaces, versions. Never for prose.
+- **Numerals:** tables, KPI tiles and card values use `tabular-nums`.
+- **Headings:** page titles in the topbar 15px/700; hero titles 22px/750,
+  negative tracking (≥ -0.03em).
+- **Body floor:** 12px for any real body/paragraph text.
 
 ## Color
 
-Semantic tokens, not scattered hex values — defined once in
-`app/assets/css/main.css`'s `:root` block:
+All colour comes from tokens in `main.css` `:root`. Components never
+hardcode `rgba()` hue literals. Tints are mixed from a hue token:
 
-```text
-background       --arc-bg-canvas       #001233
-surface          --arc-bg-surface      rgba(0,40,85,0.55)
-surface-elevated --arc-bg-elevated     #023e7d
-card             --arc-bg-card         rgba(10,26,54,0.72)
-glass panel      --arc-glass           rgba(11,27,54,0.62)
-
-text-primary     --arc-text-primary    #f0f4f8   ~16:1 on canvas
-text-secondary   --arc-text-secondary  #d4dae1   ~11:1 on canvas
-text-muted       --arc-text-muted      #9aa4b3   ~6.4:1 on canvas — AA body floor
-text-dim         --arc-text-dim        #7c8698   ~4.3:1 on canvas — AA LARGE/BOLD ONLY, not small body text
-
-border           --arc-border-subtle / --arc-border-strong / --arc-glass-border
-accent           --arc-action-primary #0077b6 / --arc-action-bright #00b4d8
-focus            --arc-focus          #90e0ef  (>3:1 against every panel it lands on — enforced, see main.css comment)
-
-success/healthy  --arc-healthy        #22c55e
-warning/pending  --arc-governance / --arc-pending  #ffaa00 / #ffb700
-error/critical   --arc-critical / --arc-denied      #dc2f02 / #d00000
+```css
+background: color-mix(in srgb, var(--arc-hue-amber) 14%, transparent);
 ```
 
-**The contrast rule is already written into the codebase and must be
-preserved, not just aspired to** (`main.css`, above the token block):
-*"Never define a meaning-bearing colour below AA for its text size."*
-`--arc-text-dim` is rated for **large or bold text only** — using it for
-small (<14px) body copy is a violation of this project's own rule (this is
-exactly the bug found and fixed in `UI_AUDIT.md`'s login-page finding).
+```text
+hues (tint source) --arc-hue-blue #0369a1 · -cyan #0e7490 · -green #137333
+                   -amber #c2620a · -orange #c2410c · -red #c81e1e
+                   -slate #64748b · -indigo #4f5bd5 · -violet #6d28d9
 
-The dark-navy + cyan/blue palette with amber/red/green status accents is
-Arcanium's own established, consistent brand identity across every page —
-confirmed across all 14 primary routes. It happens to resemble a
-generically-flagged "AI dark-tech palette" per some generic linting
-heuristics; that similarity is coincidental to a genuinely deliberate,
-long-standing, consistently-applied product identity and is not evidence
-of templated/generic output. Do not replace it on that basis alone (see
-`UI_AUDIT.md` for the explicit tool-disagreement record).
+ground             --arc-bg-canvas       #e9eef3 (+ body daylight gradient)
+glass pane         --arc-glass / --arc-bg-card   rgba(255,255,255,0.58)
+shell (rail, bars) --arc-bg-shell        rgba(255,255,255,0.72)
+inset well         --arc-well            rgba(255,255,255,0.55)
+hover wash         --arc-hover           rgba(15,26,42,0.05)
+scrim              --arc-scrim           rgba(15,26,42,0.28)
+ink                --arc-ink             #0f1a2a
+
+text-primary       --arc-text-primary    #0f1a2a  16.4:1 glass / 14.7:1 ground
+text-secondary     --arc-text-secondary  #2f3d50  10.4 / 9.3
+text-muted         --arc-text-muted      #475569   7.1 / 6.4
+text-dim           --arc-text-dim        #56657a   5.6 / 5.0  (AA body, use for "not yet" states)
+
+action fill        --arc-action-primary  #0369a1  (fills, focus ring)
+action text/link   --arc-action-bright   #025a8c  6.9:1
+focus ring         --arc-focus           #0369a1
+healthy            --arc-healthy         #0f652b  6.8:1
+governance/pending --arc-governance / --arc-pending  #a14a06  5.6:1
+warning            --arc-warning         #b93d0b
+critical           --arc-critical        #b01818  6.6:1
+info               --arc-info            #0b5f73  6.8:1
+```
+
+Status text tokens also hold ≥ 4.5:1 on their own 10–15% tint (axe
+`color-contrast` passes on every route). That is why they sit a step
+darker than their `--arc-hue-*` source.
+
+Inside `.arc-hero` (ink island) the same token names resolve to light
+values (`#f3f6f9` text, `#7dd3fc` blue, `#fbbf24` amber, `#4ade80` green),
+all ≥ 7:1 on the ink pane.
+
+**Rule (kept from the dark era):** *never define a meaning-bearing colour
+below AA for its text size.* Do not dim meaning-bearing text with
+`opacity` on light glass. Opacity 0.4 drops `--arc-text-muted` to ~2:1.
+Use `--arc-text-dim` instead (see the onboarding preview).
 
 ## Spacing
 
@@ -110,26 +138,28 @@ scale (12/16 + pill) — do not introduce a third arbitrary radius value.
 
 ## Shadows
 
-`--arc-shadow-md` (elevated cards) and `--arc-shadow-lg` (dialogs,
-dropdowns) — both neutral, dark, offset-down shadows (`rgba(0,8,24,…)`),
-never a colored/glow shadow used for elevation. (A small number of
-deliberate colored **glow** effects exist as status/liveness accents —
-e.g. the pulsing cluster-health dot — distinct from elevation shadows and
-used sparingly; do not expand this to general-purpose card elevation.)
+`--arc-shadow-md` (panes) and `--arc-shadow-lg` (dialogs, menus, hovered
+tiles): a 1px contact shadow plus a long, soft, offset-down ink shadow
+(`rgba(15,26,42,…)`). Glass panes add an inset white top highlight. No
+coloured glow as elevation. The pulsing live dot is the one status glow.
 
 ## Components
 
-- **Buttons:** `.primary-button` (solid accent-gradient fill, used for the
-  one primary action per view — e.g. login's "Sign in"); pill-shaped
-  status/filter chips; icon+label topbar actions.
-- **Inputs:** label-above pattern, `.filter-bar`/`.form-field` inputs with
-  visible `:focus-visible` rings (`--arc-focus`, enforced even where the
+- **Buttons:** `.primary-button` is solid black ink (one primary action per
+  view, e.g. login's "Sign in"). `.secondary-button` is a white glass
+  button with a hairline inset ring. Approve actions are blue-tinted;
+  destructive actions are red-tinted.
+- **Inputs:** label-above pattern. `.filter-bar`/`.form-field` inputs are
+  white wells with an inset ink hairline, turning solid white with a 2px
+  blue inset ring on focus, plus visible `:focus-visible` rings (`--arc-focus`, enforced even where the
   mouse-hover outline is intentionally suppressed — see `main.css`
   comment referencing this exact accessibility fix).
 - **Cards:** `.dash-card` / `.arc-node-card` / key-inventory cards — one
   consistent card shell (surface color + border + radius + padding) reused
   across dashboard, keys, cluster, teams.
-- **Navigation:** fixed left sidebar (collapsible) + sticky topbar
+- **Navigation:** fixed frosted left rail (collapsible). The active item is
+  a raised white chip with ink text and a blue icon, never a coloured left
+  border. Sticky floating glass topbar
   (search trigger, cluster-health pill, pending-approvals pill, persona
   menu). One navigation pattern, not a per-page bespoke nav.
 - **Tables/lists:** card-per-row lists (keys, suppliers) rather than dense
@@ -200,9 +230,8 @@ now the enforced minimum bar for any future topbar change.
 
 Explicitly avoided, and to be reverted on sight if introduced:
 
-- Unnecessary gradients beyond the two already-established uses (subtle
-  radial glows on hero/login surfaces, the accent button gradient) —
-  do not add more.
+- Gradients beyond the established ones: the body daylight ground, the
+  ink hero, and the 3px accent rule under KPI tiles.
 - Cards nested within cards without a real hierarchy reason.
 - Decorative icon tiles with no informational purpose.
 - Excessive or gratuitous animation (see Motion above).
@@ -210,8 +239,13 @@ Explicitly avoided, and to be reverted on sight if introduced:
 - Inconsistent spacing — stick to the 4px-multiple rhythm.
 - Arbitrary new component variants when an existing card/badge/button
   pattern already covers the case.
-- Gratuitous glassmorphism beyond the existing, restrained
-  `backdrop-filter` use on the topbar and login/dialog surfaces.
+- Glass as an ornament on a few surfaces. Glass is the material of every
+  pane; one recipe (blur 22px, saturate 150%, inset highlight), no
+  per-page variants.
+- Coloured `border-left` rails thicker than 1px on rows, cards or alerts
+  (pending approval rows use an amber row wash instead).
+- Hardcoded `rgba()` hue literals in components. Mix from `--arc-hue-*`.
+- A second dark pane on a page. The hero is the only ink island.
 - A fixed multi-column grid with no responsive fallback (the exact defect
   found and fixed this pass — see `UI_AUDIT.md`).
 - Introducing a marketing-landing-page design vocabulary (hero sections
