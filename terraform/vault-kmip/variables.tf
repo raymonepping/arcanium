@@ -8,3 +8,9 @@ variable "vault_cacert" {
   description = "Path to the Vault CA certificate (PEM)"
   type        = string
 }
+
+variable "approle_path" {
+  description = "Mount path of the AppRole auth backend (created by terraform/vault-platform)"
+  type        = string
+  default     = "approle"
+}

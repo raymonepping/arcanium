@@ -126,6 +126,45 @@ services:
       start_period: 15s
       retries: 5
 
+  # KMIP client-cert renewer — keeps .secrets/kmip/client.pem (the mTLS
+  # identity of arcanium-kmip-client) inside its 7-day TTL. Renews 48h before
+  # expiry, swaps cert/key/ca atomically, revokes the old serial. The client
+  # watches the same directory read-only and reconnects on the new cert.
+  # Identity: AppRole kmip-renewer (terraform/vault-kmip/kmip_renewer.tf —
+  # generate + revoke legacy-db credentials only), bootstrap secret-id seeded
+  # into .env by scripts/workload-credentials.sh. Started by `make up`.
+  # Plain python image + mounted script, same pattern as vault-rotator.
+  kmip-renewer:
+    image: docker.io/library/python:3.12-slim
+    container_name: arcanium-kmip_renewer
+    hostname: kmip-renewer
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    entrypoint: ["python3", "-u", "/renewer/renewer.py"]
+    environment:
+      VAULT_ADDR: "https://vault-1:8200"
+      VAULT_CACERT: "/vault/tls/ca-chain.pem"
+      KMIP_RENEWER_ROLE_ID: "${KMIP_RENEWER_ROLE_ID:-}"
+      KMIP_RENEWER_SECRET_ID: "${KMIP_RENEWER_SECRET_ID:-}"
+      KMIP_ROLE_PATH: "kmip/scope/arcanium/role/legacy-db"
+      RENEW_BEFORE_SECONDS: "${KMIP_RENEW_BEFORE_SECONDS:-172800}" # 48h of the 7-day TTL
+      CHECK_INTERVAL_SECONDS: "3600"
+    volumes:
+      - ../../vault-tls:/vault/tls:ro
+      - ./kmip-renewer/renewer.py:/renewer/renewer.py:ro
+      - ../../.secrets/kmip:/kmip
+    networks: [default]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "/renewer/renewer.py", "--check"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
   # Vault Agent — AppRole auto-auth + dynamic DB-credential rendering for
   # arcanium-api. Reads role-id/secret-id from vault-approle-credentials
   # (managed and rotated by vault-rotator above). Renders the session token

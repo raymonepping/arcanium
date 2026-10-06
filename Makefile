@@ -8,7 +8,7 @@ PROJECT_ROOT := $(shell pwd)
 .PHONY: help check status storage ps images volumes compose-config \
 	network $(addsuffix -up,$(STACKS)) $(addsuffix -down,$(STACKS)) \
 	$(addsuffix -logs,$(STACKS)) arcanium-build \
-	tf-kmip kmip-provision \
+	tf-kmip kmip-provision kmip-renew \
 	tf-suppliers supplier-provision supplier-test \
 	docsign-build cli-install \
 	approval-provision external-supplier-build \
@@ -300,6 +300,18 @@ tf-kmip: ## Apply vault-kmip Terraform module (KMIP engine, scope, role)
 
 kmip-provision: ## Generate mTLS client certificate for kmip-client
 	@./scenarios/03_kmip/provision.sh
+
+# Client certs live 7 days (KMIP role TTL). Safe to run any time: renews only
+# inside the 48h window, then restarts the client so it handshakes with the
+# new cert (an open session keeps the old one until it reconnects).
+kmip-renew: ## Renew the kmip-client mTLS cert if it expires within 48h (run weekly)
+	@before=$$(openssl x509 -in .secrets/kmip/client.pem -noout -serial 2>/dev/null || true); \
+	  ./scenarios/03_kmip/provision.sh --renew; \
+	  after=$$(openssl x509 -in .secrets/kmip/client.pem -noout -serial 2>/dev/null || true); \
+	  if [ "$$before" != "$$after" ] && podman container exists arcanium-kmip-client; then \
+	    echo "[kmip-renew] restarting arcanium-kmip-client on the new certificate"; \
+	    podman restart arcanium-kmip-client >/dev/null; \
+	  fi
 
 tf-suppliers: ## Apply vault-suppliers (namespaces, isolation policies, transit keys per supplier)
 	@mkdir -p .secrets/terraform

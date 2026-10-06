@@ -514,6 +514,7 @@ CONTAINERS=(
   "arcanium-payments-api"
   "arcanium-pki-client"
   "arcanium-kmip-client"
+  "arcanium-kmip_renewer"
   "arcanium-document-signing"
   "arcanium-external-supplier"
 )

@@ -12,3 +12,8 @@ output "kmip_role" {
   description = "KMIP role name for the legacy-database consumer"
   value       = vault_kmip_secret_role.legacy_db.role
 }
+
+output "kmip_renewer_role_name" {
+  description = "AppRole role for the kmip-renewer sidecar (KMIP_RENEWER_ROLE_ID/SECRET_ID are seeded into .env by scripts/workload-credentials.sh)"
+  value       = vault_approle_auth_backend_role.kmip_renewer.role_name
+}

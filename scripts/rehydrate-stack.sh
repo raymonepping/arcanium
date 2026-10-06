@@ -126,7 +126,7 @@ run "Terraform: workloads + kmip + suppliers (seeded demo tenants)" bash -c "mak
 # secret-id written to vault-approle-credentials) → agent starts.
 # vault-agent-secrets is written by the agent (user 1000:1000); pre-own the
 # volume the same way as before so it is writable on a fresh named volume.
-run "workload credentials: approle-rotator, arcanium-hsm-read, document-signing" \
+run "workload credentials: approle-rotator, kmip-renewer, arcanium-hsm-read, document-signing" \
   ./scripts/workload-credentials.sh issue-all
 run "Vault: start vault-rotator + arcanium-vault_agent" \
   bash -c '
@@ -149,6 +149,23 @@ run "Vault: start vault-rotator + arcanium-vault_agent" \
       sleep 2
     done
     echo "arcanium-vault_agent did not report healthy within 90s — check podman logs arcanium-vault_rotator and podman logs arcanium-vault_agent" >&2
+    exit 1
+  '
+# KMIP client certs live 7 days (terraform/vault-kmip). One issued once by
+# provision.sh expired on 2026-09-22 and left arcanium-kmip-client
+# restart-looping for two weeks. The renewer issues the cert if it is missing
+# and keeps renewing it 48h before expiry — so the workloads stack always
+# finds a valid .secrets/kmip/client.pem.
+run "Vault: start kmip-renewer (KMIP client-cert auto-renewal)" \
+  bash -c '
+    mkdir -p .secrets/kmip
+    ./scripts/compose.sh vault up -d kmip-renewer
+    for i in $(seq 1 45); do
+      status=$(podman inspect --format "{{.State.Health.Status}}" arcanium-kmip_renewer 2>/dev/null || echo "")
+      [ "$status" = "healthy" ] && exit 0
+      sleep 2
+    done
+    echo "arcanium-kmip_renewer did not report healthy within 90s — check podman logs arcanium-kmip_renewer" >&2
     exit 1
   '
 run "Arcanium: API/UI/worker (migrations run inline on API startup, idempotent)" make arcanium-up

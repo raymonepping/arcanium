@@ -53,6 +53,10 @@ REGISTRY=(
   # works until you restart vault-rotator, at which point it will use this new
   # ROTATOR_SECRET_ID). Issued once on first rehydrate; only reissue deliberately.
   "approle-rotator:main:-:auth/approle/role/approle-rotator:ROTATOR_ROLE_ID:ROTATOR_SECRET_ID"
+  # kmip-renewer: sidecar that keeps the kmip-client mTLS cert inside its
+  # 7-day TTL (terraform/vault-kmip/kmip_renewer.tf). Same bootstrap model as
+  # approle-rotator: secret_id_ttl=0, seeded here, read from .env by compose.
+  "kmip-renewer:main:-:auth/approle/role/kmip-renewer:KMIP_RENEWER_ROLE_ID:KMIP_RENEWER_SECRET_ID"
   "arcanium-hsm-read:hsm:-:auth/approle/role/arcanium-hsm-read:ARCANIUM_HSM_ROLE_ID:ARCANIUM_HSM_SECRET_ID"
   "document-signing:hsm:-:auth/approle/role/document-signing:DOCSIGN_VAULT_ROLE_ID:DOCSIGN_VAULT_SECRET_ID"
 )

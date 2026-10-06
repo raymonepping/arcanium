@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- UI re-themed to the Project Durin / Editors Factory family: daylight
+  glass panes, black ink text and primary buttons, each page's hero band as
+  the one dark (ink) pane. Arcanium's status colours (action blue,
+  governance amber, healthy green, critical red) are kept and deepened so
+  that they pass AA on glass and on their own tints. Every tint now comes
+  from `--arc-hue-*` tokens via `color-mix()` (about 180 hardcoded `rgba()`
+  literals removed). Fonts are now Hanken Grotesk + JetBrains Mono
+  everywhere. `docs/frontend/config/DESIGN.md` is rewritten for the new
+  look. The axe a11y suite passes on all 15 screens for operator and
+  auditor.
+
 - Sidebar navigation (Prompt 46) regrouped by function, then by type,
   with a divider between groups: Dashboard · Suppliers/Teams/
   Applications/Onboard · Integrations/Jobs · Keys/PKI · Cluster/
@@ -32,6 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   divider placement — just the two entries swapped.
 
 ### Added
+
+- `arcanium-kmip_renewer` sidecar (`compose/vault/kmip-renewer/`), started
+  by `make up`. It renews the kmip-client certificate 48h before expiry,
+  swaps cert/key/CA atomically and revokes the old serial. Its identity is
+  AppRole `kmip-renewer` (`terraform/vault-kmip/kmip_renewer.tf`), allowed
+  only to generate and revoke legacy-db KMIP credentials. Credentials are
+  seeded by `scripts/workload-credentials.sh`. Also included in
+  `verify-stack.sh`.
+- `make kmip-renew`: manual fallback. Renews only inside the 48h window,
+  then restarts the client.
+- Playwright suite for the UI (`arcanium/ui/tests/`): shell, navigation,
+  axe WCAG 2.1 AA scan of every screen, and screenshots, all against real
+  Keycloak OIDC.
 
 - "+ Set policy" on the application intent view (Prompt 52): a real UI
   path to declare a rotation-period or expiry-date desired-state policy
@@ -95,6 +119,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never named it explicitly.
 
 ### Fixed
+
+- `arcanium-kmip-client` restart-looped 17,008 times from 2026-09-22 to
+  2026-10-06. Its mTLS client certificate (KMIP role `legacy-db`, 7-day
+  TTL) was issued once by `scenarios/03_kmip/provision.sh` and expired;
+  Vault reset the connection at the first KMIP request, the client crashed,
+  and health stayed at "starting", so nothing flagged it. The client now
+  checks its certificate before connecting, reports `cert_expired` on
+  `/health` (HTTP 503 → container *unhealthy*, caught by `verify-stack.sh`),
+  waits for a renewed cert instead of looping, and hot-reloads a renewed
+  cert without restarting.
 
 - Suppliers/Teams create-or-edit dialogs (Prompt 51) collapsed every
   failure besides a 409/400 into "Unable to save this change. Check API
