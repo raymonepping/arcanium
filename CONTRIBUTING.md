@@ -2,17 +2,19 @@
 
 ## One-time setup
 
-`hooks/pre-commit` (sanity-check/format-fix on staged sources) is tracked in
-this repository, but Git only runs hooks from `.git/hooks/` unless
-`core.hooksPath` points elsewhere — a fresh clone gets the file but not the
-enforcement. Point Git at it once:
+The repository ships no Git hooks. The tracked `hooks/pre-commit`
+(`sanity_check --fix`, which blocked commits whenever it reformatted a staged
+file) was removed on 2026-10-06, and `make check` no longer sets
+`core.hooksPath`. If an older clone still has it set, clear it:
 
 ```sh
-git config core.hooksPath hooks
+git config --unset core.hooksPath
 ```
 
-`make check` also does this automatically (idempotent — safe to re-run), so
-running it once after cloning has the same effect.
+Secret protection is local: a `.git/hooks/pre-commit` that blocks sensitive
+filenames (`*.env`, `*.pem`, `*.key`, …) and runs `gitleaks protect --staged`
+(`commit_gh --harden` installs it). CI's Gitleaks workflow remains the shared
+gate.
 
 ## Workflow
 
